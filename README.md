@@ -31,7 +31,7 @@ Search returns an empty list when nothing is relevant enough, rather than paddin
 
 ## Features
 
-- UI login through any OIDC provider that puts a `groups` claim in the ID token or UserInfo; no passwords stored.
+- UI login through any OIDC provider that can put the person's groups or roles into a claim of the ID token or UserInfo; no passwords stored.
 - Personal API tokens (`sk_...`) for `/mcp`; the UI shows a ready-to-paste `claude mcp add` command.
 - Server catalog: add upstream MCP servers, restrict them to groups, hide individual tools, set per-call timeouts and per-person daily limits.
 - Per-user credentials: OAuth 2.0 (Authorization Code + PKCE, automatic refresh) or personal access tokens; or one shared secret per server.
@@ -102,45 +102,56 @@ claude mcp add --transport http mcp-registry https://mcp.example.com/mcp \
 
 All settings are environment variables (see `.env.example`). An empty value (`KEY=`) counts as unset.
 
-| Variable                      | Default                    | Meaning                                                                                                                                  |
-| ----------------------------- | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `PUBLIC_URL`                  | required                   | External URL of the gateway (scheme + host + port). Used for OIDC/OAuth redirect URIs, the `claude mcp add` command and `Origin` checks. |
-| `DATABASE_URL`                | required (Compose sets it) | Postgres connection string. Compose defaults to `postgres://mcp@db:5432/mcp` with `POSTGRES_PASSWORD`.                                   |
-| `POSTGRES_PASSWORD`           | required by Compose        | Password of the bundled Postgres. Set it before the first start; it is stored in the volume afterwards.                                  |
-| `PORT`                        | `3000`                     | Listening port (with Compose: the host port; the container always listens on 3000).                                                      |
-| `ALLOWED_HOSTS`               | empty                      | Extra accepted `Host` values for `/mcp`, comma-separated. The `PUBLIC_URL` host, `localhost` and `127.0.0.1` are always accepted.        |
-| `TRUST_PROXY`                 | `false`                    | Take the client IP from `X-Forwarded-For`. Enable only behind a reverse proxy.                                                           |
-| `TRUST_PROXY_HOPS`            | `1`                        | Number of trusted proxies in front of the gateway (1-5).                                                                                 |
-| `COOKIE_SECURE`               | `true`                     | `Secure` flag on the session cookie. Works with HTTPS and with `http://localhost`.                                                       |
-| `SECRETS_KEY`                 | required                   | AES-256-GCM key, base64 of exactly 32 bytes (`openssl rand -base64 32`). Encrypts server secrets and people's tokens.                    |
-| `SECRETS_KEY_OLD`             | unset                      | Previous key, only during key rotation. Must differ from `SECRETS_KEY`.                                                                  |
-| `OIDC_ISSUER`                 | required                   | Issuer URL of the OIDC provider. Discovery happens on the first login, not at startup.                                                   |
-| `OIDC_CLIENT_ID`              | required                   | Client ID registered for the gateway.                                                                                                    |
-| `OIDC_CLIENT_SECRET`          | required                   | Client secret registered for the gateway.                                                                                                |
-| `OIDC_LOGIN_GROUP`            | `mcp-users`                | Members of this group may sign in.                                                                                                       |
-| `OIDC_ADMIN_GROUP`            | `mcp-admins`               | Members of this group may sign in and are admins.                                                                                        |
-| `SYNC_INTERVAL_HOURS`         | `6`                        | Catalog synchronisation period, hours (1-8760).                                                                                          |
-| `CALL_LOG_RETENTION_DAYS`     | `90`                       | How long call log entries are kept.                                                                                                      |
-| `UPSTREAM_MAX_RESPONSE_BYTES` | `20971520` (20 MiB)        | Larger upstream responses are refused (memory protection).                                                                               |
-| `MCP_MAX_BODY_BYTES`          | `10485760` (10 MiB)        | Request body limit of `/mcp` (tool arguments may carry base64 files). The rest of the HTTP API is limited to 1 MiB.                      |
-| `EMBEDDER`                    | `local`                    | `local` (bundled model) or `openai-compatible` (`POST <EMBEDDER_URL>/embeddings`).                                                       |
-| `EMBEDDER_URL`                | unset                      | Base URL of the embeddings API, only for `openai-compatible`.                                                                            |
-| `EMBEDDER_MODEL`              | unset                      | Model name for `openai-compatible`. Must produce 384-dimensional vectors.                                                                |
-| `MODEL_DIR`                   | `/app/models`              | Directory of the local model. The image already contains it.                                                                             |
-| `SEARCH_MIN_SIMILARITY`       | `0.83`                     | Cosine-similarity floor (0-1) for vector search candidates.                                                                              |
-| `LOG_LEVEL`                   | `info`                     | `fatal`, `error`, `warn`, `info`, `debug`, `trace` or `silent`.                                                                          |
+| Variable                      | Default                       | Meaning                                                                                                                                  |
+| ----------------------------- | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `PUBLIC_URL`                  | required                      | External URL of the gateway (scheme + host + port). Used for OIDC/OAuth redirect URIs, the `claude mcp add` command and `Origin` checks. |
+| `DATABASE_URL`                | required (Compose sets it)    | Postgres connection string. Compose defaults to `postgres://mcp@db:5432/mcp` with `POSTGRES_PASSWORD`.                                   |
+| `POSTGRES_PASSWORD`           | required by Compose           | Password of the bundled Postgres. Set it before the first start; it is stored in the volume afterwards.                                  |
+| `PORT`                        | `3000`                        | Listening port (with Compose: the host port; the container always listens on 3000).                                                      |
+| `ALLOWED_HOSTS`               | empty                         | Extra accepted `Host` values for `/mcp`, comma-separated. The `PUBLIC_URL` host, `localhost` and `127.0.0.1` are always accepted.        |
+| `TRUST_PROXY`                 | `false`                       | Take the client IP from `X-Forwarded-For`. Enable only behind a reverse proxy.                                                           |
+| `TRUST_PROXY_HOPS`            | `1`                           | Number of trusted proxies in front of the gateway (1-5).                                                                                 |
+| `COOKIE_SECURE`               | `true`                        | `Secure` flag on the session cookie. Works with HTTPS and with `http://localhost`.                                                       |
+| `SECRETS_KEY`                 | required                      | AES-256-GCM key, base64 of exactly 32 bytes (`openssl rand -base64 32`). Encrypts server secrets and people's tokens.                    |
+| `SECRETS_KEY_OLD`             | unset                         | Previous key, only during key rotation. Must differ from `SECRETS_KEY`.                                                                  |
+| `OIDC_ISSUER`                 | required                      | Issuer URL of the OIDC provider. Discovery happens on the first login, not at startup.                                                   |
+| `OIDC_CLIENT_ID`              | required                      | Client ID registered for the gateway.                                                                                                    |
+| `OIDC_CLIENT_SECRET`          | required                      | Client secret registered for the gateway.                                                                                                |
+| `OIDC_LOGIN_GROUP`            | `mcp-users`                   | Members of this group may sign in.                                                                                                       |
+| `OIDC_ADMIN_GROUP`            | `mcp-admins`                  | Members of this group may sign in and are admins.                                                                                        |
+| `OIDC_SCOPES`                 | `openid profile email groups` | Scopes of the login request, space- or comma-separated; must include `openid`.                                                           |
+| `OIDC_GROUPS_CLAIM`           | `groups`                      | Claim with the person's groups: a list of names, or an object whose keys are the names.                                                  |
+| `SYNC_INTERVAL_HOURS`         | `6`                           | Catalog synchronisation period, hours (1-8760).                                                                                          |
+| `CALL_LOG_RETENTION_DAYS`     | `90`                          | How long call log entries are kept.                                                                                                      |
+| `UPSTREAM_MAX_RESPONSE_BYTES` | `20971520` (20 MiB)           | Larger upstream responses are refused (memory protection).                                                                               |
+| `MCP_MAX_BODY_BYTES`          | `10485760` (10 MiB)           | Request body limit of `/mcp` (tool arguments may carry base64 files). The rest of the HTTP API is limited to 1 MiB.                      |
+| `EMBEDDER`                    | `local`                       | `local` (bundled model) or `openai-compatible` (`POST <EMBEDDER_URL>/embeddings`).                                                       |
+| `EMBEDDER_URL`                | unset                         | Base URL of the embeddings API, only for `openai-compatible`.                                                                            |
+| `EMBEDDER_MODEL`              | unset                         | Model name for `openai-compatible`. Must produce 384-dimensional vectors.                                                                |
+| `MODEL_DIR`                   | `/app/models`                 | Directory of the local model. The image already contains it.                                                                             |
+| `SEARCH_MIN_SIMILARITY`       | `0.83`                        | Cosine-similarity floor (0-1) for vector search candidates.                                                                              |
+| `LOG_LEVEL`                   | `info`                        | `fatal`, `error`, `warn`, `info`, `debug`, `trace` or `silent`.                                                                          |
 
 ## OIDC setup
 
-Any OIDC provider works if it can put the person's groups into a `groups` claim (a flat list of group names) in the ID token or the UserInfo response. Authentik, Keycloak, Authelia, Pocket ID and Zitadel are examples of providers that can do this.
+Any OIDC provider works if it can put the person's groups (or roles) into one claim of the ID token or the UserInfo response: a flat list of names, or an object whose keys are the names. The claim name is `OIDC_GROUPS_CLAIM` (default `groups`), the requested scopes are `OIDC_SCOPES` (default `openid profile email groups`).
 
 1. Create two groups: the login group (`mcp-users`) and the admin group (`mcp-admins`). Membership in either lets a person in; the admin group also makes them an admin.
 2. Create a confidential OIDC client:
    - redirect URI: `https://<host>/api/auth/callback`;
-   - scopes: `openid profile email groups`;
    - PKCE: allowed (the gateway always sends S256);
-   - make sure the `groups` claim is emitted (in Keycloak, add a group-membership mapper with "full group path" off).
-3. Put the issuer, client ID and client secret into `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`.
+   - make sure the groups claim is emitted (see the table below).
+3. Put the issuer, client ID and client secret into `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, and set `OIDC_SCOPES` / `OIDC_GROUPS_CLAIM` if your provider needs it.
+
+| Provider                               | Settings                                                                                                                                                                 |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Pocket ID, Authentik, Authelia, Kanidm | defaults                                                                                                                                                                 |
+| Keycloak                               | defaults; add a client scope `groups` with a Group Membership mapper (token claim name `groups`, "Full group path" off) and assign it to the client                      |
+| Zitadel                                | `OIDC_SCOPES=openid profile email urn:zitadel:iam:org:projects:roles`, `OIDC_GROUPS_CLAIM=urn:zitadel:iam:org:project:roles`; use project roles named like the groups    |
+| Microsoft Entra ID                     | `OIDC_SCOPES=openid profile email`, `OIDC_GROUPS_CLAIM=roles`; define app roles named like the groups and assign them (the `groups` claim carries object IDs, not names) |
+| Auth0                                  | `OIDC_SCOPES=openid profile email`, `OIDC_GROUPS_CLAIM=https://<your-namespace>/groups`; add the claim to the ID token with a post-login Action                          |
+
+These are starting points, not tested recipes; check the claims your provider actually issues (for example on its token preview page) if login answers `/?loginError=not_allowed`.
 
 Check the issuer with `curl -s https://id.example.com/.well-known/openid-configuration`. If login redirects to `/?loginError=idp_unavailable`, the gateway cannot reach `OIDC_ISSUER`; `/mcp` and existing tokens keep working.
 

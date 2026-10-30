@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vite-plus/test';
-import { isProviderOutage } from './openid-provider.ts';
+import { groupsOf, isProviderOutage } from './openid-provider.ts';
 
 const withCode = (e: Error, code: string) => Object.assign(e, { code });
 
@@ -23,5 +23,26 @@ describe('isProviderOutage', () => {
     );
     expect(isProviderOutage(new Error('id token nonce mismatch'))).toBe(false);
     expect(isProviderOutage('boom')).toBe(false);
+  });
+});
+
+describe('groupsOf', () => {
+  it('a list of strings, as most providers emit it', () => {
+    expect(groupsOf(['mcp-users', 'mcp-admins'])).toEqual(['mcp-users', 'mcp-admins']);
+    expect(groupsOf([])).toEqual([]);
+  });
+
+  it('the keys of an object, as Zitadel emits project roles', () => {
+    expect(groupsOf({ 'mcp-users': { '123': 'org.example.com' }, 'mcp-admins': {} })).toEqual([
+      'mcp-users',
+      'mcp-admins',
+    ]);
+  });
+
+  it('nothing usable: absent, a string, a mixed list, null', () => {
+    expect(groupsOf(undefined)).toBeNull();
+    expect(groupsOf('mcp-users')).toBeNull();
+    expect(groupsOf(['mcp-users', 1])).toBeNull();
+    expect(groupsOf(null)).toBeNull();
   });
 });

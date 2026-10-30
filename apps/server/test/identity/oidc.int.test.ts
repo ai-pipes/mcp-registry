@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { CreateTokenResponse, MeResponse, TokenSummary, UserSummary } from '@mcp/contracts';
 import { Hono } from 'hono';
 import { z } from 'zod';
@@ -42,6 +42,8 @@ function configFor(issuer: string): Config {
       clientSecret: idp.clientSecret,
       loginGroup: 'mcp-users',
       adminGroup: 'mcp-admins',
+      scopes: 'openid profile email groups',
+      groupsClaim: 'groups',
     },
     syncIntervalHours: 6,
     callLogRetentionDays: 90,
@@ -538,6 +540,44 @@ describe('an identity provider that fails during the code exchange', () => {
       expect(callback.headers.get('location')).toBe('/?loginError=invalid_state');
     } finally {
       idp.tokenStatus = null;
+    }
+  });
+});
+
+/** Code exchange straight through the provider, without the HTTP routes. */
+async function claimsVia(provider: OpenidProvider) {
+  const verifier = randomBytes(32).toString('base64url');
+  const codeChallenge = createHash('sha256').update(verifier).digest('base64url');
+  const url = await provider.authorizationUrl({ state: 's', codeChallenge, nonce: 'n' });
+  const code = idp.authorize(url, member);
+  return provider.exchange({ code, codeVerifier: verifier, nonce: 'n', iss: idp.issuer });
+}
+
+describe('a provider with its own scopes and groups claim (OIDC_SCOPES, OIDC_GROUPS_CLAIM)', () => {
+  const claim = 'https://example.com/groups';
+
+  const custom = () =>
+    new OpenidProvider({
+      issuer: idp.issuer,
+      clientId: idp.clientId,
+      clientSecret: idp.clientSecret,
+      redirectUri: `${ORIGIN}/api/auth/callback`,
+      scopes: 'openid profile email',
+      groupsClaim: claim,
+    });
+
+  it('asks for the configured scopes and reads groups from the configured claim', async () => {
+    idp.expectedScope = 'openid profile email';
+    idp.groupsClaim = claim;
+    try {
+      expect((await claimsVia(custom())).groups).toEqual(['mcp-users']);
+      // UserInfo fallback reads the same claim.
+      idp.groupsOnlyInUserInfo = true;
+      expect((await claimsVia(custom())).groups).toEqual(['mcp-users']);
+    } finally {
+      idp.expectedScope = 'openid profile email groups';
+      idp.groupsClaim = 'groups';
+      idp.groupsOnlyInUserInfo = false;
     }
   });
 });

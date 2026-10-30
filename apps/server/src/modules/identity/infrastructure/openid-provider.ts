@@ -9,15 +9,25 @@ export interface OpenidProviderConfig {
   clientSecret: string;
   /** Absolute URL of `/api/auth/callback` on this server. */
   redirectUri: string;
+  /** Space-separated scopes of the authorization request; default `DEFAULT_OIDC_SCOPES`. */
+  scopes?: string;
+  /** Claim holding the person's groups; default `DEFAULT_GROUPS_CLAIM`. */
+  groupsClaim?: string;
   /** Where degraded-provider warnings go; never receives tokens or claims. */
   logger?: { warn(fields: object, msg: string): void };
 }
 
-const SCOPE = 'openid profile email groups';
+export const DEFAULT_OIDC_SCOPES = 'openid profile email groups';
+export const DEFAULT_GROUPS_CLAIM = 'groups';
 
-function stringList(value: unknown): string[] | null {
-  if (!Array.isArray(value)) return null;
-  return value.every((v) => typeof v === 'string') ? value : null;
+/**
+ * Group names from a claim value: a list of strings (most providers), or an object whose keys
+ * are the names (Zitadel's `urn:zitadel:iam:org:project:roles`). Anything else is `null`.
+ */
+export function groupsOf(value: unknown): string[] | null {
+  if (Array.isArray(value)) return value.every((v) => typeof v === 'string') ? value : null;
+  if (value !== null && typeof value === 'object') return Object.keys(value);
+  return null;
 }
 
 function text(value: unknown): string | null {
@@ -89,7 +99,7 @@ export class OpenidProvider implements OidcProvider {
   }): Promise<URL> {
     return oidc.buildAuthorizationUrl(await this.configuration(), {
       redirect_uri: this.cfg.redirectUri,
-      scope: SCOPE,
+      scope: this.cfg.scopes ?? DEFAULT_OIDC_SCOPES,
       response_type: 'code',
       state: input.state,
       nonce: input.nonce,
@@ -124,8 +134,9 @@ export class OpenidProvider implements OidcProvider {
     }
     const id = tokens.claims();
     if (!id) throw new Error('no ID token');
+    const claim = this.cfg.groupsClaim ?? DEFAULT_GROUPS_CLAIM;
     let profile: Record<string, unknown> = { ...id };
-    if (stringList(id['groups']) === null) {
+    if (groupsOf(id[claim]) === null) {
       // Some providers keep groups out of the ID token; ask UserInfo as a fallback.
       try {
         profile = { ...(await oidc.fetchUserInfo(config, tokens.access_token, id.sub)) };
@@ -143,7 +154,7 @@ export class OpenidProvider implements OidcProvider {
       sub: id.sub,
       name: text(profile['name']) ?? text(profile['preferred_username']) ?? email ?? id.sub,
       email,
-      groups: stringList(profile['groups']) ?? [],
+      groups: groupsOf(profile[claim]) ?? [],
     };
   }
 }

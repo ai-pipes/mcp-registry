@@ -16,7 +16,11 @@ export { IdentityError } from './domain/user.ts';
 export type { GroupPolicy, IdentityErrorCode, OidcClaims, Principal, Role } from './domain/user.ts';
 export { createPgIdentity } from './infrastructure/compose.ts';
 export type { PgIdentity } from './infrastructure/compose.ts';
-export { OpenidProvider } from './infrastructure/openid-provider.ts';
+export {
+  DEFAULT_GROUPS_CLAIM,
+  DEFAULT_OIDC_SCOPES,
+  OpenidProvider,
+} from './infrastructure/openid-provider.ts';
 export { identityRoutes } from './interfaces/http/routes.ts';
 export {
   requireAdminRole,

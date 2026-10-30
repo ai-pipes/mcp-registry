@@ -24,6 +24,10 @@ export class FakeIdp {
   readonly clientId = 'mcp-gateway';
   readonly clientSecret = 'client-secret';
   issuer = '';
+  /** The scope the authorization request must carry. */
+  expectedScope = 'openid profile email groups';
+  /** The claim the groups are emitted under (in the ID token and UserInfo). */
+  groupsClaim = 'groups';
   /** Leaves `groups` out of the ID token; UserInfo still has them. */
   groupsOnlyInUserInfo = false;
   /** Makes UserInfo answer 500, as in a provider outage. */
@@ -68,7 +72,7 @@ export class FakeIdp {
         if (this.userinfoFails) return void res.writeHead(500).end();
         const claims = this.accessTokens.get((req.headers.authorization ?? '').slice(7));
         if (!claims) return void res.writeHead(401).end();
-        return json(res, claims);
+        return json(res, this.emitted(claims));
       }
       if (url.pathname === '/token' && req.method === 'POST') {
         const chunks: Buffer[] = [];
@@ -99,7 +103,7 @@ export class FakeIdp {
     if (p.get('client_id') !== this.clientId || p.get('code_challenge_method') !== 'S256') {
       throw new Error('bad authorization request');
     }
-    if (p.get('scope') !== 'openid profile email groups') throw new Error('bad scope');
+    if (p.get('scope') !== this.expectedScope) throw new Error('bad scope');
     const code = randomUUID();
     this.grants.set(code, {
       claims,
@@ -142,9 +146,17 @@ export class FakeIdp {
         iat: now,
         exp: now + 300,
         nonce: grant.nonce,
-        ...(this.groupsOnlyInUserInfo ? { ...grant.claims, groups: undefined } : grant.claims),
+        ...(this.groupsOnlyInUserInfo
+          ? { ...grant.claims, groups: undefined }
+          : this.emitted(grant.claims)),
       }),
     });
+  }
+
+  /** The claims as this provider emits them: groups under `groupsClaim`. */
+  private emitted(claims: FakeClaims): Record<string, unknown> {
+    const { groups, ...rest } = claims;
+    return groups === undefined ? rest : { ...rest, [this.groupsClaim]: groups };
   }
 
   private idToken(payload: Record<string, unknown>): string {

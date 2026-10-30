@@ -2,6 +2,7 @@ import { z } from 'zod';
 // The calibrated cosine-similarity floor lives in the search module, where the
 // real-model test checks it: one constant, so recalibrating it changes production too.
 import { DEFAULT_MIN_SIMILARITY } from '../modules/search/index.ts';
+import { DEFAULT_GROUPS_CLAIM, DEFAULT_OIDC_SCOPES } from '../modules/identity/index.ts';
 
 const SECRETS_KEY_BYTES = 32;
 const DEFAULT_UPSTREAM_MAX_RESPONSE_BYTES = 20 * 1024 * 1024;
@@ -26,6 +27,14 @@ const secretsKey = z.string().transform((value, ctx): Uint8Array => {
   }
   return new Uint8Array(bytes);
 });
+
+/** Space- or comma-separated scopes, normalised to one space; `openid` is required. */
+const oidcScopes = z
+  .string()
+  .default(DEFAULT_OIDC_SCOPES)
+  .transform((v) => v.split(/[\s,]+/).filter((s) => s !== ''))
+  .refine((list) => list.includes('openid'), { message: 'must include openid' })
+  .transform((list) => [...new Set(list)].join(' '));
 
 const positiveInt = (fallback: number) => z.coerce.number().int().min(1).default(fallback);
 /** A year: a longer synchronisation period is a typo. */
@@ -54,6 +63,8 @@ const schema = z.object({
   OIDC_CLIENT_SECRET: z.string().min(1),
   OIDC_LOGIN_GROUP: z.string().min(1).default('mcp-users'),
   OIDC_ADMIN_GROUP: z.string().min(1).default('mcp-admins'),
+  OIDC_SCOPES: oidcScopes,
+  OIDC_GROUPS_CLAIM: z.string().min(1).default(DEFAULT_GROUPS_CLAIM),
   SYNC_INTERVAL_HOURS: z.coerce.number().int().min(1).max(MAX_SYNC_INTERVAL_HOURS).default(6),
   CALL_LOG_RETENTION_DAYS: positiveInt(90),
   UPSTREAM_MAX_RESPONSE_BYTES: positiveInt(DEFAULT_UPSTREAM_MAX_RESPONSE_BYTES),
@@ -83,6 +94,10 @@ interface OidcConfig {
   loginGroup: string;
   /** Members of this group are admins. */
   adminGroup: string;
+  /** Scopes of the authorization request, space-separated, always with `openid`. */
+  scopes: string;
+  /** ID token / UserInfo claim holding the person's groups. */
+  groupsClaim: string;
 }
 
 export interface Config {
@@ -157,6 +172,8 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
       clientSecret: e.OIDC_CLIENT_SECRET,
       loginGroup: e.OIDC_LOGIN_GROUP,
       adminGroup: e.OIDC_ADMIN_GROUP,
+      scopes: e.OIDC_SCOPES,
+      groupsClaim: e.OIDC_GROUPS_CLAIM,
     },
     syncIntervalHours: e.SYNC_INTERVAL_HOURS,
     callLogRetentionDays: e.CALL_LOG_RETENTION_DAYS,

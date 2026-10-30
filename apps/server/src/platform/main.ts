@@ -29,6 +29,8 @@ const oidc = new OpenidProvider({
   issuer: config.oidc.issuer,
   clientId: config.oidc.clientId,
   clientSecret: config.oidc.clientSecret,
+  scopes: config.oidc.scopes,
+  groupsClaim: config.oidc.groupsClaim,
   redirectUri: new URL('/api/auth/callback', config.publicUrl).toString(),
   logger,
 });

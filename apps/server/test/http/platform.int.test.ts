@@ -38,6 +38,8 @@ function configFor(): Config {
       clientSecret: 'secret',
       loginGroup: 'mcp-users',
       adminGroup: 'mcp-admins',
+      scopes: 'openid profile email groups',
+      groupsClaim: 'groups',
     },
     syncIntervalHours: 6,
     callLogRetentionDays: 90,

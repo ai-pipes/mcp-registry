@@ -51,6 +51,8 @@ describe('loadConfig', () => {
         clientSecret: 'client-secret',
         loginGroup: 'mcp-users',
         adminGroup: 'mcp-admins',
+        scopes: 'openid profile email groups',
+        groupsClaim: 'groups',
       },
     });
   });
@@ -65,6 +67,8 @@ describe('loadConfig', () => {
       SEARCH_MIN_SIMILARITY: '0.5',
       OIDC_LOGIN_GROUP: 'staff',
       OIDC_ADMIN_GROUP: 'owners',
+      OIDC_SCOPES: 'openid, profile  roles openid',
+      OIDC_GROUPS_CLAIM: 'urn:zitadel:iam:org:project:roles',
       SYNC_INTERVAL_HOURS: '12',
       CALL_LOG_RETENTION_DAYS: '30',
       UPSTREAM_MAX_RESPONSE_BYTES: '1048576',
@@ -77,6 +81,8 @@ describe('loadConfig', () => {
     expect(c.searchMinSimilarity).toBe(0.5);
     expect(c.oidc.loginGroup).toBe('staff');
     expect(c.oidc.adminGroup).toBe('owners');
+    expect(c.oidc.scopes).toBe('openid profile roles');
+    expect(c.oidc.groupsClaim).toBe('urn:zitadel:iam:org:project:roles');
     expect(c.syncIntervalHours).toBe(12);
     expect(c.callLogRetentionDays).toBe(30);
     expect(c.upstreamMaxResponseBytes).toBe(1_048_576);
@@ -174,6 +180,12 @@ describe('loadConfig', () => {
     expect(c.port).toBe(3000);
     expect(c.oidc.loginGroup).toBe('mcp-users');
     expect(c.syncIntervalHours).toBe(6);
+  });
+
+  it('refuses OIDC_SCOPES without openid', () => {
+    expect(() => loadConfig({ ...base, OIDC_SCOPES: 'profile groups' })).toThrow(
+      /OIDC_SCOPES.*openid/,
+    );
   });
 
   it('reports every bad variable by name, one per line', () => {
