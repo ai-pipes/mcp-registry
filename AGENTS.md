@@ -1,0 +1,1 @@
+See [CLAUDE.md](./CLAUDE.md): the single source of rules for all agents and contributors (layers, import rules, domain vocabulary, design decisions, how to add a use case, `pnpm verify` before finishing).

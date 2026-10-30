@@ -1,0 +1,12 @@
+# Smoke test only (scripts/smoke.sh): adds a fake upstream MCP server next to the app. Used as
+#   docker compose -f docker-compose.yml -f scripts/smoke.compose.yml …
+# The upstream is reachable only inside the project network (http://upstream:8080/mcp) and
+# answers 401 unless the request carries `X-Smoke-Key: Key <SMOKE_UPSTREAM_SECRET>`.
+services:
+  upstream:
+    build:
+      context: .
+      target: smoke-upstream
+    init: true
+    environment:
+      SMOKE_UPSTREAM_SECRET: ${SMOKE_UPSTREAM_SECRET:?set by scripts/smoke.sh}
