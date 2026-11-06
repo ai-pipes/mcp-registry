@@ -9,7 +9,7 @@
     "@mcp/contracts": "workspace:*",
     "@modelcontextprotocol/client": "2.4.0",
     "@modelcontextprotocol/server": "2.4.0",
-    "hono": "4.13.14",
+    "hono": "4.13.16",
     "openid-client": "6.8.8",
     "pino": "10.4.0",
     "postgres": "3.4.9",
