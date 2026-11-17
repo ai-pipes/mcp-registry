@@ -2,6 +2,8 @@
 # (cp .env.example .env). Postgres is reachable only from the app, never published.
 services:
   app:
+    # Without a local image `up -d` builds it from source (build below); `pull` fetches the published one.
+    image: ${MCP_REGISTRY_IMAGE:-aipipes/mcp-registry:1}
     build: .
     init: true
     restart: unless-stopped

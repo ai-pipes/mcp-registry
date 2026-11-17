@@ -1,0 +1,80 @@
+# MCP gateway quick start: no .env, no OIDC, no files to prepare.
+#
+#   curl -fsSL <raw url>/quickstart.compose.yml | docker compose -f - up -d
+#
+# On the first start the gateway creates the admin `local-admin` and logs a one-time sign-in link:
+#   docker compose -p mcp-registry logs app
+# The secrets key and the database password are generated into the `secrets` volume by the
+# one-shot `init` service and never rewritten. Losing that volume while keeping `pgdata` makes the
+# stored secrets unreadable: back both up together. Postgres is reachable only from the app.
+# Optional variables: MCP_REGISTRY_IMAGE, PORT, PUBLIC_URL (the address people use, for example
+# https://mcp.example.com), COOKIE_SECURE=false (only for plain http on an address other than
+# localhost).
+name: mcp-registry
+
+services:
+  init:
+    image: pgvector/pgvector:pg17
+    restart: 'no'
+    # Runs as root to write the volume. Files are 0444 (readable by `postgres` and by the app's
+    # `node` user, writable by nobody) in a 0755 directory; existing files are never touched.
+    entrypoint: ['/bin/sh', '-ec']
+    command:
+      - |
+        umask 077
+        make() {
+          [ -s "/secrets/$$1" ] && return 0
+          rm -f "/secrets/.$$1.tmp"
+          sh -c "$$2" > "/secrets/.$$1.tmp"
+          chmod 0444 "/secrets/.$$1.tmp"
+          mv "/secrets/.$$1.tmp" "/secrets/$$1"
+        }
+        chmod 0755 /secrets
+        make secrets_key 'head -c 32 /dev/urandom | base64'
+        make pg_password 'head -c 24 /dev/urandom | od -An -tx1 | tr -d " \n"'
+    volumes:
+      - secrets:/secrets
+
+  db:
+    image: pgvector/pgvector:pg17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: mcp
+      POSTGRES_DB: mcp
+      POSTGRES_PASSWORD_FILE: /secrets/pg_password
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - secrets:/secrets:ro
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U mcp -d mcp']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  app:
+    image: ${MCP_REGISTRY_IMAGE:-aipipes/mcp-registry:1}
+    init: true
+    restart: unless-stopped
+    environment:
+      PORT: '3000'
+      PUBLIC_URL: ${PUBLIC_URL:-http://localhost:3000}
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+      DATABASE_URL: postgres://mcp@db:5432/mcp
+      SECRETS_KEY_FILE: /secrets/secrets_key
+      PGPASSWORD_FILE: /secrets/pg_password
+    volumes:
+      - secrets:/secrets:ro
+    ports:
+      - '${PORT:-3000}:3000'
+    depends_on:
+      init:
+        condition: service_completed_successfully
+      db:
+        condition: service_healthy
+
+volumes:
+  secrets:
+  pgdata:
