@@ -92,6 +92,11 @@ export function makeDeps() {
         u.disabled = disabled;
         return Promise.resolve(true);
       },
+      touchLastLogin: (id, at) => {
+        const u = users.get(id);
+        if (u) u.lastLoginAt = at;
+        return Promise.resolve();
+      },
     },
     tokens: {
       insert: (t) => {

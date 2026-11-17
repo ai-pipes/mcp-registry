@@ -77,6 +77,11 @@ export class PgUserRepository implements UserRepository {
     const r = await this.sql`update identity.users set disabled = ${disabled} where id = ${id}`;
     return r.count > 0;
   }
+
+  async touchLastLogin(id: string, at: Date): Promise<void> {
+    if (!isUuid(id)) return;
+    await this.sql`update identity.users set last_login_at = ${at} where id = ${id}`;
+  }
 }
 
 interface TokenRow {

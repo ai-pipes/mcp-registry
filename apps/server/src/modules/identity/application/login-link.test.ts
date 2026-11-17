@@ -58,8 +58,11 @@ describe('completeLinkLogin', () => {
     const f = makeDeps();
     const user = await person(f);
     const { code } = await issue(f);
+    f.clock.advance(60_000);
     const first = await completeLinkLogin(f.deps, { code, ip: '1.1.1.1' });
     expect(first.ok).toBe(true);
+    expect(f.users.get(user.id)?.lastLoginAt).toEqual(f.clock.now());
+    expect(f.users.get(user.id)?.lastLoginAt).not.toEqual(f.users.get(user.id)?.createdAt);
     if (!first.ok) return;
     const session = f.sessions.get(f.deps.sha256.hex(first.value.sessionId));
     expect(session?.userId).toBe(user.id);
@@ -79,6 +82,17 @@ describe('completeLinkLogin', () => {
     const r = await completeLinkLogin(f.deps, { code, ip: '1.1.1.1' });
     expect(!r.ok && r.error.code).toBe('invalid_link');
     expect(f.sessions.size).toBe(0);
+    const failed = f.auditEntries.filter((e) => e.action === 'auth.login_failed');
+    expect(failed.map((e) => e.meta)).toEqual([{ reason: 'invalid_link' }]);
+  });
+
+  it('writes no audit for a malformed or unknown code', async () => {
+    const f = makeDeps();
+    await person(f);
+    const before = f.auditEntries.length;
+    await completeLinkLogin(f.deps, { code: 'sk_x', ip: '1.1.1.1' });
+    await completeLinkLogin(f.deps, { code: 'll_unknown', ip: '1.1.1.1' });
+    expect(f.auditEntries.length).toBe(before);
   });
 
   it('rejects a link of a person disabled after issue with disabled', async () => {
@@ -90,8 +104,8 @@ describe('completeLinkLogin', () => {
     const r = await completeLinkLogin(f.deps, { code, ip: '1.1.1.1' });
     expect(!r.ok && r.error.code).toBe('disabled');
     expect(f.sessions.size).toBe(0);
-    const failed = f.auditEntries.find((e) => e.action === 'auth.login_failed');
-    expect(failed?.meta).toEqual({ reason: 'disabled' });
+    const failed = f.auditEntries.filter((e) => e.action === 'auth.login_failed');
+    expect(failed.map((e) => e.meta)).toEqual([{ reason: 'disabled' }]);
   });
 
   it('counts failures per IP', async () => {
@@ -130,6 +144,8 @@ describe('completeLinkLogin', () => {
     f.users.clear();
     const r = await completeLinkLogin(f.deps, { code, ip: '1.1.1.1' });
     expect(!r.ok && r.error.code).toBe('invalid_link');
+    const failed = f.auditEntries.filter((e) => e.action === 'auth.login_failed');
+    expect(failed.map((e) => e.meta)).toEqual([{ reason: 'invalid_link' }]);
   });
 });
 
@@ -145,6 +161,46 @@ describe('bootstrapLocalAdmin', () => {
     expect(user?.name).toBe('Admin');
     expect(user?.role).toBe('admin');
     expect(f.loginLinks.size).toBe(1);
+  });
+
+  it('issues a new link when local-admin exists but never signed in', async () => {
+    const f = makeDeps();
+    const first = await bootstrapLocalAdmin(f.deps);
+    const second = await bootstrapLocalAdmin(f.deps);
+    expect(second?.code.startsWith('ll_')).toBe(true);
+    expect(second?.code).not.toBe(first?.code);
+    expect(f.users.size).toBe(1);
+    expect(f.loginLinks.size).toBe(2);
+  });
+
+  it('returns null once local-admin has signed in', async () => {
+    const f = makeDeps();
+    const first = await bootstrapLocalAdmin(f.deps);
+    if (!first) throw new Error('no link');
+    f.clock.advance(60_000);
+    const r = await completeLinkLogin(f.deps, { code: first.code, ip: '1.1.1.1' });
+    expect(r.ok).toBe(true);
+    expect(await bootstrapLocalAdmin(f.deps)).toBeNull();
+  });
+
+  it('throws when provisioning fails', async () => {
+    const f = makeDeps();
+    f.deps.users.upsertFromLogin = () => Promise.reject(new Error('db down'));
+    await expect(bootstrapLocalAdmin(f.deps)).rejects.toThrow('db down');
+  });
+
+  it('returns null when any other person exists', async () => {
+    const f = makeDeps();
+    await person(f, 'alice');
+    expect(await bootstrapLocalAdmin(f.deps)).toBeNull();
+    expect(f.loginLinks.size).toBe(0);
+  });
+
+  it('returns null when local-admin is disabled', async () => {
+    const f = makeDeps();
+    await bootstrapLocalAdmin(f.deps);
+    for (const u of f.users.values()) u.disabled = true;
+    expect(await bootstrapLocalAdmin(f.deps)).toBeNull();
   });
 
   it('returns null when anyone exists', async () => {

@@ -29,8 +29,9 @@ export async function authenticateSession(
 }
 
 /**
- * Daily housekeeping: sessions that ended (12 h idle or the 30-day limit) are deleted. A dead
- * session is refused anyway; this only keeps `identity.sessions` from growing. Expired login links go too. Returns how many sessions.
+ * Daily housekeeping: deletes dead sessions (12 h idle or the 30-day limit) and expired login
+ * links. A dead session or link is refused anyway; this only keeps the tables from growing.
+ * Returns the number of deleted sessions (links are not counted).
  */
 export async function pruneExpiredSessions(deps: {
   sessions: Pick<IdentityDeps['sessions'], 'deleteDead'>;

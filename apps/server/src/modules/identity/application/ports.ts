@@ -69,6 +69,8 @@ export interface UserRepository {
   upsertFromLogin(input: { claims: OidcClaims; role: Role; at: Date }): Promise<User>;
   list(): Promise<User[]>;
   setDisabled(id: string, disabled: boolean): Promise<boolean>;
+  /** Records a sign-in time only; name, email, groups, role and `disabled` stay as they are. */
+  touchLastLogin(id: string, at: Date): Promise<void>;
 }
 
 export interface TokenRepository {

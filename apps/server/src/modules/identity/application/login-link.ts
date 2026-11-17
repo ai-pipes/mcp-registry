@@ -42,11 +42,19 @@ export async function completeLinkLogin(
   deps: IdentityDeps,
   input: { code: string; ip: string },
 ): Promise<Result<{ sessionId: string }, IdentityError>> {
+  // Only a link that was actually consumed and then refused is audited; unknown or malformed
+  // codes write nothing, so an unauthenticated caller cannot grow the audit log.
   const reject = async (
     reason: 'invalid_link' | 'disabled',
-    actorId: string | null,
+    consumed: { actorId: string | null } | null,
   ): Promise<Result<{ sessionId: string }, IdentityError>> => {
-    await deps.audit.record({ actorId, action: 'auth.login_failed', meta: { reason } });
+    if (consumed) {
+      await deps.audit.record({
+        actorId: consumed.actorId,
+        action: 'auth.login_failed',
+        meta: { reason },
+      });
+    }
     const hit = deps.linkLimiter.hit(input.ip);
     if (!hit.allowed) {
       return err(new IdentityError('rate_limited', 'too many failed attempts', hit.retryAfterSec));
@@ -61,10 +69,11 @@ export async function completeLinkLogin(
   if (!looksLikeLoginCode(input.code)) return reject('invalid_link', null);
   const now = deps.clock.now();
   const link = await deps.loginLinks.consume(deps.sha256.hex(input.code));
-  if (!link || isLoginLinkExpired(link.expiresAt, now)) return reject('invalid_link', null);
+  if (!link) return reject('invalid_link', null);
+  if (isLoginLinkExpired(link.expiresAt, now)) return reject('invalid_link', { actorId: null });
   const user = await deps.users.findById(link.userId);
-  if (!user) return reject('invalid_link', null);
-  if (user.disabled) return reject('disabled', user.id);
+  if (!user) return reject('invalid_link', { actorId: null });
+  if (user.disabled) return reject('disabled', { actorId: user.id });
 
   const sessionId = deps.random.base64url(32);
   await deps.sessions.insert({
@@ -74,18 +83,34 @@ export async function completeLinkLogin(
     lastSeenAt: now,
     expiresAt: sessionExpiry(now),
   });
+  await deps.users.touchLastLogin(user.id, now);
   await deps.audit.record({ actorId: user.id, action: 'auth.login', meta: { via: 'link' } });
   return ok({ sessionId });
 }
 
 /**
- * For a server without OIDC: when there are no people at all, creates the admin `local-admin` and
- * a link for them. Returns null when anyone exists (even a disabled person).
+ * For a server without OIDC: issues a link for `local-admin`, creating it when there are no people
+ * at all. Also issues a new link while `local-admin` is the only person and has never signed in,
+ * so a failed first start cannot lock the install out. Otherwise returns null.
  */
 export async function bootstrapLocalAdmin(deps: IdentityDeps): Promise<{ code: string } | null> {
-  if ((await deps.users.list()).length > 0) return null;
-  const created = await provisionUser(deps, { sub: LOCAL_ADMIN_SUB, name: 'Admin', admin: true });
-  if (!created.ok) return null;
+  const people = await deps.users.list();
+  const [only] = people;
+  const pending =
+    people.length === 1 &&
+    only?.oidcSub === LOCAL_ADMIN_SUB &&
+    !only.disabled &&
+    // Provisioning stamps lastLoginAt = createdAt; any real sign-in moves it later.
+    (only.lastLoginAt === null || only.lastLoginAt.getTime() <= only.createdAt.getTime());
+  if (people.length > 0 && !pending) return null;
+  if (people.length === 0) {
+    const created = await provisionUser(deps, {
+      sub: LOCAL_ADMIN_SUB,
+      name: 'Admin',
+      admin: true,
+    });
+    if (!created.ok) throw created.error;
+  }
   const link = await issueLoginLink(deps, { sub: LOCAL_ADMIN_SUB });
   return link.ok ? { code: link.value.code } : null;
 }

@@ -103,4 +103,23 @@ describe('login links in Postgres', () => {
     expect(await repo.consume('a2')).toBeNull();
     expect(await repo.consume('b1')).not.toBeNull();
   });
+
+  it('a link sign-in sets last_login_at and leaves groups and role untouched', async () => {
+    await person('alice');
+    const [before] = await pg.sql<{ groups: string[]; role: string }[]>`
+      select groups, role from identity.users where oidc_sub = 'alice'`;
+    const issued = await issueLoginLink(deps, { sub: 'alice' });
+    if (!issued.ok) throw issued.error;
+    const later = new Date(NOW.getTime() + 60_000);
+    const r = await completeLinkLogin(
+      { ...deps, clock: { now: () => later } },
+      { code: issued.value.code, ip: '1.1.1.1' },
+    );
+    expect(r.ok).toBe(true);
+    const [after] = await pg.sql<{ groups: string[]; role: string; last_login_at: Date }[]>`
+      select groups, role, last_login_at from identity.users where oidc_sub = 'alice'`;
+    expect(after?.last_login_at).toEqual(later);
+    expect(after?.groups).toEqual(before?.groups);
+    expect(after?.role).toBe(before?.role);
+  });
 });
