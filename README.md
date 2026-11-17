@@ -2,6 +2,40 @@
 
 A self-hosted MCP gateway: one MCP endpoint for your AI agents (Claude Code and other MCP clients) in front of all the MCP servers your team uses.
 
+## Quick start
+
+You need Docker with Compose. Run this in an empty directory. Compose also reads a `.env` file from the directory it runs in, so settings left there by another project would apply.
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/ai-pipes/mcp-registry/v1.0.0/quickstart.compose.yml | docker compose -f - up -d
+```
+
+This starts the gateway and Postgres with no `.env` and no identity provider. The secrets key and the database password are generated into a Docker volume, and the port is published on `127.0.0.1` only, so the gateway is reachable from this machine at <http://localhost:3000>.
+
+On the first start the gateway creates the admin `local-admin` and logs a one-time sign-in link. Print it:
+
+```sh
+docker compose -p mcp-registry logs app | grep "one-time link"
+```
+
+The link is in the `url` field of the log record and looks like `http://localhost:3000/login#link=ll_...`. Open it within 15 minutes; the page asks for one click to confirm, then you are signed in as an admin. The link works once.
+
+- **Port 3000 is taken.** Set `PORT` on the `docker compose` side of the command, for example `... | PORT=8080 docker compose -f - up -d`. The sign-in link then points to that port. Settings are not remembered between commands: repeat `PORT` whenever you run `up` again.
+- **Safari** does not accept the `Secure` session cookie on plain `http://localhost`. Use another browser, or start with `COOKIE_SECURE=false` (same place as `PORT`).
+- **A new link**, if the first one expired or was used by mistake:
+
+  ```sh
+  docker compose -p mcp-registry exec app node dist/cli.js login-link local-admin
+  ```
+
+  Until `local-admin` has signed in once, every start also logs a new link.
+
+To stop the gateway, run `docker compose -p mcp-registry down`; your data stays in the volumes, and running the quick-start command again starts it with the same data. `docker compose -p mcp-registry down -v` also deletes the volumes: the database and the generated secrets key are gone for good.
+
+The quick start is for trying the gateway and for a single machine. For a permanent installation behind HTTPS with your own identity provider, see [Production setup](#production-setup).
+
+## About
+
 Instead of loading hundreds of upstream tools into the agent's context, the gateway exposes four meta-tools. The agent searches for the tool it needs, reads its schema, and calls it through the gateway. Each call is made on behalf of the person: with their own OAuth token or personal access token for that service, or with a shared server secret that never leaves the gateway.
 
 **Who it is for.** Individuals and small teams who run their own services (Gitea, YouTrack, internal tools) inside their own network and want one place to manage MCP access. It is a single container plus Postgres. It is **not** an enterprise product: no multi-tenancy, no HA clustering, no fine-grained RBAC beyond "member / admin / server visible to groups".
@@ -41,7 +75,9 @@ Search returns an empty list when nothing is relevant enough, rather than paddin
 - Call log (who, which tool, outcome, duration; never arguments or results), audit log of admin actions.
 - Strict CSP web UI (`default-src 'self'`, no inline scripts or styles).
 
-## Quick start (Docker Compose)
+## Production setup
+
+This is the permanent installation: your own `.env`, a TLS-terminating reverse proxy and, if you want, your own OIDC provider. Plan upgrades with [Versioning and upgrades](#versioning-and-upgrades), and read [SECURITY.md](SECURITY.md) before exposing the gateway beyond localhost. The `quickstart.compose.yml` file can also be saved and kept as a permanent installation; see its header comment and [SECURITY.md](SECURITY.md#quick-start-compose-file).
 
 Requirements: Docker with Compose, and (for anything beyond localhost) a TLS-terminating reverse proxy in front of the gateway.
 
@@ -99,7 +135,7 @@ With OIDC you can also create a person with the CLI, for example when the provid
 docker compose exec app node dist/cli.js create-user --sub <sub> --name "Jane" --admin
 ```
 
-### Connect an agent
+### Tokens for agents
 
 In the UI, open **Tokens**, create a token and copy the command it shows. Or from the CLI:
 
