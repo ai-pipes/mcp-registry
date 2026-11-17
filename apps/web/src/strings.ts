@@ -64,6 +64,8 @@ export const strings = {
     switchTitle: 'Sign in with this link?',
     switchHint: (name: string) =>
       `You are signed in as ${name}. This link signs you in as the person it was created for.`,
+    switchHintUnknown:
+      'Your current sign-in could not be checked. This link signs you in as the person it was created for.',
     switchConfirm: 'Sign in with the link',
     switchCancel: 'Stay signed in',
     localCommand: 'node dist/cli.js login-link <sub>',

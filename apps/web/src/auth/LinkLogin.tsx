@@ -38,7 +38,7 @@ export function LinkLogin() {
   const { hash, pathname, search } = useLocation();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { status, me } = useAuth();
+  const { status, me, sessionUnknown } = useAuth();
   const code = pathname === LOGIN_PATH ? codeFrom(hash) : null;
   const [phase, setPhase] = useState<Phase>(code !== null ? 'waiting' : 'idle');
   // Where the router was sent. The router applies a navigation in a React transition, so the
@@ -48,14 +48,21 @@ export function LinkLogin() {
   const arrived = target !== null && pathname + search === target;
   // The code lives only here, from the moment it is read until it is sent or dropped.
   const held = useRef<string | null>(null);
+  // Set when the code is taken, cleared once the fragment is gone: a code is read at most once
+  // however often effects re-run (StrictMode, a re-render before the router drops the fragment).
+  const taken = useRef(false);
 
   useEffect(() => {
     if (arrived) setTarget(null);
   }, [arrived]);
 
   useEffect(() => {
-    // StrictMode runs effects twice before the router drops the fragment: guard on the ref.
-    if (code === null || held.current !== null) return;
+    if (code === null) {
+      taken.current = false;
+      return;
+    }
+    if (taken.current) return;
+    taken.current = true;
     held.current = code;
     setPhase('waiting');
     void navigate({ pathname, search }, { replace: true });
@@ -83,23 +90,29 @@ export function LinkLogin() {
 
   useEffect(() => {
     if (phase !== 'waiting' || status === 'loading' || held.current === null) return;
-    if (status === 'signed-in') {
+    // Send on its own only when `/me` definitely said "nobody is signed in" (401); any other
+    // failure leaves the session state unknown, and a link must not replace a session unasked.
+    if (status === 'signed-in' || sessionUnknown) {
       setPhase('confirm');
       return;
     }
     const link = held.current;
     held.current = null;
     void send(link, false);
-  }, [phase, status]);
+  }, [phase, status, sessionUnknown]);
 
   if (phase === 'confirm') {
     return (
       <ConfirmCard
-        name={me?.name ?? ''}
+        hint={
+          sessionUnknown
+            ? strings.login.switchHintUnknown
+            : strings.login.switchHint(me?.name ?? '')
+        }
         onConfirm={() => {
           const link = held.current;
           held.current = null;
-          if (link !== null) void send(link, true);
+          if (link !== null) void send(link, !sessionUnknown);
         }}
         onCancel={() => {
           held.current = null;
@@ -120,11 +133,11 @@ export function LinkLogin() {
 }
 
 function ConfirmCard({
-  name,
+  hint,
   onConfirm,
   onCancel,
 }: {
-  name: string;
+  hint: string;
   onConfirm: () => void;
   onCancel: () => void;
 }) {
@@ -138,7 +151,7 @@ function ConfirmCard({
           </CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
-          <p className="text-sm text-muted-foreground">{strings.login.switchHint(name)}</p>
+          <p className="text-sm text-muted-foreground">{hint}</p>
           <Button onClick={onConfirm}>{strings.login.switchConfirm}</Button>
           <Button variant="outline" onClick={onCancel}>
             {strings.login.switchCancel}

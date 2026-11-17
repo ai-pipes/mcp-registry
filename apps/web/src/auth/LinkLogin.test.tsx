@@ -2,9 +2,12 @@ import { screen, waitFor } from '@testing-library/react';
 import { HttpResponse, http } from 'msw';
 import { StrictMode } from 'react';
 import { Outlet } from 'react-router';
-import { describe, expect, it } from 'vite-plus/test';
+import { beforeEach, describe, expect, it } from 'vite-plus/test';
+import { AuthProvider, useAuth } from './AuthProvider.tsx';
+import { LinkLogin } from './LinkLogin.tsx';
 import { routes } from '@/app/routes.tsx';
 import { errorResponse, server } from '../../test/msw/handlers.ts';
+import { strings } from '@/strings.ts';
 import { renderWithApp } from '../../test/setup.ts';
 
 function StrictModeShell() {
@@ -13,6 +16,11 @@ function StrictModeShell() {
       <Outlet />
     </StrictMode>
   );
+}
+
+function AfterSession() {
+  const { status } = useAuth();
+  return status === 'loading' ? null : <LinkLogin />;
 }
 
 const signedOut = http.get('/api/auth/me', () => errorResponse(401, 'unauthenticated'));
@@ -100,6 +108,8 @@ describe('LinkLogin', () => {
       const { router } = renderWithApp(routes, { route: '/login#link=ll_x' });
       expect(await screen.findByRole('heading', { name: 'Sign in with this link?' })).toBeTruthy();
       expect(screen.getByText(/You are signed in as Anna\./)).toBeTruthy();
+      await new Promise((r) => setTimeout(r, 300)); // a late send would show up here
+      expect(screen.getByRole('heading', { name: 'Sign in with this link?' })).toBeTruthy();
       expect(bodies).toEqual([]);
       expect(router.state.location.hash).toBe('');
     });
@@ -128,6 +138,71 @@ describe('LinkLogin', () => {
       expect(bodies).toEqual([{ code: 'll_x' }]);
       expect(screen.queryByRole('alert')).toBeNull();
     });
+  });
+
+  describe('when the session check fails', () => {
+    const bodies: unknown[] = [];
+    beforeEach(() => {
+      bodies.length = 0;
+      server.use(
+        http.get('/api/auth/me', () => errorResponse(500, 'internal')),
+        http.post('/api/auth/link', async ({ request }) => {
+          bodies.push(await request.json());
+          return new HttpResponse(null, { status: 204 });
+        }),
+        catalog,
+      );
+    });
+
+    it('does not send the code when the session check fails', async () => {
+      renderWithApp(routes, { route: '/login#link=ll_x' });
+      expect(await screen.findByText(strings.login.switchHintUnknown)).toBeTruthy();
+      await new Promise((r) => setTimeout(r, 300));
+      expect(bodies).toEqual([]);
+    });
+
+    it('sends after confirmation when the session check failed', async () => {
+      const { user } = renderWithApp(routes, { route: '/login#link=ll_x' });
+      await user.click(await screen.findByRole('button', { name: 'Sign in with the link' }));
+      await waitFor(() => expect(bodies).toEqual([{ code: 'll_x' }]));
+    });
+  });
+
+  it('sends the code exactly once when the session is already known at mount', async () => {
+    let calls = 0;
+    server.use(
+      signedOut,
+      http.post('/api/auth/link', () => {
+        calls += 1;
+        return new HttpResponse(null, { status: 204 });
+      }),
+      catalog,
+    );
+    // `LinkLogin` mounts only once `/me` has settled, so `status` is never `loading` for it.
+    const { router } = renderWithApp(
+      [
+        {
+          element: <StrictModeShell />,
+          children: [
+            {
+              element: (
+                <AuthProvider>
+                  <AfterSession />
+                </AuthProvider>
+              ),
+              children: [
+                { path: 'login', element: <p>login</p> },
+                { path: 'catalog', element: <p>catalog</p> },
+              ],
+            },
+          ],
+        },
+      ],
+      { route: '/login#link=ll_x' },
+    );
+    await waitFor(() => expect(router.state.location.pathname).toBe('/catalog'));
+    await new Promise((r) => setTimeout(r, 200));
+    expect(calls).toBe(1);
   });
 
   it('/login without a fragment goes to the catalog', async () => {
