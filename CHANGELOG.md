@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented in this file. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses [semantic versioning](https://semver.org). What stays stable within 1.x is described in the README, section "Versioning and upgrades".
 
-## [1.0.0] - Unreleased
+## [1.0.0] - 2026-11-17
 
 Upgrading from 0.1.0: back up the database and `SECRETS_KEY`, replace the image, start. Two migrations (`0009`, `0010`) run at startup. The first start records a check value for the configured `SECRETS_KEY` (see "Added"), so start with the key you have been using. If you set `PGSSLMODE`, read the entry under "Changed".
 
@@ -20,7 +20,12 @@ Upgrading from 0.1.0: back up the database and `SECRETS_KEY`, replace the image,
 - `OIDC_ISSUER`, `OIDC_CLIENT_ID` and `OIDC_CLIENT_SECRET` are optional. Set all three or none; a partial set stops the server at startup and names the missing ones. Installations that already set all three behave as before.
 - `rotate-secrets-key` prints an extra `key check:` line (`re-sealed`, `already current`, `none stored` or `cannot be read with either key`) and exits with code 1 if the check value cannot be read with either key. It also re-seals the check value.
 - The `postgres` client is upgraded from 3.4.9 to 4.1.1. The client now reads `PGSSLMODE`; 3.x ignored it. An installation that sets `PGSSLMODE` may now be required to use TLS when connecting to the database: `require` uses TLS and fails against a server without it, and `verify-ca` and `verify-full` check the certificate against Node's CA store and also the host name, except when the root certificate file is given as `sslrootcert` in `DATABASE_URL`: then `verify-ca` does not check the host name. `PGSSLROOTCERT` and `~/.postgresql/root.crt` are not read: a private CA goes into `DATABASE_URL` as `?sslrootcert=<path>`. A TLS setting in `DATABASE_URL` still takes precedence. If the database connection fails after the upgrade, check `PGSSLMODE` first. The bundled Compose files do not set it.
+- Release images are built and tested (version, quick-start smoke test, compose smoke test) before they are published to GHCR.
 - Other dependency updates (`hono`, `@tanstack/react-query`, `tailwindcss`, `cn`, and the GitHub Actions used for builds).
+
+### Security
+
+- `@hono/node-server` is updated from 2.1.5 to 2.1.8, which fixes GHSA-qv5m-9pm6-hqp3 (an unhandled `ECONNRESET` during an asynchronous WebSocket upgrade could crash the process) and GHSA-jpvv-r467-5p4w (a backslash in the request path was parsed as a path separator, bypassing path-based access control at a reverse proxy).
 
 ### Fixed
 
