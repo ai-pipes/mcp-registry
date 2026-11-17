@@ -309,7 +309,17 @@ docker compose run --rm app node dist/cli.js reset-key-check --yes   # docker-co
 docker compose up -d
 ```
 
-For the quick start: `docker compose -p mcp-registry -f quickstart.compose.yml run --rm app node dist/cli.js reset-key-check --yes`, then `docker compose -p mcp-registry -f quickstart.compose.yml up -d`.
+For the quick start, the key is the `secrets_key` file in the `secrets` volume. Stop the stack, write the right key into the file (the same command as in the rotation section, with `$KEY` holding the right key), remove the check and start:
+
+```sh
+docker compose -p mcp-registry down                                           # not "down -v"
+printf '%s\n' "$KEY" | docker run --rm -i -v mcp-registry_secrets:/secrets \
+  --entrypoint sh pgvector/pgvector:pg17 -c 'cat > /secrets/secrets_key'
+docker compose -p mcp-registry -f quickstart.compose.yml run --rm app node dist/cli.js reset-key-check --yes
+docker compose -p mcp-registry -f quickstart.compose.yml up -d
+```
+
+Run the `-f quickstart.compose.yml` commands (here and in case 3) with the same `--env-file` and environment (including `MCP_REGISTRY_IMAGE`, if you set it) as when you started the stack; otherwise Compose recreates the stack with default settings.
 
 When the app is in a restart loop `docker compose exec` fails ("container is restarting"); `run --rm` starts a separate one-off container with the same configuration and does not need the app to be up (the database starts if it is not running). The command prints `key check removed: the next start records the configured SECRETS_KEY`; the running app picks the new check up on its next restart attempt.
 
@@ -333,6 +343,21 @@ docker compose -p mcp-registry -f quickstart.compose.yml run --rm app node dist/
 - **Large tool outputs.** Claude Code truncates MCP tool output at about 25k tokens (`MAX_MCP_OUTPUT_TOKENS`); raise it on the client (`MAX_MCP_OUTPUT_TOKENS=100000 claude`) for large results. The gateway's 20 MiB `UPSTREAM_MAX_RESPONSE_BYTES` only protects server memory.
 - **Scope.** Streamable HTTP upstreams only (no stdio, no legacy SSE). Tools only: MCP resources and prompts are not proxied.
 - Call arguments and results are never logged. Daily limits reset at midnight UTC.
+
+## Versioning and upgrades
+
+Releases follow [semantic versioning](https://semver.org); changes are listed in [CHANGELOG.md](./CHANGELOG.md). Within 1.x these do not break:
+
+- environment variables: names and meaning (new ones may be added, with defaults that keep the old behaviour);
+- CLI commands, their arguments and exit codes (0 success, 1 operation failed, 2 bad invocation);
+- the four meta-tools of `/mcp` (`list_servers`, `search_tools`, `describe_tool`, `call_tool`): their names and input schemas;
+- the database schema: migrations only move forward and run at startup under an advisory lock.
+
+`/api/**` is the web UI's internal interface and may change in minor versions; do not build integrations on it. Agents use `/mcp`, scripts use the CLI.
+
+To upgrade, back up the database (`pg_dump`) and the secrets key, replace the image, start. From 0.1.0 you can go straight to any 1.x release. There are no down migrations: to go back to an older version, restore the backup taken before the upgrade.
+
+The version is shown by `node dist/cli.js --version`, under your name in the web UI sidebar, and in the `version` field of the `listening` log record at startup.
 
 ## Development
 
