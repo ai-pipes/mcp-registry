@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vite-plus/test';
 import { makeDeps } from '../../../../test/identity/fakes.ts';
 import { sessionExpiry } from '../domain/session.ts';
-import { bootstrapLocalAdmin, completeLinkLogin, issueLoginLink } from './login-link.ts';
+import {
+  bootstrapLocalAdmin,
+  completeLinkLogin,
+  issueLoginLink,
+  LOCAL_ADMIN_SUB,
+} from './login-link.ts';
 import { pruneExpiredSessions } from './sessions.ts';
 import { provisionUser, setDisabled } from './users.ts';
 
@@ -135,7 +140,8 @@ describe('bootstrapLocalAdmin', () => {
     expect(r?.code.startsWith('ll_')).toBe(true);
     const [user] = [...f.users.values()];
     expect(f.users.size).toBe(1);
-    expect(user?.oidcSub).toBe('local-admin');
+    expect(user?.oidcSub).toBe(LOCAL_ADMIN_SUB);
+    expect(LOCAL_ADMIN_SUB).toBe('local-admin');
     expect(user?.name).toBe('Admin');
     expect(user?.role).toBe('admin');
     expect(f.loginLinks.size).toBe(1);
