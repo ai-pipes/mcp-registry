@@ -11,6 +11,9 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+# The compose file passes these through from the environment: a developer's shell must not change the run.
+unset OIDC_ISSUER OIDC_CLIENT_ID OIDC_CLIENT_SECRET OIDC_LOGIN_GROUP OIDC_ADMIN_GROUP OIDC_SCOPES OIDC_GROUPS_CLAIM ALLOWED_HOSTS TRUST_PROXY TRUST_PROXY_HOPS COOKIE_SECURE SYNC_INTERVAL_HOURS CALL_LOG_RETENTION_DAYS UPSTREAM_MAX_RESPONSE_BYTES MCP_MAX_BODY_BYTES EMBEDDER EMBEDDER_URL EMBEDDER_MODEL SEARCH_MIN_SIMILARITY LOG_LEVEL
+
 PROJECT="${QUICKSTART_PROJECT:-mcp-quickstart-smoke}"
 PORT="${QUICKSTART_PORT:-38081}"
 BASE_URL="http://localhost:${PORT}"
@@ -154,7 +157,7 @@ while [ "$SECONDS" -lt "$deadline" ]; do
   if [ "$(curl -fsS "${BASE_URL}/healthz" 2>/dev/null || true)" = "ok" ]; then
     fail "the app became healthy with a key that does not match the data"
   fi
-  log="$(app_log)"
+  log="$(app_log || true)"
   if grep -qF "$FATAL_TEXT" <<<"$log"; then seen=1; fi
   sleep 3
 done
