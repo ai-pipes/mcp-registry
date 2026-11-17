@@ -10,6 +10,11 @@ export {
   setDisabled,
 } from './application/users.ts';
 export type { UserSummary } from './application/users.ts';
+export {
+  bootstrapLocalAdmin,
+  completeLinkLogin,
+  issueLoginLink,
+} from './application/login-link.ts';
 export { completeOidcLogin, startOidcLogin } from './application/oidc-login.ts';
 export type { IdentityDeps, OidcProvider } from './application/ports.ts';
 export { IdentityError } from './domain/user.ts';

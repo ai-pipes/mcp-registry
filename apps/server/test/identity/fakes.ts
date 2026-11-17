@@ -1,5 +1,6 @@
 import type {
   IdentityDeps,
+  LoginLinkRecord,
   OidcProvider,
   PendingLogin,
   SessionRecord,
@@ -51,7 +52,13 @@ export function makeDeps() {
   const tokens = new Map<string, TokenRecord>();
   const sessions = new Map<string, SessionRecord>();
   const pendingLogins = new Map<string, PendingLogin>();
-  const auditEntries: { actorId: string | null; action: string; target?: string }[] = [];
+  const loginLinks = new Map<string, LoginLinkRecord>();
+  const auditEntries: {
+    actorId: string | null;
+    action: string;
+    target?: string;
+    meta?: Record<string, unknown>;
+  }[] = [];
   const clock = new FakeClock();
   const oidc = new FakeOidc();
   let counter = 0;
@@ -153,6 +160,31 @@ export function makeDeps() {
         return Promise.resolve(p);
       },
     },
+    loginLinks: {
+      insert: (l) => {
+        loginLinks.set(l.codeHash, l);
+        return Promise.resolve();
+      },
+      consume: (codeHash) => {
+        const l = loginLinks.get(codeHash) ?? null;
+        loginLinks.delete(codeHash);
+        return Promise.resolve(l);
+      },
+      deleteByUser: (userId) => {
+        for (const [h, l] of loginLinks) if (l.userId === userId) loginLinks.delete(h);
+        return Promise.resolve();
+      },
+      deleteExpired: (now) => {
+        let n = 0;
+        for (const [h, l] of loginLinks) {
+          if (l.expiresAt <= now) {
+            loginLinks.delete(h);
+            n += 1;
+          }
+        }
+        return Promise.resolve(n);
+      },
+    },
     oidc,
     policy: { loginGroup: 'mcp-users', adminGroup: 'mcp-admins' },
     sha256: {
@@ -161,6 +193,11 @@ export function makeDeps() {
       timingSafeEqual: (a, b) => a === b,
     },
     tokenLimiter: {
+      hit: () => ({ allowed: true, retryAfterSec: 0 }),
+      check: () => ({ allowed: true, retryAfterSec: 0 }),
+      reset: () => undefined,
+    },
+    linkLimiter: {
       hit: () => ({ allowed: true, retryAfterSec: 0 }),
       check: () => ({ allowed: true, retryAfterSec: 0 }),
       reset: () => undefined,
@@ -176,7 +213,7 @@ export function makeDeps() {
       base64url: (n) => `r${++counter}-${'x'.repeat(n)}`,
     },
   };
-  return { deps, users, tokens, sessions, pendingLogins, auditEntries, clock, oidc };
+  return { deps, users, tokens, sessions, pendingLogins, loginLinks, auditEntries, clock, oidc };
 }
 
 /** The provider URL of a started login; throws when the start failed. */

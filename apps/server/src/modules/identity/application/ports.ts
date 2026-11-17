@@ -97,15 +97,33 @@ export interface PendingLoginRepository {
   consume(state: string): Promise<PendingLogin | null>;
 }
 
+/** A one-time sign-in link. Only the SHA-256 of the code is stored. */
+export interface LoginLinkRecord {
+  codeHash: string;
+  userId: string;
+  createdAt: Date;
+  expiresAt: Date;
+}
+
+export interface LoginLinkRepository {
+  insert(link: LoginLinkRecord): Promise<void>;
+  /** Atomically removes and returns the record; null if unknown or already consumed. */
+  consume(codeHash: string): Promise<LoginLinkRecord | null>;
+  deleteByUser(userId: string): Promise<void>;
+  deleteExpired(now: Date): Promise<number>;
+}
+
 export interface IdentityDeps {
   users: UserRepository;
   tokens: TokenRepository;
   sessions: SessionRepository;
   pendingLogins: PendingLoginRepository;
+  loginLinks: LoginLinkRepository;
   oidc: OidcProvider;
   policy: GroupPolicy;
   sha256: Sha256;
   tokenLimiter: RateLimiter;
+  linkLimiter: RateLimiter;
   audit: AuditLog;
   clock: Clock;
   /** `n` random bytes as an unpadded base64url string. */

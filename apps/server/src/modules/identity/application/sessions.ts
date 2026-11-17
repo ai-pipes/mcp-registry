@@ -30,11 +30,14 @@ export async function authenticateSession(
 
 /**
  * Daily housekeeping: sessions that ended (12 h idle or the 30-day limit) are deleted. A dead
- * session is refused anyway; this only keeps `identity.sessions` from growing. Returns how many.
+ * session is refused anyway; this only keeps `identity.sessions` from growing. Expired login links go too. Returns how many sessions.
  */
 export async function pruneExpiredSessions(deps: {
   sessions: Pick<IdentityDeps['sessions'], 'deleteDead'>;
+  loginLinks: Pick<IdentityDeps['loginLinks'], 'deleteExpired'>;
   clock: IdentityDeps['clock'];
 }): Promise<number> {
-  return deps.sessions.deleteDead(deadSessionCutoffs(deps.clock.now()));
+  const now = deps.clock.now();
+  await deps.loginLinks.deleteExpired(now);
+  return deps.sessions.deleteDead(deadSessionCutoffs(now));
 }

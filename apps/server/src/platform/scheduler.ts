@@ -11,7 +11,10 @@ const MAX_TIMER_MS = 2 ** 31 - 1;
 
 type SchedulerDeps = Pick<Container, 'catalogSync' | 'logger' | 'clock'> & {
   gateway: Pick<Container['gateway'], 'callLog' | 'quota'>;
-  identity: { sessions: Pick<IdentityDeps['sessions'], 'deleteDead'> };
+  identity: {
+    sessions: Pick<IdentityDeps['sessions'], 'deleteDead'>;
+    loginLinks: Pick<IdentityDeps['loginLinks'], 'deleteExpired'>;
+  };
   config: Pick<Container['config'], 'syncIntervalHours' | 'callLogRetentionDays'>;
 };
 
@@ -78,6 +81,7 @@ export function startScheduler(c: SchedulerDeps): { stop(): Promise<void> } {
     try {
       const sessions = await pruneExpiredSessions({
         sessions: c.identity.sessions,
+        loginLinks: c.identity.loginLinks,
         clock: c.clock,
       });
       c.logger.info({ sessions }, 'session retention: done');
