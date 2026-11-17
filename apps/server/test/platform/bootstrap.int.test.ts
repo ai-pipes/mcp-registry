@@ -27,6 +27,7 @@ function configFor(oidc: boolean): Config {
   return {
     port: 3000,
     databaseUrl: 'postgres://unused',
+    databasePassword: undefined,
     publicUrl: PUBLIC_URL,
     allowedHosts: [],
     trustProxy: false,

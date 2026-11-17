@@ -1,0 +1,120 @@
+# MCP gateway quick start: works with no settings at all (no OIDC, no files to prepare).
+#
+#   curl -fsSL <raw url>/quickstart.compose.yml | docker compose -f - up -d
+#
+# The default image tag is published with the 1.0.0 release; before that set MCP_REGISTRY_IMAGE.
+#
+# Run it from an empty directory: Compose also reads a `.env` file in the directory you run it
+# from, so settings such as PORT from an unrelated project would apply.
+#
+# On the first start the gateway creates the admin `local-admin` and logs a one-time sign-in link:
+#   docker compose -p mcp-registry logs app | grep "one-time link"
+# The secrets key and the database password are generated into the `secrets` volume by the
+# one-shot `init` service and never rewritten. Back up `secrets` and `pgdata` together: losing the
+# key while keeping the data makes the stored secrets unreadable, and `docker compose down -v`
+# destroys the data and the key. Postgres is reachable only from the app.
+#
+# Safari does not accept the `Secure` session cookie on plain http://localhost: use another
+# browser, or start with COOKIE_SECURE=false. A new sign-in link:
+#   docker compose -p mcp-registry exec app node dist/cli.js login-link local-admin
+#
+# The port is published on 127.0.0.1 only. To expose it, set BIND_ADDRESS=0.0.0.0 together with a
+# real PUBLIC_URL (the address people use, for example https://mcp.example.com) behind HTTPS.
+#
+# Settings come from the caller's shell environment or from `docker compose --env-file <file>`
+# and are NOT remembered between commands. A permanent installation saves this file and passes
+# the same `--env-file` (or environment) on every `docker compose` command:
+#   docker compose --env-file my.env -f quickstart.compose.yml up -d
+# Settings: MCP_REGISTRY_IMAGE, PORT, BIND_ADDRESS, PUBLIC_URL, SECRETS_KEY_OLD (key rotation, see
+# the README) and the variables listed under the app's `environment:` (OIDC login, proxy, cookie,
+# limits, search, logging; see .env.example). An empty value counts as unset. SECRETS_KEY,
+# DATABASE_URL and PGPASSWORD are owned by this file.
+name: mcp-registry
+
+services:
+  init:
+    image: pgvector/pgvector:pg17
+    restart: 'no'
+    # Runs as root to write the volume. Files are 0444 (readable by `postgres` and by the app's
+    # `node` user, writable by nobody) in a 0755 directory; existing files are never touched.
+    entrypoint: ['/bin/sh', '-ec']
+    command:
+      - |
+        umask 077
+        make() {
+          [ -s "/secrets/$$1" ] && return 0
+          rm -f "/secrets/.$$1.tmp"
+          sh -c "$$2" > "/secrets/.$$1.tmp"
+          chmod 0444 "/secrets/.$$1.tmp"
+          mv "/secrets/.$$1.tmp" "/secrets/$$1"
+        }
+        chmod 0755 /secrets
+        make secrets_key 'head -c 32 /dev/urandom | base64'
+        make pg_password 'head -c 24 /dev/urandom | od -An -tx1 | tr -d " \n"'
+    volumes:
+      - secrets:/secrets
+
+  db:
+    image: pgvector/pgvector:pg17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: mcp
+      POSTGRES_DB: mcp
+      POSTGRES_PASSWORD_FILE: /secrets/pg_password
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - secrets:/secrets:ro
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U mcp -d mcp']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  app:
+    image: ${MCP_REGISTRY_IMAGE:-ghcr.io/ai-pipes/mcp-registry:1}
+    init: true
+    restart: unless-stopped
+    environment:
+      PORT: '3000'
+      PUBLIC_URL: ${PUBLIC_URL:-http://localhost:${PORT:-3000}}
+      DATABASE_URL: postgres://mcp@db:5432/mcp
+      SECRETS_KEY_FILE: /secrets/secrets_key
+      SECRETS_KEY_OLD: ${SECRETS_KEY_OLD:-}
+      PGPASSWORD_FILE: /secrets/pg_password
+      # Optional settings; empty means unset (config.ts drops empty values before validation).
+      OIDC_ISSUER: ${OIDC_ISSUER:-}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+      OIDC_LOGIN_GROUP: ${OIDC_LOGIN_GROUP:-}
+      OIDC_ADMIN_GROUP: ${OIDC_ADMIN_GROUP:-}
+      OIDC_SCOPES: ${OIDC_SCOPES:-}
+      OIDC_GROUPS_CLAIM: ${OIDC_GROUPS_CLAIM:-}
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-}
+      TRUST_PROXY: ${TRUST_PROXY:-}
+      TRUST_PROXY_HOPS: ${TRUST_PROXY_HOPS:-}
+      COOKIE_SECURE: ${COOKIE_SECURE:-}
+      SYNC_INTERVAL_HOURS: ${SYNC_INTERVAL_HOURS:-}
+      CALL_LOG_RETENTION_DAYS: ${CALL_LOG_RETENTION_DAYS:-}
+      UPSTREAM_MAX_RESPONSE_BYTES: ${UPSTREAM_MAX_RESPONSE_BYTES:-}
+      MCP_MAX_BODY_BYTES: ${MCP_MAX_BODY_BYTES:-}
+      EMBEDDER: ${EMBEDDER:-}
+      EMBEDDER_URL: ${EMBEDDER_URL:-}
+      EMBEDDER_MODEL: ${EMBEDDER_MODEL:-}
+      SEARCH_MIN_SIMILARITY: ${SEARCH_MIN_SIMILARITY:-}
+      LOG_LEVEL: ${LOG_LEVEL:-}
+    volumes:
+      - secrets:/secrets:ro
+    ports:
+      - '${BIND_ADDRESS:-127.0.0.1}:${PORT:-3000}:3000'
+    depends_on:
+      init:
+        condition: service_completed_successfully
+      db:
+        condition: service_healthy
+
+volumes:
+  secrets:
+  pgdata:

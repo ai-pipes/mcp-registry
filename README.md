@@ -118,35 +118,38 @@ claude mcp add --transport http mcp-registry https://mcp.example.com/mcp \
 
 All settings are environment variables (see `.env.example`). An empty value (`KEY=`) counts as unset.
 
-| Variable                      | Default                       | Meaning                                                                                                                                                 |
-| ----------------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PUBLIC_URL`                  | required                      | External URL of the gateway (scheme + host + port). Used for OIDC/OAuth redirect URIs, the `claude mcp add` command and `Origin` checks.                |
-| `DATABASE_URL`                | required (Compose sets it)    | Postgres connection string. Compose defaults to `postgres://mcp@db:5432/mcp` with `POSTGRES_PASSWORD`.                                                  |
-| `POSTGRES_PASSWORD`           | required by Compose           | Password of the bundled Postgres. Set it before the first start; it is stored in the volume afterwards.                                                 |
-| `PORT`                        | `3000`                        | Listening port (with Compose: the host port; the container always listens on 3000).                                                                     |
-| `ALLOWED_HOSTS`               | empty                         | Extra accepted `Host` values for `/mcp`, comma-separated. The `PUBLIC_URL` host, `localhost` and `127.0.0.1` are always accepted.                       |
-| `TRUST_PROXY`                 | `false`                       | Take the client IP from `X-Forwarded-For`. Enable only behind a reverse proxy.                                                                          |
-| `TRUST_PROXY_HOPS`            | `1`                           | Number of trusted proxies in front of the gateway (1-5).                                                                                                |
-| `COOKIE_SECURE`               | `true`                        | `Secure` flag on the session cookie. Works with HTTPS and with `http://localhost`.                                                                      |
-| `SECRETS_KEY`                 | required                      | AES-256-GCM key, base64 of exactly 32 bytes (`openssl rand -base64 32`). Encrypts server secrets and people's tokens.                                   |
-| `SECRETS_KEY_OLD`             | unset                         | Previous key, only during key rotation. Must differ from `SECRETS_KEY`.                                                                                 |
-| `OIDC_ISSUER`                 | unset                         | Issuer URL of the OIDC provider. Set all three `OIDC_*` or none; without them people sign in with one-time links. Discovery happens on the first login. |
-| `OIDC_CLIENT_ID`              | unset                         | Client ID registered for the gateway (with `OIDC_ISSUER` and `OIDC_CLIENT_SECRET`).                                                                     |
-| `OIDC_CLIENT_SECRET`          | unset                         | Client secret registered for the gateway (with `OIDC_ISSUER` and `OIDC_CLIENT_ID`).                                                                     |
-| `OIDC_LOGIN_GROUP`            | `mcp-users`                   | Members of this group may sign in.                                                                                                                      |
-| `OIDC_ADMIN_GROUP`            | `mcp-admins`                  | Members of this group may sign in and are admins.                                                                                                       |
-| `OIDC_SCOPES`                 | `openid profile email groups` | Scopes of the login request, space- or comma-separated; must include `openid`.                                                                          |
-| `OIDC_GROUPS_CLAIM`           | `groups`                      | Claim with the person's groups: a list of names, or an object whose keys are the names.                                                                 |
-| `SYNC_INTERVAL_HOURS`         | `6`                           | Catalog synchronisation period, hours (1-8760).                                                                                                         |
-| `CALL_LOG_RETENTION_DAYS`     | `90`                          | How long call log entries are kept.                                                                                                                     |
-| `UPSTREAM_MAX_RESPONSE_BYTES` | `20971520` (20 MiB)           | Larger upstream responses are refused (memory protection).                                                                                              |
-| `MCP_MAX_BODY_BYTES`          | `10485760` (10 MiB)           | Request body limit of `/mcp` (tool arguments may carry base64 files). The rest of the HTTP API is limited to 1 MiB.                                     |
-| `EMBEDDER`                    | `local`                       | `local` (bundled model) or `openai-compatible` (`POST <EMBEDDER_URL>/embeddings`).                                                                      |
-| `EMBEDDER_URL`                | unset                         | Base URL of the embeddings API, only for `openai-compatible`.                                                                                           |
-| `EMBEDDER_MODEL`              | unset                         | Model name for `openai-compatible`. Must produce 384-dimensional vectors.                                                                               |
-| `MODEL_DIR`                   | `/app/models`                 | Directory of the local model. The image already contains it.                                                                                            |
-| `SEARCH_MIN_SIMILARITY`       | `0.83`                        | Cosine-similarity floor (0-1) for vector search candidates.                                                                                             |
-| `LOG_LEVEL`                   | `info`                        | `fatal`, `error`, `warn`, `info`, `debug`, `trace` or `silent`.                                                                                         |
+| Variable                      | Default                            | Meaning                                                                                                                                                          |
+| ----------------------------- | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PUBLIC_URL`                  | required                           | External URL of the gateway (scheme + host + port). Used for OIDC/OAuth redirect URIs, the `claude mcp add` command and `Origin` checks.                         |
+| `DATABASE_URL`                | required (Compose sets it)         | Postgres connection string. Compose defaults to `postgres://mcp@db:5432/mcp` with `POSTGRES_PASSWORD`.                                                           |
+| `POSTGRES_PASSWORD`           | required by Compose                | Password of the bundled Postgres. Set it before the first start; it is stored in the volume afterwards.                                                          |
+| `PORT`                        | `3000`                             | Listening port (with Compose: the host port; the container always listens on 3000).                                                                              |
+| `BIND_ADDRESS`                | `127.0.0.1`                        | Host address the port is published on. `quickstart.compose.yml` only; set `0.0.0.0` (with a real `PUBLIC_URL`, behind HTTPS) to expose it.                       |
+| `ALLOWED_HOSTS`               | empty                              | Extra accepted `Host` values for `/mcp`, comma-separated. The `PUBLIC_URL` host, `localhost` and `127.0.0.1` are always accepted.                                |
+| `TRUST_PROXY`                 | `false`                            | Take the client IP from `X-Forwarded-For`. Enable only behind a reverse proxy.                                                                                   |
+| `TRUST_PROXY_HOPS`            | `1`                                | Number of trusted proxies in front of the gateway (1-5).                                                                                                         |
+| `COOKIE_SECURE`               | `true`                             | `Secure` flag on the session cookie. Works with HTTPS and with `http://localhost` in Chrome and Firefox; Safari and plain http on a LAN address need `false`.    |
+| `SECRETS_KEY`                 | required unless `SECRETS_KEY_FILE` | AES-256-GCM key, base64 of exactly 32 bytes (`openssl rand -base64 32`). Encrypts server secrets and people's tokens.                                            |
+| `SECRETS_KEY_FILE`            | unset                              | Path of a file holding the key instead of `SECRETS_KEY` (not both). `quickstart.compose.yml` sets it; for your own compose file or orchestrator.                 |
+| `PGPASSWORD_FILE`             | unset                              | Path of a file holding the database password (not together with `PGPASSWORD`). `quickstart.compose.yml` sets it; the bundled `docker-compose.yml` cannot use it. |
+| `SECRETS_KEY_OLD`             | unset                              | Previous key, only during key rotation. Must differ from `SECRETS_KEY`.                                                                                          |
+| `OIDC_ISSUER`                 | unset                              | Issuer URL of the OIDC provider. Set all three `OIDC_*` or none; without them people sign in with one-time links. Discovery happens on the first login.          |
+| `OIDC_CLIENT_ID`              | unset                              | Client ID registered for the gateway (with `OIDC_ISSUER` and `OIDC_CLIENT_SECRET`).                                                                              |
+| `OIDC_CLIENT_SECRET`          | unset                              | Client secret registered for the gateway (with `OIDC_ISSUER` and `OIDC_CLIENT_ID`).                                                                              |
+| `OIDC_LOGIN_GROUP`            | `mcp-users`                        | Members of this group may sign in.                                                                                                                               |
+| `OIDC_ADMIN_GROUP`            | `mcp-admins`                       | Members of this group may sign in and are admins.                                                                                                                |
+| `OIDC_SCOPES`                 | `openid profile email groups`      | Scopes of the login request, space- or comma-separated; must include `openid`.                                                                                   |
+| `OIDC_GROUPS_CLAIM`           | `groups`                           | Claim with the person's groups: a list of names, or an object whose keys are the names.                                                                          |
+| `SYNC_INTERVAL_HOURS`         | `6`                                | Catalog synchronisation period, hours (1-8760).                                                                                                                  |
+| `CALL_LOG_RETENTION_DAYS`     | `90`                               | How long call log entries are kept.                                                                                                                              |
+| `UPSTREAM_MAX_RESPONSE_BYTES` | `20971520` (20 MiB)                | Larger upstream responses are refused (memory protection).                                                                                                       |
+| `MCP_MAX_BODY_BYTES`          | `10485760` (10 MiB)                | Request body limit of `/mcp` (tool arguments may carry base64 files). The rest of the HTTP API is limited to 1 MiB.                                              |
+| `EMBEDDER`                    | `local`                            | `local` (bundled model) or `openai-compatible` (`POST <EMBEDDER_URL>/embeddings`).                                                                               |
+| `EMBEDDER_URL`                | unset                              | Base URL of the embeddings API, only for `openai-compatible`.                                                                                                    |
+| `EMBEDDER_MODEL`              | unset                              | Model name for `openai-compatible`. Must produce 384-dimensional vectors.                                                                                        |
+| `MODEL_DIR`                   | `/app/models`                      | Directory of the local model. The image already contains it.                                                                                                     |
+| `SEARCH_MIN_SIMILARITY`       | `0.83`                             | Cosine-similarity floor (0-1) for vector search candidates.                                                                                                      |
+| `LOG_LEVEL`                   | `info`                             | `fatal`, `error`, `warn`, `info`, `debug`, `trace` or `silent`.                                                                                                  |
 
 ## OIDC setup
 
@@ -261,15 +264,66 @@ Inside the container: `node dist/cli.js <command>` (same environment as the serv
 | `sync <slug> [--as <admin-sub>]`                                    | Sync a server's tools (without `--as`: as the scheduler).                                                                    |
 | `reindex`                                                           | Rebuild the search index (if `search_tools` misses a tool that is in the catalog).                                           |
 | `rotate-secrets-key`                                                | Re-encrypt every stored secret from `SECRETS_KEY_OLD` to `SECRETS_KEY`. Safe to repeat.                                      |
+| `reset-key-check --yes`                                             | Remove the stored key check so the next start records the configured `SECRETS_KEY` (see "Recovering from a key mismatch").   |
 
 ### Rotating `SECRETS_KEY`
 
 1. Generate a new key and keep the old one until rotation is done.
 2. Set `SECRETS_KEY_OLD=<current key>`, `SECRETS_KEY=<new key>`, restart. Both keys open secrets meanwhile, so calls keep working; a warning is logged on each start.
-3. Run `node dist/cli.js rotate-secrets-key`. It reports how many server secrets and connections were re-sealed. Exit code 1 lists records that neither key opens (wrong old key?).
-4. Run it again: it should report `0 re-sealed`. Remove `SECRETS_KEY_OLD` and restart.
+3. Run `node dist/cli.js rotate-secrets-key`. It reports how many server secrets and connections were re-sealed and a `key check:` line (`re-sealed`, `already current`, `none stored` or `cannot be read with either key`). Exit code 1 lists records that neither key opens (wrong old key?).
+4. Run it again: it should report `0 re-sealed` and `key check: already current`. Remove `SECRETS_KEY_OLD` and restart.
+
+**Quick start variant.** The key lives in the `secrets` volume (`SECRETS_KEY_FILE`), so the new key is written there and the old one is passed as `SECRETS_KEY_OLD`. Run from the directory with the saved `quickstart.compose.yml`; add `--env-file my.env` to every `docker compose -f ...` command if you use one. Every command below was run against a quick-start stack:
+
+```sh
+OLD=$(docker compose -p mcp-registry exec -T app cat /secrets/secrets_key)   # keep this value until the end
+NEW=$(openssl rand -base64 32)
+docker compose -p mcp-registry down                                           # not "down -v"
+printf '%s\n' "$NEW" | docker run --rm -i -v mcp-registry_secrets:/secrets \
+  --entrypoint sh pgvector/pgvector:pg17 -c 'cat > /secrets/secrets_key'
+SECRETS_KEY_OLD="$OLD" docker compose -f quickstart.compose.yml up -d
+docker compose -p mcp-registry exec -T app node dist/cli.js rotate-secrets-key   # run twice
+docker compose -f quickstart.compose.yml up -d                                # without SECRETS_KEY_OLD: the app is recreated
+```
+
+A successful run prints `server secrets: N re-sealed ...`, `connections: ...` and `key check: re-sealed` (then `already current` on the repeat). If the new key was not written correctly the app refuses to start; see below.
 
 Back up `SECRETS_KEY` together with the database: a database restored without its key has no usable secrets or connections.
+
+### Key check and secrets from files
+
+At every start the server compares `SECRETS_KEY` with a check value kept in the database. The check proves that the key is the one that was recorded on the first start with the check; it does not test the stored secrets themselves. On the first start, and the first start after upgrading from 0.1.0, the value is created from whatever key is configured at that moment. If the key opens it, the server continues. If only `SECRETS_KEY_OLD` opens it, the server continues and logs a warning to run `rotate-secrets-key`. If neither opens it, the server logs one fatal record and exits with code 1. The server never generates or replaces the key itself.
+
+`SECRETS_KEY_FILE` and `PGPASSWORD_FILE` read the key and the database password from files (for example Docker secrets); surrounding whitespace is trimmed. Set either the variable or its `_FILE` twin, not both: that is a startup error, as is an unreadable or empty file. Errors name the variable (`SECRETS_KEY_FILE` for a bad key read from a file) and the path, never the content.
+
+CLI commands warn on stderr when the stored check does not match the configured key; `create-server`, which would seal a new secret with the wrong key, is refused (exit 1). `rotate-secrets-key` and `reset-key-check` run regardless.
+
+### Recovering from a key mismatch
+
+The app logs `SECRETS_KEY does not match the data in this database; ...` and restarts in a loop. First find out which case you are in.
+
+**1. The server pinned a wrong key on the first start after an upgrade.** The check value is created from whatever key is configured on the first start with the check; it does not test existing secrets. If that key was wrong, the right key now looks like a mismatch. Put the right key back (`SECRETS_KEY` in `.env`, or the `secrets_key` file), remove the check, start:
+
+```sh
+docker compose run --rm app node dist/cli.js reset-key-check --yes   # docker-compose.yml + .env
+docker compose up -d
+```
+
+For the quick start: `docker compose -p mcp-registry -f quickstart.compose.yml run --rm app node dist/cli.js reset-key-check --yes`, then `docker compose -p mcp-registry -f quickstart.compose.yml up -d`.
+
+When the app is in a restart loop `docker compose exec` fails ("container is restarting"); `run --rm` starts a separate one-off container with the same configuration and does not need the app to be up (the database starts if it is not running). The command prints `key check removed: the next start records the configured SECRETS_KEY`; the running app picks the new check up on its next restart attempt.
+
+**2. The key is lost for good.** Server secrets and personal connections cannot be recovered. Put a new key in place (`openssl rand -base64 32`) and run the same `reset-key-check --yes`. People, tokens, the catalog and the call log remain; every server secret (UI: server, secret) and every person's connection must be entered again. Servers sealed under the lost key fail with an internal error until then.
+
+**3. Quick start: the `secrets` volume was lost, `pgdata` kept.** `init` generates a new key and a new database password; Postgres still has the old password, so the app cannot connect. Set the database password to the new one, then continue as in case 2:
+
+```sh
+docker compose -p mcp-registry exec -T db sh -c \
+  'printf "alter user mcp password '\''%s'\'';\n" "$(cat /secrets/pg_password)" | psql -U mcp -d mcp'
+docker compose -p mcp-registry -f quickstart.compose.yml run --rm app node dist/cli.js reset-key-check --yes
+```
+
+`alter user` prints `ALTER ROLE`; the app then connects, and the second command ends the key mismatch loop. Do not use `down -v`: it deletes the data too.
 
 ### Things to know
 
