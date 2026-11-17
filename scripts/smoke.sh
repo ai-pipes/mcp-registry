@@ -8,8 +8,8 @@
 #     saw the secret → docker compose down -v.
 # Runs as its own compose project with its own env file and port, so it never touches a
 # deployment started from .env in the same checkout. Needs docker, openssl, node 22 and
-# `pnpm install` (for the MCP client). OIDC is a placeholder: discovery is lazy and the smoke
-# never signs in (the UI login needs a real OIDC provider).
+# `pnpm install` (for the MCP client). OIDC is a placeholder: discovery is lazy. The smoke
+# exercises the CLI and the /mcp path only; it never signs in to the UI.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."

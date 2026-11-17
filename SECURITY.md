@@ -26,11 +26,16 @@ mcp-registry is designed for individuals and small teams running it inside a pri
 
 OIDC is optional. Without `OIDC_ISSUER`, `OIDC_CLIENT_ID` and `OIDC_CLIENT_SECRET`, people sign in with one-time links (`ll_...`, valid 15 minutes, used once, only the SHA-256 stored). This mode is meant for one person or a small trusted team; OIDC is recommended for a team. Know what it means:
 
-- On the first start without OIDC the server creates the administrator `local-admin` and writes a sign-in link into the container log. After every start the log contains an administrator credential for up to 15 minutes, until `local-admin` has signed in for the first time. Anyone who can read the logs in that window, including a log collector, can become admin. Sign in promptly; each new start invalidates the previous link.
+- On the first start without OIDC the server creates the administrator `local-admin` and writes a sign-in link into the container log. After every start the log contains an administrator credential for up to 15 minutes, until `local-admin` has signed in for the first time. Anyone who can read the logs in that window, including a log collector, can become admin. Sign in promptly; each new start invalidates the previous link. Someone who works only through the CLI and `/mcp` and never signs in to the UI gets a new link logged on every start; signing in once stops it.
 - A sign-in link is as powerful as its owner's session. Whoever holds an unused link becomes that person. Hand links over only through a private channel and do not paste them into chats or tickets. A new link for the same person invalidates the earlier one.
+- A link signs in whoever opens it and confirms. The UI always asks for confirmation and names the current account when one is signed in, but a person who confirms a link they did not ask for ends up in someone else's account and may store their own service credentials there. Open only links you requested or received from your operator.
 - Links are issued only by someone with access to the container (`node dist/cli.js login-link <sub>`); there is no self-service. The command also works when OIDC is configured, as break-glass access.
-- Failed link attempts are limited to 10 per minute per client IP. Behind a reverse proxy set `TRUST_PROXY` (and `TRUST_PROXY_HOPS`); otherwise all clients share one bucket and a single client can temporarily lock link sign-in for everyone.
+- After 10 failed link sign-ins per minute from one client IP, further failed attempts answer 429; a valid link is still accepted. The protection against guessing is the code's 256 bits and 15-minute life, not the limiter. Behind a reverse proxy set `TRUST_PROXY` (and `TRUST_PROXY_HOPS`); without `TRUST_PROXY=true` all clients share that failure budget.
 - There is no group management beyond what `create-user` assigns: admins see every active server, members see servers open to everyone or to the login group.
+
+#### Switching to OIDC later
+
+`local-admin` and every person created with `create-user` remain as they are. OIDC people are matched by the provider's `sub`; a local person whose `sub` equals a provider `sub` becomes that provider account and keeps its `sk_` tokens and stored service connections. After enabling OIDC, disable `local-admin` and other locally created people (Users page), or create local people with the provider's real `sub` from the start.
 
 ### Out of scope
 

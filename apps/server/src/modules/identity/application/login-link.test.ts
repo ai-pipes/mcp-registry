@@ -87,7 +87,7 @@ describe('completeLinkLogin', () => {
 
   it('rejects an expired link as invalid_link', async () => {
     const f = makeDeps();
-    await person(f);
+    const user = await person(f);
     const { code } = await issue(f);
     f.clock.advance(15 * 60_000);
     const r = await completeLinkLogin(f.deps, { code, ip: '1.1.1.1' });
@@ -95,6 +95,7 @@ describe('completeLinkLogin', () => {
     expect(f.sessions.size).toBe(0);
     const failed = f.auditEntries.filter((e) => e.action === 'auth.login_failed');
     expect(failed.map((e) => e.meta)).toEqual([{ reason: 'invalid_link' }]);
+    expect(failed.map((e) => e.actorId)).toEqual([user.id]);
   });
 
   it('writes no audit for a malformed or unknown code', async () => {
@@ -117,6 +118,7 @@ describe('completeLinkLogin', () => {
     expect(f.sessions.size).toBe(0);
     const failed = f.auditEntries.filter((e) => e.action === 'auth.login_failed');
     expect(failed.map((e) => e.meta)).toEqual([{ reason: 'disabled' }]);
+    expect(failed.map((e) => e.actorId)).toEqual([user.id]);
   });
 
   it('counts failures per IP', async () => {
@@ -157,6 +159,7 @@ describe('completeLinkLogin', () => {
     expect(!r.ok && r.error.code).toBe('invalid_link');
     const failed = f.auditEntries.filter((e) => e.action === 'auth.login_failed');
     expect(failed.map((e) => e.meta)).toEqual([{ reason: 'invalid_link' }]);
+    expect(failed.map((e) => e.actorId)).toEqual([null]);
   });
 });
 

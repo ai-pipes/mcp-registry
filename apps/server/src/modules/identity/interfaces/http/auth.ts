@@ -61,6 +61,9 @@ export function authRoutes(deps: IdentityDeps, opts: BrowserRouteOptions) {
           LINK_ERROR_STATUS[r.error.code] ?? 400,
         );
       }
+      // The person signed in with a link: the session this browser held is ended, not left alive.
+      const replaced = sessionIdOf(c);
+      if (replaced) await logout(deps, { sessionId: replaced });
       setSessionCookie(c, r.value.sessionId, opts.cookieSecure);
       return c.body(null, 204);
     })

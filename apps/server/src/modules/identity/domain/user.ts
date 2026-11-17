@@ -51,8 +51,6 @@ export type IdentityErrorCode =
   | 'invalid_input'
   /** A login link is unknown, already used or expired. */
   | 'invalid_link'
-  /** Login links need the OIDC provider, which is not configured. */
-  | 'oidc_not_configured'
   /** The identity provider cannot be reached right now; try signing in again later. */
   | 'idp_unavailable';
 

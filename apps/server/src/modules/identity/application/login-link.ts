@@ -3,6 +3,7 @@ import {
   isLoginLinkExpired,
   looksLikeLoginCode,
   loginLinkExpiry,
+  needsBootstrapLink,
   newLoginCode,
 } from '../domain/login-link.ts';
 import { sessionExpiry } from '../domain/session.ts';
@@ -72,8 +73,11 @@ export async function completeLinkLogin(
   const now = deps.clock.now();
   const link = await deps.loginLinks.consume(deps.sha256.hex(input.code));
   if (!link) return reject('invalid_link', null);
-  if (isLoginLinkExpired(link.expiresAt, now)) return reject('invalid_link', { actorId: null });
   const user = await deps.users.findById(link.userId);
+  // The audit record names the person whose link was refused; null only when they are gone.
+  if (isLoginLinkExpired(link.expiresAt, now)) {
+    return reject('invalid_link', { actorId: user?.id ?? null });
+  }
   if (!user) return reject('invalid_link', { actorId: null });
   if (user.disabled) return reject('disabled', { actorId: user.id });
 
@@ -92,20 +96,23 @@ export async function completeLinkLogin(
 
 /**
  * For a server without OIDC: issues a link for `local-admin`, creating it when there are no people
- * at all. Also issues a new link while `local-admin` is the only person and has never signed in,
- * so a failed first start cannot lock the install out. Otherwise returns null.
+ * at all (`needsBootstrapLink` decides). Also issues a new link while `local-admin` is the only
+ * person and has never signed in, so a failed first start cannot lock the install out. Otherwise
+ * returns null. Two replicas starting on an empty database both provision: the first replica's
+ * logged link may be dead (the second issue replaces it); recovery is `login-link local-admin`.
  */
 export async function bootstrapLocalAdmin(deps: IdentityDeps): Promise<{ code: string } | null> {
-  const people = await deps.users.list();
-  const [only] = people;
-  const pending =
-    people.length === 1 &&
-    only?.oidcSub === LOCAL_ADMIN_SUB &&
-    !only.disabled &&
-    // Provisioning stamps lastLoginAt = createdAt; any real sign-in moves it later.
-    (only.lastLoginAt === null || only.lastLoginAt.getTime() <= only.createdAt.getTime());
-  if (people.length > 0 && !pending) return null;
-  if (people.length === 0) {
+  const due = needsBootstrapLink(
+    (await deps.users.list()).map((u) => ({
+      sub: u.oidcSub,
+      disabled: u.disabled,
+      createdAt: u.createdAt,
+      lastLoginAt: u.lastLoginAt,
+    })),
+    LOCAL_ADMIN_SUB,
+  );
+  if (due === 'none') return null;
+  if (due === 'create') {
     const created = await provisionUser(deps, {
       sub: LOCAL_ADMIN_SUB,
       name: 'Admin',

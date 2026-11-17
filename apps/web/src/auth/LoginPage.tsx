@@ -33,6 +33,7 @@ export function LoginPage({ returnTo }: { returnTo: string }) {
   const methods = useQuery({
     queryKey: ['auth', 'methods'],
     queryFn: () => api.get('/api/auth/methods', AuthMethods),
+    retry: false,
   });
   const code = params.get('loginError');
   const href = `/api/auth/login?returnTo=${encodeURIComponent(safeReturnTo(returnTo))}`;

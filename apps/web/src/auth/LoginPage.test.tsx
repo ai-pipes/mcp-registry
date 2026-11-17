@@ -25,6 +25,16 @@ describe('LoginPage', () => {
     expect(screen.queryByText('node dist/cli.js login-link <sub>')).toBeNull();
   });
 
+  it('shows the SSO button when the methods request fails', async () => {
+    server.use(
+      http.get('/api/auth/methods', () => HttpResponse.json({ code: 'internal' }, { status: 500 })),
+    );
+    renderWithApp(<LoginPage returnTo="/catalog" />);
+    expect(
+      await screen.findByRole('link', { name: 'Sign in with SSO' }, { timeout: 500 }),
+    ).toBeTruthy();
+  });
+
   it('shows the oidc_not_configured error text', async () => {
     renderWithApp(<LoginPage returnTo="/" />, { route: '/?loginError=oidc_not_configured' });
     const alert = await screen.findByRole('alert');

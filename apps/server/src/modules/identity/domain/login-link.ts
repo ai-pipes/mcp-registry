@@ -24,3 +24,21 @@ export function looksLikeLoginCode(code: string): boolean {
 export function loginLinkUrl(publicUrl: string, code: string): string {
   return `${publicUrl.replace(/\/$/, '')}/login#link=${code}`;
 }
+
+/**
+ * Whether a server without OIDC must hand out a first-admin link at start: `create` when there
+ * are no people at all, `reissue` while the only person is the enabled local admin who has never
+ * signed in (so a lost first-start link cannot lock the install out), else `none`.
+ */
+export function needsBootstrapLink(
+  people: readonly { sub: string; disabled: boolean; createdAt: Date; lastLoginAt: Date | null }[],
+  localAdminSub: string,
+): 'create' | 'reissue' | 'none' {
+  const [only] = people;
+  if (!only) return 'create';
+  if (people.length !== 1 || only.sub !== localAdminSub || only.disabled) return 'none';
+  // Provisioning stamps lastLoginAt = createdAt; any real sign-in moves it later.
+  const neverSignedIn =
+    only.lastLoginAt === null || only.lastLoginAt.getTime() <= only.createdAt.getTime();
+  return neverSignedIn ? 'reissue' : 'none';
+}

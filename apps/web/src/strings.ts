@@ -66,6 +66,10 @@ export const strings = {
       `You are signed in as ${name}. This link signs you in as the person it was created for.`,
     switchHintUnknown:
       'Your current sign-in could not be checked. This link signs you in as the person it was created for.',
+    linkTitle: 'Sign in with a one-time link?',
+    linkHint:
+      'This link signs you in as the person it was created for. Continue only if you asked for this link or your administrator gave it to you.',
+    linkCancel: 'Cancel',
     switchConfirm: 'Sign in with the link',
     switchCancel: 'Stay signed in',
     localCommand: 'node dist/cli.js login-link <sub>',
@@ -76,6 +80,7 @@ export const strings = {
       disabled: 'Your account has been disabled by an administrator.',
       idp_unavailable: 'The sign-in provider is unavailable. Try again later.',
       invalid_link: 'This sign-in link is invalid, expired or already used. Create a new one.',
+      rate_limited: 'Too many failed sign-in attempts. Wait a minute and try again.',
       oidc_not_configured: 'Single sign-on is not configured on this server.',
       internal: 'Internal gateway error. Try signing in later.',
       unknown: 'Sign-in failed. Try again.',

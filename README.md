@@ -84,14 +84,14 @@ Compose runs the app and `pgvector/pgvector:pg17`; Postgres is not published. Mi
 docker compose logs app | grep "one-time link"   # the link is in the "url" field
 ```
 
-The link looks like `https://mcp.example.com/login#link=ll_...`; it works once. Until `local-admin` has signed in, every start logs a new link (each invalidates the previous one). To sign in again, or to let another person in, print a link with the CLI; `<sub>` is the person's subject ID (for `create-user`, any name you choose):
+The link looks like `https://mcp.example.com/login#link=ll_...`; it works once. The page asks for one confirmation click before it signs you in. The link is logged at `warn` level, so with `LOG_LEVEL` set to `error` or stricter use `login-link local-admin` instead. Until `local-admin` has signed in, every start logs a new link (each invalidates the previous one). To sign in again, or to let another person in, print a link with the CLI; `<sub>` is the person's subject ID (for `create-user`, any name you choose):
 
 ```sh
 docker compose exec app node dist/cli.js create-user --sub jane --name "Jane"   # new person; add --admin for an admin
 docker compose exec app node dist/cli.js login-link jane
 ```
 
-`login-link` also works with OIDC configured (emergency access). Links are valid for 15 minutes and a person has at most one live link. Anyone who can read the container log right after the first start can use the link, so see [SECURITY.md](SECURITY.md#running-without-oidc). Without OIDC there is no group management: admins see every active server, members see servers open to everyone or to the login group.
+`login-link` also works with OIDC configured (emergency access). Links are valid for 15 minutes and a person has at most one live link. Anyone who can read the container log right after the first start can use the link, so see [SECURITY.md](SECURITY.md#running-without-oidc). Without OIDC there is no group management: admins see every active server, members see servers open to everyone or to the login group. To move to OIDC later, see [SECURITY.md](SECURITY.md#switching-to-oidc-later).
 
 With OIDC you can also create a person with the CLI, for example when the provider is down. `<sub>` is the person's subject ID at the provider:
 

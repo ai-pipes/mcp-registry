@@ -12,6 +12,7 @@ import { reloadSession, useAuth } from './AuthProvider.tsx';
 
 const PREFIX = '#link=';
 const LOGIN_PATH = '/login';
+const ME_KEY = ['auth', 'me'] as const;
 
 function codeFrom(hash: string): string | null {
   if (!hash.startsWith(PREFIX)) return null;
@@ -29,10 +30,11 @@ type Phase = 'idle' | 'waiting' | 'confirm' | 'sending';
 /**
  * Exchanges the one-time code of `<origin>/login#link=<code>` for a session. Sits above
  * `RequireAuth`. The fragment is honoured only on `/login` and is removed from the address at
- * once (the code never stays in the URL or the history). Nobody signed in: the code is sent
- * exactly once; success lands on the catalog, a rejected link goes to `/?loginError=<code>`.
- * Somebody signed in: nothing is sent until the person confirms, so a link can never swap a
- * session silently (login CSRF); a declined or failed link leaves the session as it was.
+ * once (the code never stays in the URL or the history). Nothing is sent until the person
+ * presses the confirm button, whatever the session state: a link must never sign anyone in
+ * silently (login CSRF: someone tricking a signed-out person into opening a link for the
+ * attacker's account). A declined link sends nothing; a rejected one leaves a session that
+ * exists (also one made meanwhile in another tab) untouched.
  */
 export function LinkLogin() {
   const { hash, pathname, search } = useLocation();
@@ -74,49 +76,64 @@ export function LinkLogin() {
     void navigate(next, { replace: true });
   }
 
-  const send = useEffectEvent(async (link: string, signedIn: boolean) => {
+  const send = useEffectEvent(async (link: string) => {
     setPhase('sending');
-    let next = '/catalog';
+    let failure: unknown = null;
     try {
       await api.post('/api/auth/link', { code: link });
-      await reloadSession(queryClient);
     } catch (e) {
-      if (!signedIn) {
-        next = `/?loginError=${encodeURIComponent(isApiError(e) ? e.code : 'internal')}`;
-      }
+      failure = e;
     }
-    finish(next);
+    if (failure === null) {
+      // A failed reload is not a sign-in error: the normal flow decides from `/catalog`.
+      try {
+        await reloadSession(queryClient);
+      } catch {
+        // ignored on purpose
+      }
+      finish('/catalog');
+      return;
+    }
+    // Another tab may have signed in meanwhile: a session that exists now wins, silently.
+    try {
+      await queryClient.invalidateQueries({ queryKey: ME_KEY });
+    } catch {
+      // ignored on purpose: the cached state is used
+    }
+    if (queryClient.getQueryData(ME_KEY) != null) {
+      finish('/catalog');
+      return;
+    }
+    const error = isApiError(failure) ? failure.code : 'internal';
+    finish(`/?loginError=${encodeURIComponent(error)}`);
   });
 
   useEffect(() => {
     if (phase !== 'waiting' || status === 'loading' || held.current === null) return;
-    // Send on its own only when `/me` definitely said "nobody is signed in" (401); any other
-    // failure leaves the session state unknown, and a link must not replace a session unasked.
-    if (status === 'signed-in' || sessionUnknown) {
-      setPhase('confirm');
-      return;
-    }
-    const link = held.current;
-    held.current = null;
-    void send(link, false);
-  }, [phase, status, sessionUnknown]);
+    setPhase('confirm');
+  }, [phase, status]);
 
   if (phase === 'confirm') {
+    const signedOut = status === 'signed-out' && !sessionUnknown;
     return (
       <ConfirmCard
+        title={signedOut ? strings.login.linkTitle : strings.login.switchTitle}
         hint={
-          sessionUnknown
-            ? strings.login.switchHintUnknown
-            : strings.login.switchHint(me?.name ?? '')
+          signedOut
+            ? strings.login.linkHint
+            : sessionUnknown
+              ? strings.login.switchHintUnknown
+              : strings.login.switchHint(me?.name ?? '')
         }
+        cancelLabel={signedOut ? strings.login.linkCancel : strings.login.switchCancel}
         onConfirm={() => {
           const link = held.current;
           held.current = null;
-          if (link !== null) void send(link, !sessionUnknown);
+          if (link !== null) void send(link);
         }}
         onCancel={() => {
           held.current = null;
-          finish('/catalog');
+          finish(signedOut ? '/' : '/catalog');
         }}
       />
     );
@@ -133,28 +150,37 @@ export function LinkLogin() {
 }
 
 function ConfirmCard({
+  title,
   hint,
+  cancelLabel,
   onConfirm,
   onCancel,
 }: {
+  title: string;
   hint: string;
+  cancelLabel: string;
   onConfirm: () => void;
   onCancel: () => void;
 }) {
   useSystemTheme();
+  const safe = useRef<HTMLButtonElement>(null);
+  // The safe choice gets the focus, so a stray Enter cannot sign anyone in.
+  useEffect(() => {
+    safe.current?.focus();
+  }, []);
   return (
     <main className="flex min-h-svh items-center justify-center p-4">
       <Card className="w-full max-w-sm">
         <CardHeader>
           <CardTitle>
-            <h1 className="text-xl font-semibold">{strings.login.switchTitle}</h1>
+            <h1 className="text-xl font-semibold">{title}</h1>
           </CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
           <p className="text-sm text-muted-foreground">{hint}</p>
           <Button onClick={onConfirm}>{strings.login.switchConfirm}</Button>
-          <Button variant="outline" onClick={onCancel}>
-            {strings.login.switchCancel}
+          <Button ref={safe} variant="outline" onClick={onCancel}>
+            {cancelLabel}
           </Button>
         </CardContent>
       </Card>

@@ -69,6 +69,32 @@ describe('POST /api/auth/link', () => {
     expect(me.status).toBe(200);
   });
 
+  it('a successful link sign-in ends the session it replaces', async () => {
+    const { f, app } = setup(false);
+    const first = await post(app, { code: await newCode(f, 'ann') });
+    const oldCookie = (first.headers.get('set-cookie') ?? '').split(';')[0] ?? '';
+    const bob = await newCode(f, 'bob');
+    const second = await post(app, { code: bob }, { cookie: oldCookie });
+    expect(second.status).toBe(204);
+    const newCookie = (second.headers.get('set-cookie') ?? '').split(';')[0] ?? '';
+    expect((await app.request('/api/auth/me', { headers: { cookie: oldCookie } })).status).toBe(
+      401,
+    );
+    expect((await app.request('/api/auth/me', { headers: { cookie: newCookie } })).status).toBe(
+      200,
+    );
+  });
+
+  it('a rejected link leaves the current session alone', async () => {
+    const { f, app } = setup(false);
+    const first = await post(app, { code: await newCode(f) });
+    const cookie = (first.headers.get('set-cookie') ?? '').split(';')[0] ?? '';
+    const res = await post(app, { code: 'll_bogus' }, { cookie });
+    expect(res.status).toBe(401);
+    expect(res.headers.get('set-cookie')).toBeNull();
+    expect((await app.request('/api/auth/me', { headers: { cookie } })).status).toBe(200);
+  });
+
   it('answers a used code with 401 invalid_link', async () => {
     const { f, app } = setup(false);
     const code = await newCode(f);
