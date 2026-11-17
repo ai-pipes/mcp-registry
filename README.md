@@ -499,7 +499,7 @@ There are no down migrations, so a backup is the way back. In the commands below
 
 ### Going back
 
-A database that a newer version has migrated is refused by an older one: the server logs `the database was migrated by a newer version of mcp-registry (unknown migration: ...)` and exits with code 1 (Compose keeps restarting it; the CLI fails the same way). Going back means restoring the dump taken before the upgrade, which discards everything written since. Stop the app, recreate the database, restore, start the old version (use the `docker compose` of your layout as above):
+A database that a newer version has migrated is refused by an older one, from 1.0.0 on (0.1.0 has no such check and starts on a database migrated by 1.x, so do not run it there without restoring): the server logs `the database was migrated by a newer version of mcp-registry (unknown migration: ...)` and exits with code 1 (Compose keeps restarting it; the CLI fails the same way). Going back means restoring the dump taken before the upgrade, which discards everything written since. Stop the app, recreate the database, restore, start the old version (use the `docker compose` of your layout as above):
 
 ```sh
 docker compose stop app
