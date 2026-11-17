@@ -14,6 +14,7 @@ import { createHttpApp } from './http/app.ts';
 import { findMigrationsDir, migrate } from './migrate.ts';
 import { startOutboxWorker } from './outbox-worker.ts';
 import { startScheduler } from './scheduler.ts';
+import { VERSION } from './version.ts';
 
 const OUTBOX_INTERVAL_MS = 1000;
 const EMBED_SWEEP_INTERVAL_MS = 5 * 60_000;
@@ -77,7 +78,7 @@ const scheduler = startScheduler(container);
 
 const http = createHttpApp(container, { webRoot: WEB_ROOT });
 const server = serve({ fetch: http.app.fetch, hostname: '0.0.0.0', port: config.port }, (info) =>
-  logger.info({ port: info.port }, 'listening'),
+  logger.info({ port: info.port, version: VERSION }, 'listening'),
 );
 
 let shuttingDown = false;

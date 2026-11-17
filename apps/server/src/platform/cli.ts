@@ -1,6 +1,7 @@
 // Operator CLI: `node dist/cli.js <command>` (see USAGE in cli-commands.ts). Runs migrations
 // first, so it also works against a fresh database. Logs go to stderr; command output to stdout.
 // Needs the same environment as the server (it reads the same config); OIDC is not contacted.
+import { VERSION } from './version.ts';
 import { runCli } from './cli-commands.ts';
 import { readSecretInput } from './cli-input.ts';
 import { loadConfigOrExit } from './config.ts';
@@ -8,6 +9,12 @@ import { buildContainer } from './container.ts';
 import { createDb } from './db.ts';
 import { createLogger } from './logger.ts';
 import { findMigrationsDir, migrate } from './migrate.ts';
+
+// `--version` needs no configuration and no database.
+if (process.argv[2] === '--version') {
+  process.stdout.write(`${VERSION}\n`);
+  process.exit(0);
+}
 
 const config = loadConfigOrExit(process.env);
 const sql = createDb(

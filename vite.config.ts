@@ -13,6 +13,13 @@ const serverDeps =
   serverPkg.dependencies !== null
     ? Object.keys(serverPkg.dependencies).filter((name) => name !== '@mcp/contracts')
     : [];
+const serverVersion: string =
+  typeof serverPkg === 'object' &&
+  serverPkg !== null &&
+  'version' in serverPkg &&
+  typeof serverPkg.version === 'string'
+    ? serverPkg.version
+    : '';
 const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const DOMAIN_APPLICATION = 'apps/server/src/modules/*/{domain,application}/**';
@@ -31,6 +38,8 @@ export default defineConfig({
     platform: 'node',
     target: 'node22',
     fixedExtension: false,
+    // The gateway version is fixed at build time (see apps/server/src/platform/version.ts).
+    define: { GATEWAY_BUILD_VERSION: JSON.stringify(serverVersion) },
     deps: {
       neverBundle: serverDeps.map((name) => new RegExp(`^${escapeRegExp(name)}(?:/|$)`)),
       alwaysBundle: ['@mcp/contracts'],

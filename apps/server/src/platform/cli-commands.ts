@@ -23,6 +23,7 @@ import { DomainError } from '../shared-kernel/index.ts';
 import type { Container } from './container.ts';
 import { inspectKeyCheck, removeKeyCheck, resealKeyCheck } from './crypto/key-check.ts';
 import { AesGcmSecretBox } from './crypto/secret-box.ts';
+import { VERSION } from './version.ts';
 
 export type CliIo = {
   /** The whole of stdin (a pipe), or one line typed without echo on a terminal. */
@@ -34,6 +35,7 @@ export type CliIo = {
 };
 
 const USAGE = `Usage: node dist/cli.js <command>
+       node dist/cli.js --version
 
   create-user --sub <sub> --name <name> [--admin]
       Create (or update) a person as their first SSO login would: member, or admin with
@@ -341,6 +343,10 @@ async function guardKey(name: string, c: Container, io: CliIo): Promise<number |
  */
 export async function runCli(argv: string[], c: Container, io: CliIo): Promise<number> {
   const [name = '', ...args] = argv;
+  if (name === '--version') {
+    io.out(VERSION);
+    return 0;
+  }
   const command = COMMANDS[name];
   try {
     if (!command) {

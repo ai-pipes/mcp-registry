@@ -52,3 +52,4 @@ export {
   MAX_CALLS_LIMIT,
 } from './calls.ts';
 export { AuditEntry, AuditList, AuditQuery } from './audit.ts';
+export { VersionResponse } from './version.ts';
