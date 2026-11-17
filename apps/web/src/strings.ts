@@ -59,12 +59,17 @@ export const strings = {
     title: 'Sign in to MCP Registry',
     hint: "Sign-in uses your organization's single sign-on (OIDC).",
     submit: 'Sign in with SSO',
+    localHint:
+      'Single sign-on is not configured. Sign in with a one-time link created on the server:',
+    localCommand: 'node dist/cli.js login-link <sub>',
     errorTitle: 'Sign-in failed',
     errors: {
       invalid_state: 'The sign-in attempt expired or was interrupted. Try signing in again.',
       not_allowed: 'Your account is not in a group that is allowed to sign in.',
       disabled: 'Your account has been disabled by an administrator.',
       idp_unavailable: 'The sign-in provider is unavailable. Try again later.',
+      invalid_link: 'This sign-in link is invalid, expired or already used. Create a new one.',
+      oidc_not_configured: 'Single sign-on is not configured on this server.',
       internal: 'Internal gateway error. Try signing in later.',
       unknown: 'Sign-in failed. Try again.',
     } as Record<string, string>,

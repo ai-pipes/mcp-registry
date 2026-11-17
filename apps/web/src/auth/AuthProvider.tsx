@@ -32,6 +32,12 @@ async function fetchMe(): Promise<MeResponse | null> {
   }
 }
 
+/** After a sign-in that happened outside this provider: drops the old session's cache and reloads `me`. */
+export async function reloadSession(queryClient: QueryClient): Promise<void> {
+  queryClient.removeQueries({ predicate: (q) => q.queryKey[0] !== ME_KEY[0] });
+  await queryClient.invalidateQueries({ queryKey: ME_KEY });
+}
+
 const AuthContext = createContext<Auth | null>(null);
 
 /**

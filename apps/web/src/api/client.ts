@@ -52,7 +52,9 @@ async function send(method: Method, path: string, body?: BodyInit, json = false)
     throw new ApiError(0, 'network_error', strings.errors.network);
   }
   if (!res.ok) {
-    if (res.status === 401) for (const listener of unauthorizedListeners) listener();
+    // A rejected sign-in link says nothing about the current session.
+    if (res.status === 401 && path !== '/api/auth/link')
+      for (const listener of unauthorizedListeners) listener();
     throw await errorFrom(res);
   }
   return res;
