@@ -31,10 +31,11 @@ bash scripts/e2e-image.sh    # Playwright against the built image (pnpm exec pla
 
 ## Releasing
 
-1. Date the changelog entry (`## [<version>] - YYYY-MM-DD`; `Unreleased` blocks the release) and add the compare link at the bottom.
-2. Make sure `apps/server/package.json` has the version (the only place it is set).
-3. Merge to `main`.
-4. Tag `v<version>` on `main` and push the tag. The release workflow checks the tag, the changelog entry and that the commit is on `main`, builds the image, tests it (version printed by the amd64 and arm64 images, quick-start smoke, compose smoke) and only then pushes it to GHCR.
+1. Rehearse: `gh workflow run release --ref <branch>` and wait for a green result. A manual run builds and tests everything (both architectures, both smoke tests) but never publishes.
+2. Date the changelog entry (`## [<version>] - YYYY-MM-DD`; `Unreleased` blocks the release) and add the compare link at the bottom.
+3. Make sure `apps/server/package.json` has the version (the only place it is set).
+4. Merge to `main`.
+5. Tag `v<version>` on `main` and push the tag. The release workflow checks the tag, the changelog entry and that the commit is on `main`, builds the image, tests it (version printed by the amd64 and arm64 images, quick-start smoke, compose smoke) and only then pushes it to GHCR.
 
 ## Commits
 

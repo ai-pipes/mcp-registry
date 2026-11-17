@@ -2,11 +2,16 @@
 # ghcr.io/<owner>/<repo> for linux/amd64 and linux/arm64 with semver tags (1.2.3, 1.2, 1, latest).
 # Nothing is pushed before the version check, the ancestry check, the version printed by the
 # amd64 and arm64 images and both smoke tests (quick start and compose) have passed.
+# A manual run (workflow_dispatch, any branch) is a rehearsal: every build and test step runs, the
+# version check only needs a non-empty version, the ancestry check is skipped, and the registry
+# login, the metadata step and the pushing build are skipped (the multi-arch build runs with
+# push: false instead). A manual run can never publish.
 name: release
 
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -19,16 +24,24 @@ concurrency:
 jobs:
   image:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          # No token with packages: write in .git/config for pnpm install and the scripts.
+          persist-credentials: false
       - name: Check the tag matches the version and the changelog
+        if: github.event_name == 'push'
         env:
           TAG: ${{ github.ref_name }}
         run: node scripts/check-release-version.mjs "$TAG"
+      - name: Rehearsal, check the version is set
+        if: github.event_name == 'workflow_dispatch'
+        run: node scripts/check-release-version.mjs --rehearsal
       - name: Check the tagged commit is on main
+        if: github.event_name == 'push'
+        # The repository is public: an anonymous fetch is enough, no stored credentials needed.
         run: |
           git fetch --no-tags origin main
           git merge-base --is-ancestor "$GITHUB_SHA" origin/main ||
@@ -51,8 +64,8 @@ jobs:
           load: true
           push: false
           tags: mcp-registry:rc
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=rc-amd64
+          cache-to: type=gha,mode=max,scope=rc-amd64,ignore-error=true
       - name: The image prints the version from apps/server/package.json
         run: |
           expected="$(node -p "require('./apps/server/package.json').version")"
@@ -68,7 +81,8 @@ jobs:
           SMOKE_IMAGE: mcp-registry:rc
         run: bash scripts/smoke.sh
       # The second platform is built into a separate tag (the docker driver keeps one image per
-      # tag) from the same cache and run under QEMU.
+      # tag) and run under QEMU. Each build has its own cache scope: one scope would make the
+      # arm64 export overwrite the amd64 index. A cache-service error does not fail the build.
       - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
@@ -77,21 +91,23 @@ jobs:
           load: true
           push: false
           tags: mcp-registry:rc-arm64
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=rc-arm64
+          cache-to: type=gha,mode=max,scope=rc-arm64,ignore-error=true
       - name: The arm64 image prints the same version
         run: |
           expected="$(node -p "require('./apps/server/package.json').version")"
           actual="$(docker run --rm --platform linux/arm64 mcp-registry:rc-arm64 node dist/cli.js --version)"
           echo "expected=$expected actual=$actual"
           [ -n "$expected" ] && [ "$actual" = "$expected" ]
-      # Only now the registry is touched.
-      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+      # Only now the registry is touched, and only for a tag push.
+      - if: github.event_name == 'push'
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - id: meta
+        if: github.event_name == 'push'
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ghcr.io/${{ github.repository }}
@@ -99,7 +115,21 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
-      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+      - name: Rehearsal, multi-arch build without pushing
+        if: github.event_name == 'workflow_dispatch'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          target: runtime
+          platforms: linux/amd64,linux/arm64
+          push: false
+          cache-from: |
+            type=gha,scope=rc-amd64
+            type=gha,scope=rc-arm64
+          cache-to: type=gha,mode=max,scope=rc-publish,ignore-error=true
+      - name: Push the multi-arch image
+        if: github.event_name == 'push'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           target: runtime
@@ -107,5 +137,7 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: |
+            type=gha,scope=rc-amd64
+            type=gha,scope=rc-arm64
+          cache-to: type=gha,mode=max,scope=rc-publish,ignore-error=true
