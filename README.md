@@ -34,6 +34,52 @@ To stop the gateway, run `docker compose -p mcp-registry down`; your data stays 
 
 The quick start is for trying the gateway and for a single machine. For a permanent installation behind HTTPS with your own identity provider, see [Production setup](#production-setup).
 
+## Add your first server
+
+The example uses [DeepWiki](https://mcp.deepwiki.com/mcp), a public MCP server for questions about GitHub repositories. It needs no key. It is a third-party service: the questions your agent asks through it are sent to that server and leave your machine. Any other MCP server that speaks Streamable HTTP is added the same way (see [Adding upstream servers](#adding-upstream-servers) for the ones that need credentials).
+
+1. In the web UI, open **Servers** under Administration and press **Add server**.
+2. Fill in the form:
+
+   | Field         | Value                                                  |
+   | ------------- | ------------------------------------------------------ |
+   | Slug          | `deepwiki`                                             |
+   | Name          | `DeepWiki`                                             |
+   | Description   | `Documentation and Q&A for public GitHub repositories` |
+   | URL           | `https://mcp.deepwiki.com/mcp`                         |
+   | Authorization | No authorization                                       |
+   | Access        | Everyone                                               |
+
+   Leave the call timeout and the daily limit as they are, and press **Save**.
+
+3. The gateway creates the server and reads its tools at once. The server page lists them, and **Catalog** shows the same three: `deepwiki.ask_wiki_question`, `deepwiki.read_wiki_contents` and `deepwiki.read_wiki_structure`.
+
+The slug is the prefix of the tool names and cannot be changed later.
+
+## Connect an agent
+
+1. Open **Tokens**, press **Create token**, give it a name such as `laptop` and copy the command from the dialog. The token is shown once.
+2. Run the command. It registers the gateway in Claude Code:
+
+   ```sh
+   claude mcp add --transport http mcp-registry http://localhost:3000/mcp \
+     --header "Authorization: Bearer sk_..."
+   ```
+
+Other MCP clients work the same way: the endpoint is `<your URL>/mcp` and the token goes in an `Authorization: Bearer` header. The agent sees four tools, whatever the catalog holds: `list_servers`, `search_tools`, `describe_tool` and `call_tool` (see [How it works](#how-it-works)).
+
+Now ask the agent something that needs the server:
+
+> Using the gateway, ask DeepWiki how routing works in the `honojs/hono` repository.
+
+The agent should make three calls:
+
+1. `search_tools` with a short description such as "ask a question about a GitHub repository". It returns `deepwiki.ask_wiki_question` first.
+2. `describe_tool` for `deepwiki.ask_wiki_question`, which returns its description and input schema (`repoName` and `question`).
+3. `call_tool` for `deepwiki.ask_wiki_question` with `repoName` `honojs/hono` and the question. The gateway forwards the call to DeepWiki and returns its answer unchanged.
+
+The call log in **Call log** (admins) shows who called which tool, the outcome and the duration, never the arguments or the results.
+
 ## About
 
 Instead of loading hundreds of upstream tools into the agent's context, the gateway exposes four meta-tools. The agent searches for the tool it needs, reads its schema, and calls it through the gateway. Each call is made on behalf of the person: with their own OAuth token or personal access token for that service, or with a shared server secret that never leaves the gateway.
