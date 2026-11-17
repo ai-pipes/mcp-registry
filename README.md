@@ -10,7 +10,7 @@ You need Docker with Compose. Run this in an empty directory. Compose also reads
 curl -fsSL https://raw.githubusercontent.com/ai-pipes/mcp-registry/v1.0.0/quickstart.compose.yml | docker compose -f - up -d
 ```
 
-This starts the gateway and Postgres with no `.env` and no identity provider. The secrets key and the database password are generated into a Docker volume, and the port is published on `127.0.0.1` only, so the gateway is reachable from this machine at <http://localhost:3000>.
+This starts the gateway and Postgres with no `.env` and no identity provider. The secrets key and the database password are generated into a Docker volume, and the port is published on `127.0.0.1` only, so the gateway is reachable from this machine at <http://localhost:3000>. On a remote machine, forward the port with `ssh -L 3000:localhost:3000 <host>` and open the link on your own machine; it works as is, because `PUBLIC_URL` is `http://localhost:3000`. To expose the gateway for real, see [Production setup](#production-setup).
 
 On the first start the gateway creates the admin `local-admin` and logs a one-time sign-in link. Print it:
 
@@ -18,9 +18,18 @@ On the first start the gateway creates the admin `local-admin` and logs a one-ti
 docker compose -p mcp-registry logs app | grep "one-time link"
 ```
 
-The link is in the `url` field of the log record and looks like `http://localhost:3000/login#link=ll_...`. Open it within 15 minutes; the page asks for one click to confirm, then you are signed in as an admin. The link works once.
+If it prints nothing, wait a few seconds and run it again: the link is logged after the database migrations.
 
-- **Port 3000 is taken.** Set `PORT` on the `docker compose` side of the command, for example `... | PORT=8080 docker compose -f - up -d`. The sign-in link then points to that port. Settings are not remembered between commands: repeat `PORT` whenever you run `up` again.
+The link is in the `url` field of the log record and looks like `http://localhost:3000/login#link=ll_...`. Open it within 15 minutes; the page asks for one click on **Sign in with the link**, then you are signed in as an admin. The link works once.
+
+- **Port 3000 is taken.** Set `PORT` on the `docker compose` side of the command, for example:
+
+  ```sh
+  curl -fsSL https://raw.githubusercontent.com/ai-pipes/mcp-registry/v1.0.0/quickstart.compose.yml | PORT=8080 docker compose -f - up -d
+  ```
+
+  The sign-in link then points to that port. Settings are not remembered between commands: repeat `PORT` whenever you run `up` again.
+
 - **Safari** does not accept the `Secure` session cookie on plain `http://localhost`. Use another browser, or start with `COOKIE_SECURE=false` (same place as `PORT`).
 - **A new link**, if the first one expired or was used by mistake:
 
@@ -36,10 +45,10 @@ The quick start is for trying the gateway and for a single machine. For a perman
 
 ## Add your first server
 
-The example uses [DeepWiki](https://mcp.deepwiki.com/mcp), a public MCP server for questions about GitHub repositories. It needs no key. It is a third-party service: the questions your agent asks through it are sent to that server and leave your machine. Any other MCP server that speaks Streamable HTTP is added the same way (see [Adding upstream servers](#adding-upstream-servers) for the ones that need credentials).
+The example uses [DeepWiki](https://deepwiki.com), a public MCP server for questions about GitHub repositories. It needs no key. It is a third-party service: the questions your agent asks through it are sent to that server and leave your machine. Any other MCP server that speaks Streamable HTTP is added the same way (see [Adding upstream servers](#adding-upstream-servers) for the ones that need credentials).
 
 1. In the web UI, open **Servers** under Administration and press **Add server**.
-2. Fill in the form:
+2. Fill in the form. The slug is the prefix of the tool names (`deepwiki.ask_wiki_question`) and cannot be changed later.
 
    | Field         | Value                                                  |
    | ------------- | ------------------------------------------------------ |
@@ -52,17 +61,15 @@ The example uses [DeepWiki](https://mcp.deepwiki.com/mcp), a public MCP server f
 
    Leave the call timeout and the daily limit as they are, and press **Save**.
 
-3. The gateway creates the server and reads its tools at once. The server page lists them, and **Catalog** shows the same three: `deepwiki.ask_wiki_question`, `deepwiki.read_wiki_contents` and `deepwiki.read_wiki_structure`.
+3. The gateway creates the server and reads its tools at once. The server page lists them, and **Catalog** shows the same three as of writing: `deepwiki.ask_wiki_question`, `deepwiki.read_wiki_contents` and `deepwiki.read_wiki_structure`. If no tools appear, the server page shows the **Last sync error**; fix the cause (for example the URL) and press **Sync now**. The gateway then re-reads this server's tool list on its sync schedule (every 6 hours by default) until the server is disabled.
 
 ![The form for a new server filled in with the DeepWiki values](.github/assets/server-form.png)
 
 ![The catalog listing the three DeepWiki tools](.github/assets/catalog.png)
 
-The slug is the prefix of the tool names and cannot be changed later.
-
 ## Connect an agent
 
-1. Open **Tokens**, press **Create token**, give it a name such as `laptop` and copy the command from the dialog. The token is shown once.
+1. Open **Tokens**, press **Create token**, give it a name such as `laptop`, press **Create** and copy the command from the dialog. The token is shown once.
 2. Run the command. It registers the gateway in Claude Code:
 
    ```sh
@@ -70,7 +77,9 @@ The slug is the prefix of the tool names and cannot be changed later.
      --header "Authorization: Bearer sk_..."
    ```
 
-![The new token dialog with the claude mcp add command; the token is replaced by a placeholder](.github/assets/connect-agent.png)
+   Claude Code registers it for the current directory only: start `claude` in the same directory, or add `--scope user` to the command to make the gateway available in every project.
+
+![The new token dialog: the token field and the start of the claude mcp add command, with the token replaced by a placeholder](.github/assets/connect-agent.png)
 
 Other MCP clients work the same way: the endpoint is `<your URL>/mcp` and the token goes in an `Authorization: Bearer` header. The agent sees four tools, whatever the catalog holds: `list_servers`, `search_tools`, `describe_tool` and `call_tool` (see [How it works](#how-it-works)).
 
@@ -78,7 +87,7 @@ Now ask the agent something that needs the server:
 
 > Using the gateway, ask DeepWiki how routing works in the `honojs/hono` repository.
 
-The agent should make three calls:
+The agent typically makes three calls (it may call `list_servers` first):
 
 1. `search_tools` with a short description such as "ask a question about a GitHub repository". It returns `deepwiki.ask_wiki_question` first.
 2. `describe_tool` for `deepwiki.ask_wiki_question`, which returns its description and input schema (`repoName` and `question`).
@@ -97,7 +106,7 @@ Instead of loading hundreds of upstream tools into the agent's context, the gate
 ```mermaid
 flowchart LR
   A[Claude Code<br/>Bearer sk_...] -->|/mcp| G[mcp-registry]
-  B[Browser] -->|OIDC login| G
+  B[Browser] -->|OIDC or<br/>one-time link| G
   G -->|person's OAuth token / PAT<br/>or shared secret| U1[Gitea MCP]
   G --> U2[YouTrack MCP]
   G --> U3[Other MCP servers]
@@ -117,7 +126,7 @@ Search returns an empty list when nothing is relevant enough, rather than paddin
 
 ## Features
 
-- UI login through any OIDC provider that can put the person's groups or roles into a claim of the ID token or UserInfo; no passwords stored.
+- UI login through any OIDC provider that can put the person's groups or roles into a claim of the ID token or UserInfo, or, with no provider, through one-time sign-in links; no passwords stored.
 - Personal API tokens (`sk_...`) for `/mcp`; the UI shows a ready-to-paste `claude mcp add` command.
 - Server catalog: add upstream MCP servers, restrict them to groups, hide individual tools, set per-call timeouts and per-person daily limits.
 - Per-user credentials: OAuth 2.0 (Authorization Code + PKCE, automatic refresh) or personal access tokens; or one shared secret per server.
@@ -206,38 +215,38 @@ claude mcp add --transport http mcp-registry https://mcp.example.com/mcp \
 
 All settings are environment variables (see `.env.example`). An empty value (`KEY=`) counts as unset.
 
-| Variable                      | Default                            | Meaning                                                                                                                                                          |
-| ----------------------------- | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PUBLIC_URL`                  | required                           | External URL of the gateway (scheme + host + port). Used for OIDC/OAuth redirect URIs, the `claude mcp add` command and `Origin` checks.                         |
-| `DATABASE_URL`                | required (Compose sets it)         | Postgres connection string. Compose defaults to `postgres://mcp@db:5432/mcp` with `POSTGRES_PASSWORD`.                                                           |
-| `POSTGRES_PASSWORD`           | required by Compose                | Password of the bundled Postgres. Set it before the first start; it is stored in the volume afterwards.                                                          |
-| `PORT`                        | `3000`                             | Listening port (with Compose: the host port; the container always listens on 3000).                                                                              |
-| `BIND_ADDRESS`                | `127.0.0.1`                        | Host address the port is published on. `quickstart.compose.yml` only; set `0.0.0.0` (with a real `PUBLIC_URL`, behind HTTPS) to expose it.                       |
-| `ALLOWED_HOSTS`               | empty                              | Extra accepted `Host` values for `/mcp`, comma-separated. The `PUBLIC_URL` host, `localhost` and `127.0.0.1` are always accepted.                                |
-| `TRUST_PROXY`                 | `false`                            | Take the client IP from `X-Forwarded-For`. Enable only behind a reverse proxy.                                                                                   |
-| `TRUST_PROXY_HOPS`            | `1`                                | Number of trusted proxies in front of the gateway (1-5).                                                                                                         |
-| `COOKIE_SECURE`               | `true`                             | `Secure` flag on the session cookie. Works with HTTPS and with `http://localhost` in Chrome and Firefox; Safari and plain http on a LAN address need `false`.    |
-| `SECRETS_KEY`                 | required unless `SECRETS_KEY_FILE` | AES-256-GCM key, base64 of exactly 32 bytes (`openssl rand -base64 32`). Encrypts server secrets and people's tokens.                                            |
-| `SECRETS_KEY_FILE`            | unset                              | Path of a file holding the key instead of `SECRETS_KEY` (not both). `quickstart.compose.yml` sets it; for your own compose file or orchestrator.                 |
-| `PGPASSWORD_FILE`             | unset                              | Path of a file holding the database password (not together with `PGPASSWORD`). `quickstart.compose.yml` sets it; the bundled `docker-compose.yml` cannot use it. |
-| `SECRETS_KEY_OLD`             | unset                              | Previous key, only during key rotation. Must differ from `SECRETS_KEY`.                                                                                          |
-| `OIDC_ISSUER`                 | unset                              | Issuer URL of the OIDC provider. Set all three `OIDC_*` or none; without them people sign in with one-time links. Discovery happens on the first login.          |
-| `OIDC_CLIENT_ID`              | unset                              | Client ID registered for the gateway (with `OIDC_ISSUER` and `OIDC_CLIENT_SECRET`).                                                                              |
-| `OIDC_CLIENT_SECRET`          | unset                              | Client secret registered for the gateway (with `OIDC_ISSUER` and `OIDC_CLIENT_ID`).                                                                              |
-| `OIDC_LOGIN_GROUP`            | `mcp-users`                        | Members of this group may sign in.                                                                                                                               |
-| `OIDC_ADMIN_GROUP`            | `mcp-admins`                       | Members of this group may sign in and are admins.                                                                                                                |
-| `OIDC_SCOPES`                 | `openid profile email groups`      | Scopes of the login request, space- or comma-separated; must include `openid`.                                                                                   |
-| `OIDC_GROUPS_CLAIM`           | `groups`                           | Claim with the person's groups: a list of names, or an object whose keys are the names.                                                                          |
-| `SYNC_INTERVAL_HOURS`         | `6`                                | Catalog synchronisation period, hours (1-8760).                                                                                                                  |
-| `CALL_LOG_RETENTION_DAYS`     | `90`                               | How long call log entries are kept.                                                                                                                              |
-| `UPSTREAM_MAX_RESPONSE_BYTES` | `20971520` (20 MiB)                | Larger upstream responses are refused (memory protection).                                                                                                       |
-| `MCP_MAX_BODY_BYTES`          | `10485760` (10 MiB)                | Request body limit of `/mcp` (tool arguments may carry base64 files). The rest of the HTTP API is limited to 1 MiB.                                              |
-| `EMBEDDER`                    | `local`                            | `local` (bundled model) or `openai-compatible` (`POST <EMBEDDER_URL>/embeddings`).                                                                               |
-| `EMBEDDER_URL`                | unset                              | Base URL of the embeddings API, only for `openai-compatible`.                                                                                                    |
-| `EMBEDDER_MODEL`              | unset                              | Model name for `openai-compatible`. Must produce 384-dimensional vectors.                                                                                        |
-| `MODEL_DIR`                   | `/app/models`                      | Directory of the local model. The image already contains it.                                                                                                     |
-| `SEARCH_MIN_SIMILARITY`       | `0.83`                             | Cosine-similarity floor (0-1) for vector search candidates.                                                                                                      |
-| `LOG_LEVEL`                   | `info`                             | `fatal`, `error`, `warn`, `info`, `debug`, `trace` or `silent`.                                                                                                  |
+| Variable                      | Default                            | Meaning                                                                                                                                                                                 |
+| ----------------------------- | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PUBLIC_URL`                  | required                           | External URL of the gateway (scheme + host + port). Used for OIDC/OAuth redirect URIs, the `claude mcp add` command and `Origin` checks.                                                |
+| `DATABASE_URL`                | required (Compose sets it)         | Postgres connection string. Compose defaults to `postgres://mcp@db:5432/mcp` with `POSTGRES_PASSWORD`.                                                                                  |
+| `POSTGRES_PASSWORD`           | required by Compose                | Password of the bundled Postgres. Set it before the first start; it is stored in the volume afterwards.                                                                                 |
+| `PORT`                        | `3000`                             | Listening port (with Compose: the host port; the container always listens on 3000).                                                                                                     |
+| `BIND_ADDRESS`                | `127.0.0.1`                        | Host address the port is published on. `quickstart.compose.yml` only; set `0.0.0.0` (with a real `PUBLIC_URL`, behind HTTPS; plain http also needs `COOKIE_SECURE=false`) to expose it. |
+| `ALLOWED_HOSTS`               | empty                              | Extra accepted `Host` values for `/mcp`, comma-separated. The `PUBLIC_URL` host, `localhost` and `127.0.0.1` are always accepted.                                                       |
+| `TRUST_PROXY`                 | `false`                            | Take the client IP from `X-Forwarded-For`. Enable only behind a reverse proxy.                                                                                                          |
+| `TRUST_PROXY_HOPS`            | `1`                                | Number of trusted proxies in front of the gateway (1-5).                                                                                                                                |
+| `COOKIE_SECURE`               | `true`                             | `Secure` flag on the session cookie. Works with HTTPS and with `http://localhost` in Chrome and Firefox; Safari and plain http on a LAN address need `false`.                           |
+| `SECRETS_KEY`                 | required unless `SECRETS_KEY_FILE` | AES-256-GCM key, base64 of exactly 32 bytes (`openssl rand -base64 32`). Encrypts server secrets and people's tokens.                                                                   |
+| `SECRETS_KEY_FILE`            | unset                              | Path of a file holding the key instead of `SECRETS_KEY` (not both). `quickstart.compose.yml` sets it; for your own compose file or orchestrator.                                        |
+| `PGPASSWORD_FILE`             | unset                              | Path of a file holding the database password (not together with `PGPASSWORD`). `quickstart.compose.yml` sets it; the bundled `docker-compose.yml` cannot use it.                        |
+| `SECRETS_KEY_OLD`             | unset                              | Previous key, only during key rotation. Must differ from `SECRETS_KEY`.                                                                                                                 |
+| `OIDC_ISSUER`                 | unset                              | Issuer URL of the OIDC provider. Set all three `OIDC_*` or none; without them people sign in with one-time links. Discovery happens on the first login.                                 |
+| `OIDC_CLIENT_ID`              | unset                              | Client ID registered for the gateway (with `OIDC_ISSUER` and `OIDC_CLIENT_SECRET`).                                                                                                     |
+| `OIDC_CLIENT_SECRET`          | unset                              | Client secret registered for the gateway (with `OIDC_ISSUER` and `OIDC_CLIENT_ID`).                                                                                                     |
+| `OIDC_LOGIN_GROUP`            | `mcp-users`                        | Members of this group may sign in.                                                                                                                                                      |
+| `OIDC_ADMIN_GROUP`            | `mcp-admins`                       | Members of this group may sign in and are admins.                                                                                                                                       |
+| `OIDC_SCOPES`                 | `openid profile email groups`      | Scopes of the login request, space- or comma-separated; must include `openid`.                                                                                                          |
+| `OIDC_GROUPS_CLAIM`           | `groups`                           | Claim with the person's groups: a list of names, or an object whose keys are the names.                                                                                                 |
+| `SYNC_INTERVAL_HOURS`         | `6`                                | Catalog synchronisation period, hours (1-8760).                                                                                                                                         |
+| `CALL_LOG_RETENTION_DAYS`     | `90`                               | How long call log entries are kept.                                                                                                                                                     |
+| `UPSTREAM_MAX_RESPONSE_BYTES` | `20971520` (20 MiB)                | Larger upstream responses are refused (memory protection).                                                                                                                              |
+| `MCP_MAX_BODY_BYTES`          | `10485760` (10 MiB)                | Request body limit of `/mcp` (tool arguments may carry base64 files). The rest of the HTTP API is limited to 1 MiB.                                                                     |
+| `EMBEDDER`                    | `local`                            | `local` (bundled model) or `openai-compatible` (`POST <EMBEDDER_URL>/embeddings`).                                                                                                      |
+| `EMBEDDER_URL`                | unset                              | Base URL of the embeddings API, only for `openai-compatible`.                                                                                                                           |
+| `EMBEDDER_MODEL`              | unset                              | Model name for `openai-compatible`. Must produce 384-dimensional vectors.                                                                                                               |
+| `MODEL_DIR`                   | `/app/models`                      | Directory of the local model. The image already contains it.                                                                                                                            |
+| `SEARCH_MIN_SIMILARITY`       | `0.83`                             | Cosine-similarity floor (0-1) for vector search candidates.                                                                                                                             |
+| `LOG_LEVEL`                   | `info`                             | `fatal`, `error`, `warn`, `info`, `debug`, `trace` or `silent`.                                                                                                                         |
 
 ## OIDC setup
 
@@ -454,7 +463,7 @@ Not covered: the rest of `/api/**` (the web client's internal interface), and th
 
 ### Upgrading
 
-There are no down migrations, so a backup is the way back. The compose commands below (backup, `up -d`, restore) were run, with a different project name, against stacks of both layouts. `pull` was run only against a locally built image served from a local registry, and `git fetch --tags && git checkout v<version>` was not run. In the commands, `docker compose` is the one you already use for the stack (the quick start needs `-p mcp-registry`, plus the same `--env-file` or environment as before).
+There are no down migrations, so a backup is the way back. In the commands below, `docker compose` is the one you already use for the stack (the quick start needs `-p mcp-registry`, plus the same `--env-file` or environment as before).
 
 1. **Back up the database and the key.** Source layout (`docker-compose.yml` + `.env`):
 
