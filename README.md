@@ -54,6 +54,10 @@ The example uses [DeepWiki](https://mcp.deepwiki.com/mcp), a public MCP server f
 
 3. The gateway creates the server and reads its tools at once. The server page lists them, and **Catalog** shows the same three: `deepwiki.ask_wiki_question`, `deepwiki.read_wiki_contents` and `deepwiki.read_wiki_structure`.
 
+![The form for a new server filled in with the DeepWiki values](.github/assets/server-form.png)
+
+![The catalog listing the three DeepWiki tools](.github/assets/catalog.png)
+
 The slug is the prefix of the tool names and cannot be changed later.
 
 ## Connect an agent
@@ -65,6 +69,8 @@ The slug is the prefix of the tool names and cannot be changed later.
    claude mcp add --transport http mcp-registry http://localhost:3000/mcp \
      --header "Authorization: Bearer sk_..."
    ```
+
+![The new token dialog with the claude mcp add command; the token is replaced by a placeholder](.github/assets/connect-agent.png)
 
 Other MCP clients work the same way: the endpoint is `<your URL>/mcp` and the token goes in an `Authorization: Bearer` header. The agent sees four tools, whatever the catalog holds: `list_servers`, `search_tools`, `describe_tool` and `call_tool` (see [How it works](#how-it-works)).
 
