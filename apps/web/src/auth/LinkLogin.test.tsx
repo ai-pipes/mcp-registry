@@ -16,6 +16,7 @@ function StrictModeShell() {
 }
 
 const signedOut = http.get('/api/auth/me', () => errorResponse(401, 'unauthenticated'));
+const catalogHeading = () => screen.findByRole('heading', { name: 'Catalog', level: 1 });
 const catalog = http.get('/api/catalog', () => HttpResponse.json([]));
 
 describe('LinkLogin', () => {
@@ -70,17 +71,63 @@ describe('LinkLogin', () => {
     expect(router.state.location.hash).toBe('');
   });
 
-  it('keeps a signed-in person in the app when the link is rejected', async () => {
-    server.use(
-      http.get('/api/auth/me', () =>
-        HttpResponse.json({ userId: 'u1', name: 'Anna', role: 'member', groups: [] }),
-      ),
-      http.post('/api/auth/link', () => errorResponse(401, 'invalid_link')),
-      catalog,
-    );
-    renderWithApp(routes, { route: '/login#link=bad' });
-    expect(await screen.findByRole('heading', { name: 'Catalog', level: 1 })).toBeTruthy();
-    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+  describe('with a session', () => {
+    const bodies: unknown[] = [];
+    function signedIn(linkStatus: number) {
+      bodies.length = 0;
+      server.use(
+        http.get('/api/auth/me', () =>
+          HttpResponse.json({ userId: 'u1', name: 'Anna', role: 'member', groups: [] }),
+        ),
+        http.post('/api/auth/link', async ({ request }) => {
+          bodies.push(await request.json());
+          return linkStatus === 204
+            ? new HttpResponse(null, { status: 204 })
+            : errorResponse(linkStatus, 'invalid_link');
+        }),
+        catalog,
+      );
+    }
+    it('ignores a link fragment outside /login', async () => {
+      signedIn(204);
+      renderWithApp(routes, { route: '/catalog#link=ll_x' });
+      await catalogHeading();
+      expect(bodies).toEqual([]);
+    });
+
+    it('asks before replacing an existing session', async () => {
+      signedIn(204);
+      const { router } = renderWithApp(routes, { route: '/login#link=ll_x' });
+      expect(await screen.findByRole('heading', { name: 'Sign in with this link?' })).toBeTruthy();
+      expect(screen.getByText(/You are signed in as Anna\./)).toBeTruthy();
+      expect(bodies).toEqual([]);
+      expect(router.state.location.hash).toBe('');
+    });
+
+    it('replaces the session only after confirmation', async () => {
+      signedIn(204);
+      const { user } = renderWithApp(routes, { route: '/login#link=ll_x' });
+      await user.click(await screen.findByRole('button', { name: 'Sign in with the link' }));
+      await catalogHeading();
+      expect(bodies).toEqual([{ code: 'll_x' }]);
+    });
+
+    it('stays signed in when the person declines', async () => {
+      signedIn(204);
+      const { user } = renderWithApp(routes, { route: '/login#link=ll_x' });
+      await user.click(await screen.findByRole('button', { name: 'Stay signed in' }));
+      await catalogHeading();
+      expect(bodies).toEqual([]);
+    });
+
+    it('stays signed in when a confirmed link is rejected', async () => {
+      signedIn(401);
+      const { user } = renderWithApp(routes, { route: '/login#link=ll_x' });
+      await user.click(await screen.findByRole('button', { name: 'Sign in with the link' }));
+      await catalogHeading();
+      expect(bodies).toEqual([{ code: 'll_x' }]);
+      expect(screen.queryByRole('alert')).toBeNull();
+    });
   });
 
   it('/login without a fragment goes to the catalog', async () => {

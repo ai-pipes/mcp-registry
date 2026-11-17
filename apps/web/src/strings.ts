@@ -61,6 +61,11 @@ export const strings = {
     submit: 'Sign in with SSO',
     localHint:
       'Single sign-on is not configured. Sign in with a one-time link created on the server:',
+    switchTitle: 'Sign in with this link?',
+    switchHint: (name: string) =>
+      `You are signed in as ${name}. This link signs you in as the person it was created for.`,
+    switchConfirm: 'Sign in with the link',
+    switchCancel: 'Stay signed in',
     localCommand: 'node dist/cli.js login-link <sub>',
     errorTitle: 'Sign-in failed',
     errors: {
