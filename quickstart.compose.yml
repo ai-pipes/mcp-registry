@@ -2,8 +2,6 @@
 #
 #   curl -fsSL <raw url>/quickstart.compose.yml | docker compose -f - up -d
 #
-# The default image tag is published with the 1.0.0 release; before that set MCP_REGISTRY_IMAGE.
-#
 # Run it from an empty directory: Compose also reads a `.env` file in the directory you run it
 # from, so settings such as PORT from an unrelated project would apply.
 #

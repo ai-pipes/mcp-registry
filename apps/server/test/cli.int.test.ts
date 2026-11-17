@@ -7,7 +7,8 @@ import { DEFAULT_MIN_SIMILARITY } from '../src/modules/search/index.ts';
 import { getServerSecret } from '../src/modules/catalog/index.ts';
 import { Connection } from '../src/modules/connections/domain/connection.ts';
 import { authenticateToken, completeLinkLogin } from '../src/modules/identity/index.ts';
-import { runCli } from '../src/platform/cli-commands.ts';
+import { runCli, runVersionFlag } from '../src/platform/cli-commands.ts';
+import { VERSION } from '../src/platform/version.ts';
 import type { Config } from '../src/platform/config.ts';
 import { buildContainer, type Container } from '../src/platform/container.ts';
 import { verifySecretsKey } from '../src/platform/crypto/key-check.ts';
@@ -115,6 +116,14 @@ beforeEach(async () => {
 });
 
 describe('cli users and tokens', () => {
+  it('--version prints the version and exits 0 (the function the entry point calls)', () => {
+    const out: string[] = [];
+    expect(runVersionFlag(['--version'], { out: (line) => out.push(line) })).toBe(0);
+    expect(out).toEqual([VERSION]);
+    expect(runVersionFlag(['create-user'], { out: (line) => out.push(line) })).toBeNull();
+    expect(out).toEqual([VERSION]);
+  });
+
   it('login-link prints a link that signs the person in', async () => {
     await cli(['create-user', '--sub', 'bob', '--name', 'Bob']);
     const r = await cli(['login-link', 'bob']);

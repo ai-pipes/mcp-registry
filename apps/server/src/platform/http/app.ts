@@ -13,6 +13,7 @@ import { mcpRoutes } from '../mcp/server.ts';
 import type { AppEnv } from './env.ts';
 import { auditRoutes } from './audit-route.ts';
 import { domainErrorResponse, errorResponse } from './errors.ts';
+import { versionRoutes } from './version-route.ts';
 import { spaFallback, staticFiles } from './spa.ts';
 import { clientIp, csrf, defaultBodyLimit, securityHeaders, socketAddress } from './security.ts';
 
@@ -118,6 +119,7 @@ export function createHttpApp(c: Container, opts: HttpAppOptions = {}): HttpApp 
   app.route('/api', toolRoutes(c.catalog, c.identity));
   app.route('/api/servers', serverRoutes(c.catalogSync, c.identity));
   app.route('/api/calls', callRoutes(c.gateway, c.identity));
+  app.route('/api/version', versionRoutes(c.identity));
   app.route('/api/audit', auditRoutes(c.sql, c.identity));
   const mcp = mcpRoutes(c);
   app.route('/mcp', mcp.routes);

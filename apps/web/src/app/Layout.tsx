@@ -10,8 +10,11 @@ import {
   UsersIcon,
   type LucideIcon,
 } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { VersionResponse } from '@mcp/contracts';
 import { useState } from 'react';
 import { NavLink, Outlet } from 'react-router';
+import { api } from '@/api/client.ts';
 import { useAuth } from '@/auth/AuthProvider.tsx';
 import { ErrorAlert } from '@/components/ErrorAlert.tsx';
 import { cn } from '@/lib/utils.ts';
@@ -50,6 +53,22 @@ function NavItem({ to, label, icon: Icon }: { to: string; label: string; icon: L
   );
 }
 
+/** The gateway version under the person's name; nothing while loading or when the request fails. */
+function VersionLine() {
+  const version = useQuery({
+    queryKey: ['version'],
+    queryFn: () => api.get('/api/version', VersionResponse),
+    retry: false,
+    staleTime: Infinity,
+  });
+  if (!version.data) return null;
+  return (
+    <div className="truncate text-xs text-muted-foreground">
+      {strings.app.version(version.data.version)}
+    </div>
+  );
+}
+
 /** Navigation shared by the sidebar and the mobile sheet; admin items only for admins. */
 function Sidebar() {
   const { me, logout } = useAuth();
@@ -80,6 +99,7 @@ function Sidebar() {
             <div className="text-xs text-muted-foreground">
               {me.role === 'admin' ? strings.nav.roleAdmin : strings.nav.roleMember}
             </div>
+            <VersionLine />
           </div>
         )}
         <Button

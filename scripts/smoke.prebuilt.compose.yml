@@ -1,0 +1,6 @@
+# Smoke test only: with SMOKE_IMAGE set, scripts/smoke.sh adds this file so the app runs from a
+# prebuilt image instead of the `build: .` of docker-compose.yml.
+services:
+  app:
+    image: ${SMOKE_IMAGE:?set by scripts/smoke.sh}
+    build: !reset null

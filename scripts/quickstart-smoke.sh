@@ -5,8 +5,9 @@
 #   → create an API token → tools/list on /mcp with it → restart without removing volumes: same
 #   token still works, no new link → replace only the secrets key in the `secrets` volume: the
 #   app must refuse to start with the fatal text and leak neither key → stack and volumes removed.
-# Own compose project and port, so it never touches another deployment. Needs docker, curl,
-# openssl. The link code, cookie, token and keys are never printed.
+# Own compose project and port, so it never touches another deployment. With
+# QUICKSTART_IMAGE=<image> the stack runs that prebuilt image (nothing is built, the image is
+# never removed). Needs docker, curl, openssl. The link code, cookie, token and keys are never printed.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -17,7 +18,14 @@ unset OIDC_ISSUER OIDC_CLIENT_ID OIDC_CLIENT_SECRET OIDC_LOGIN_GROUP OIDC_ADMIN_
 PROJECT="${QUICKSTART_PROJECT:-mcp-quickstart-smoke}"
 PORT="${QUICKSTART_PORT:-38081}"
 BASE_URL="http://localhost:${PORT}"
-IMAGE="mcp-registry:quickstart-smoke"
+# A prebuilt image (the release workflow's candidate) is used as it is and left in place.
+if [ -n "${QUICKSTART_IMAGE:-}" ]; then
+  IMAGE="$QUICKSTART_IMAGE"
+  BUILD_IMAGE=""
+else
+  IMAGE="mcp-registry:quickstart-smoke"
+  BUILD_IMAGE=1
+fi
 HEALTH_TIMEOUT=120
 MISMATCH_TIMEOUT=60
 FATAL_TEXT='SECRETS_KEY does not match the data in this database; restore the original key (stored secrets cannot be read with this one)'
@@ -45,7 +53,7 @@ cleanup() {
     compose logs --no-color --tail 20 db 2>&1 | redact || true
   fi
   compose down -v --remove-orphans >/dev/null 2>&1 || true
-  docker image rm -f "$IMAGE" >/dev/null 2>&1 || true
+  [ -z "$BUILD_IMAGE" ] || docker image rm -f "$IMAGE" >/dev/null 2>&1 || true
   rm -rf "$WORK"
   if [ "$code" -eq 0 ]; then echo "QUICKSTART SMOKE OK"; else echo "QUICKSTART SMOKE FAILED"; fi
   exit "$code"
@@ -102,14 +110,26 @@ grep -qE '^ +PUBLIC_URL: http://localhost:38081$' <<<"$cfg" || fail "PORT withou
 grep -qE '^ +host_ip: 0\.0\.0\.0$' <<<"$cfg" || fail "BIND_ADDRESS did not change the published address"
 echo "config: pass-through, 127.0.0.1 by default, PUBLIC_URL follows PORT, default image"
 
-step "docker build (${IMAGE})"
-docker build -q -t "$IMAGE" . >/dev/null
+if [ -n "$BUILD_IMAGE" ]; then
+  step "docker build (${IMAGE})"
+  docker build -q -t "$IMAGE" . >/dev/null
+else
+  step "prebuilt image ${IMAGE}"
+  docker image inspect "$IMAGE" >/dev/null 2>&1 || fail "prebuilt image ${IMAGE} not found"
+fi
 
 step "docker compose -f - up -d (quickstart.compose.yml on stdin)"
 compose up -d
 
 step "waiting for ${BASE_URL}/healthz (up to ${HEALTH_TIMEOUT}s)"
 wait_healthy
+
+step "the first log record is 'starting' with the version"
+first_record="$(app_log | grep -m1 '"msg"' || true)"
+grep -q '"msg":"starting"' <<<"$first_record" || fail "the first app log record is not 'starting'"
+version="$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' apps/server/package.json | head -n 1)"
+grep -qF "\"version\":\"${version}\"" <<<"$first_record" || fail "the 'starting' record has no version ${version}"
+echo "starting: version ${version}"
 
 step "the first-start sign-in link is logged exactly once"
 link_records="$(app_log | grep -c '/login#link=ll_' || true)"
@@ -167,6 +187,30 @@ link_records="$(app_log | grep -c '/login#link=ll_' || true)"
 # `compose logs` after `down` + `up` shows the new container only: it must have no link at all.
 [ "$link_records" = "0" ] || fail "a restart logged ${link_records} new sign-in link record(s)"
 echo "restart: token still valid, no new link"
+
+step "a database migrated by a newer version: the app must refuse to start"
+pcompose exec -T db psql -U mcp -d mcp -qc \
+  "insert into platform.schema_migrations (name) values ('9999_from_the_future.sql')" >/dev/null
+compose up -d --force-recreate --no-deps app
+deadline=$((SECONDS + MISMATCH_TIMEOUT))
+seen=""
+while [ "$SECONDS" -lt "$deadline" ] && [ -z "$seen" ]; do
+  if [ "$(curl -fsS "${BASE_URL}/healthz" 2>/dev/null || true)" = "ok" ]; then
+    fail "the app became healthy on a database from a newer version"
+  fi
+  grep -qF 'migrated by a newer version of mcp-registry (unknown migration: 9999_from_the_future.sql)' \
+    <<<"$(app_log || true)" && seen=1
+  [ -n "$seen" ] || sleep 3
+done
+[ -n "$seen" ] || fail "the app log has no fatal record about the newer database"
+grep -qF 'restore the backup taken before the upgrade' <<<"$(app_log)" ||
+  fail "the fatal record does not say how to recover"
+pcompose exec -T db psql -U mcp -d mcp -qc \
+  "delete from platform.schema_migrations where name = '9999_from_the_future.sql'" >/dev/null
+compose up -d --force-recreate --no-deps app
+wait_healthy
+mcp_tools_ok "$token" || fail "the token does not work after the newer-database check"
+echo "newer database: refused with a fatal record; healthy again after the row is removed"
 
 step "replace only the secrets key: the app must refuse to start"
 old_key="$(compose run --rm --no-deps -T --entrypoint cat init /secrets/secrets_key 2>/dev/null)" ||

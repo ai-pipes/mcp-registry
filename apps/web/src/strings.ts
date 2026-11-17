@@ -2,6 +2,7 @@
 export const strings = {
   app: {
     title: 'MCP Registry',
+    version: (v: string) => `v${v}`,
   },
   common: {
     close: 'Close',

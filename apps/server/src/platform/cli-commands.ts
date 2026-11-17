@@ -23,6 +23,7 @@ import { DomainError } from '../shared-kernel/index.ts';
 import type { Container } from './container.ts';
 import { inspectKeyCheck, removeKeyCheck, resealKeyCheck } from './crypto/key-check.ts';
 import { AesGcmSecretBox } from './crypto/secret-box.ts';
+import { VERSION } from './version.ts';
 
 export type CliIo = {
   /** The whole of stdin (a pipe), or one line typed without echo on a terminal. */
@@ -34,6 +35,7 @@ export type CliIo = {
 };
 
 const USAGE = `Usage: node dist/cli.js <command>
+       node dist/cli.js --version
 
   create-user --sub <sub> --name <name> [--admin]
       Create (or update) a person as their first SSO login would: member, or admin with
@@ -332,6 +334,17 @@ async function guardKey(name: string, c: Container, io: CliIo): Promise<number |
   }
   io.err(`warning: SECRETS_KEY does not match the data in this database. ${hint}`);
   return null;
+}
+
+/**
+ * `--version`: prints the gateway version and returns 0, or returns null when `argv` is not that
+ * flag. The entry point (cli.ts) calls it before loading the configuration or opening the
+ * database, so it needs neither.
+ */
+export function runVersionFlag(argv: string[], io: Pick<CliIo, 'out'>): number | null {
+  if (argv[0] !== '--version') return null;
+  io.out(VERSION);
+  return 0;
 }
 
 /**
