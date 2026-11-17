@@ -43,21 +43,6 @@ Search returns an empty list when nothing is relevant enough, rather than paddin
 
 ## Quick start (Docker Compose)
 
-### Try it with one file
-
-`quickstart.compose.yml` needs no `.env`, no OIDC and no generated values: a one-shot `init` service writes the secrets key and the database password into a Docker volume on the first start. The port is published on `127.0.0.1` only, so the default setup is for a trial on your own machine. Run it from an empty directory (Compose also reads a `.env` in the directory you run it from):
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/ai-pipes/mcp-registry/main/quickstart.compose.yml | docker compose -f - up -d
-docker compose -p mcp-registry logs app | grep "one-time link"   # sign-in link, valid 15 minutes
-```
-
-Settings (`PORT`, `BIND_ADDRESS`, `PUBLIC_URL`, `COOKIE_SECURE`, `OIDC_*`, ...) come from your shell or from `docker compose --env-file my.env ...` and are not remembered between commands. For a permanent installation save the file and pass the same `--env-file` to every `docker compose` command (`docker compose --env-file my.env -f quickstart.compose.yml up -d`). Later commands need no file: `docker compose -p mcp-registry exec app node dist/cli.js login-link local-admin`, `docker compose -p mcp-registry down`. `down -v` also deletes the data and the key.
-
-Safari does not accept the `Secure` session cookie on plain `http://localhost`: use another browser or start with `COOKIE_SECURE=false`. To expose the gateway beyond localhost set `BIND_ADDRESS=0.0.0.0` together with a real `PUBLIC_URL`, behind HTTPS. Back up the `secrets` and `pgdata` volumes together; see [Recovering from a key mismatch](#recovering-from-a-key-mismatch) and [SECURITY.md](SECURITY.md#quick-start-compose-file).
-
-### From source
-
 Requirements: Docker with Compose, and (for anything beyond localhost) a TLS-terminating reverse proxy in front of the gateway.
 
 ```sh
