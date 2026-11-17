@@ -23,7 +23,10 @@ const SHUTDOWN_TIMEOUT_MS = 10_000;
 const WEB_ROOT = fileURLToPath(new URL('../../web/dist', import.meta.url));
 
 const config = loadConfigOrExit(process.env);
-const sql = createDb(config.databaseUrl);
+const sql = createDb(
+  config.databaseUrl,
+  config.databasePassword === undefined ? {} : { password: config.databasePassword },
+);
 const logger = createLogger(config.logLevel);
 // Discovered lazily, on the first sign-in: the gateway (/mcp, tokens) works while it is down.
 // Without OIDC_* there is no provider: people sign in with a one-time link.

@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { z } from 'zod';
 // The calibrated cosine-similarity floor lives in the search module, where the
 // real-model test checks it: one constant, so recalibrating it changes production too.
@@ -116,6 +117,8 @@ export interface Config {
    * re-sealed yet, and is the key that command re-seals from.
    */
   secretsKeyOld?: Uint8Array;
+  /** From PGPASSWORD_FILE; without it the password comes from the URL or PGPASSWORD (the client reads those). */
+  databasePassword: string | undefined;
   oidc: OidcConfig;
   /** Catalog synchronisation period. */
   syncIntervalHours: number;
@@ -144,9 +147,55 @@ export function loadConfigOrExit(env: NodeJS.ProcessEnv): Config {
   }
 }
 
-export function loadConfig(env: NodeJS.ProcessEnv): Config {
+const readUtf8 = (path: string): string => readFileSync(path, 'utf8');
+
+/**
+ * `NAME_FILE` support: the value of `NAME` is read from the file it points to. Errors name the
+ * variable and the path, never the contents. Returns the value, or undefined when `NAME_FILE` is unset.
+ */
+function fromFile(
+  set: Record<string, string | undefined>,
+  name: string,
+  readFile: (path: string) => string,
+  issues: z.core.$ZodIssue[],
+): string | undefined {
+  const fileVar = `${name}_FILE`;
+  const path = set[fileVar];
+  if (path === undefined) return undefined;
+  const issue = (message: string) =>
+    issues.push({ code: 'custom', path: [fileVar], message, input: undefined });
+  if (set[name] !== undefined) {
+    issue(`${name} and ${fileVar} are mutually exclusive; set only one`);
+    return undefined;
+  }
+  let text: string;
+  try {
+    text = readFile(path);
+  } catch {
+    issue(`cannot read the file ${path}`);
+    return undefined;
+  }
+  const value = text.trim();
+  if (value === '') {
+    issue(`the file ${path} is empty`);
+    return undefined;
+  }
+  return value;
+}
+
+export function loadConfig(
+  env: NodeJS.ProcessEnv,
+  readFile: (path: string) => string = readUtf8,
+): Config {
   // An empty value (`KEY=` in .env) means "unset", so defaults and optionality apply to it.
-  const set = Object.fromEntries(Object.entries(env).filter(([, v]) => v !== ''));
+  const set: Record<string, string | undefined> = Object.fromEntries(
+    Object.entries(env).filter(([, v]) => v !== ''),
+  );
+  const fileIssues: z.core.$ZodIssue[] = [];
+  const keyFromFile = fromFile(set, 'SECRETS_KEY', readFile, fileIssues);
+  const databasePassword = fromFile(set, 'PGPASSWORD', readFile, fileIssues);
+  if (fileIssues.length > 0) throw new ConfigError(fileIssues);
+  if (keyFromFile !== undefined) set.SECRETS_KEY = keyFromFile;
   const parsed = schema
     .superRefine((e, ctx) => {
       const names = ['OIDC_ISSUER', 'OIDC_CLIENT_ID', 'OIDC_CLIENT_SECRET'] as const;
@@ -180,6 +229,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     trustProxyHops: e.TRUST_PROXY_HOPS,
     cookieSecure: e.COOKIE_SECURE,
     secretsKey: e.SECRETS_KEY,
+    databasePassword,
     oidc: {
       client:
         e.OIDC_ISSUER !== undefined &&

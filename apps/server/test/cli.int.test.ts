@@ -27,6 +27,7 @@ function configFor(over: Partial<Config> = {}): Config {
   return {
     port: 3000,
     databaseUrl: 'postgres://unused',
+    databasePassword: undefined,
     publicUrl: 'https://mcp.example.com/',
     allowedHosts: [],
     trustProxy: false,

@@ -28,7 +28,87 @@ function parseEnvFile(text: string): Record<string, string> {
   return env;
 }
 
+const files =
+  (map: Record<string, string>) =>
+  (path: string): string => {
+    const text = map[path];
+    if (text === undefined) throw new Error(`ENOENT ${path}`);
+    return text;
+  };
+
 describe('loadConfig', () => {
+  describe('secrets from files', () => {
+    const { SECRETS_KEY: _unused, ...noKey } = base;
+    it('reads SECRETS_KEY from SECRETS_KEY_FILE and trims the trailing newline', () => {
+      const c = loadConfig({ ...noKey, SECRETS_KEY_FILE: '/k' }, files({ '/k': `${KEY}\n` }));
+      expect(Buffer.from(c.secretsKey).toString('base64')).toBe(KEY);
+    });
+
+    it('reads the database password from PGPASSWORD_FILE', () => {
+      const c = loadConfig({ ...base, PGPASSWORD_FILE: '/p' }, files({ '/p': 'pw\n' }));
+      expect(c.databasePassword).toBe('pw');
+    });
+
+    it('refuses SECRETS_KEY together with SECRETS_KEY_FILE', () => {
+      expect(() => loadConfig({ ...base, SECRETS_KEY_FILE: '/k' }, files({ '/k': KEY }))).toThrow(
+        /SECRETS_KEY.*SECRETS_KEY_FILE/s,
+      );
+    });
+
+    it('refuses PGPASSWORD together with PGPASSWORD_FILE', () => {
+      expect(() =>
+        loadConfig({ ...base, PGPASSWORD: 'x', PGPASSWORD_FILE: '/p' }, files({ '/p': 'pw' })),
+      ).toThrow(/PGPASSWORD.*PGPASSWORD_FILE/s);
+    });
+
+    it('names the variable and the path when the file cannot be read', () => {
+      let message = '';
+      try {
+        loadConfig({ ...noKey, SECRETS_KEY_FILE: '/run/missing' }, files({}));
+      } catch (error) {
+        message = error instanceof Error ? error.message : '';
+      }
+      expect(message).toContain('SECRETS_KEY_FILE');
+      expect(message).toContain('/run/missing');
+    });
+
+    it('refuses an empty secret file', () => {
+      expect(() =>
+        loadConfig({ ...noKey, SECRETS_KEY_FILE: '/k' }, files({ '/k': ' \n\t' })),
+      ).toThrow(/SECRETS_KEY_FILE/);
+      expect(() => loadConfig({ ...base, PGPASSWORD_FILE: '/p' }, files({ '/p': '\n' }))).toThrow(
+        /PGPASSWORD_FILE/,
+      );
+    });
+
+    it('validates a key from a file like a key from the environment', () => {
+      const short = randomBytes(16).toString('base64');
+      let message = '';
+      try {
+        loadConfig({ ...noKey, SECRETS_KEY_FILE: '/k' }, files({ '/k': `${short}\n` }));
+      } catch (error) {
+        message = error instanceof Error ? error.message : '';
+      }
+      expect(message).toContain('SECRETS_KEY');
+      expect(message).toContain('32 bytes');
+      expect(message).not.toContain(short);
+    });
+
+    it('needs neither file variable', () => {
+      const c = loadConfig(base, () => {
+        throw new Error('must not read');
+      });
+      expect(c.databasePassword).toBeUndefined();
+    });
+
+    it('treats an empty _FILE variable as unset', () => {
+      const c = loadConfig({ ...base, SECRETS_KEY_FILE: '', PGPASSWORD_FILE: '' }, () => {
+        throw new Error('must not read');
+      });
+      expect(c.databasePassword).toBeUndefined();
+    });
+  });
+
   it('applies defaults', () => {
     expect(loadConfig(base)).toMatchObject({
       port: 3000,

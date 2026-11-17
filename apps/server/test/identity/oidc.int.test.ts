@@ -30,6 +30,7 @@ function configFor(issuer: string): Config {
   return {
     port: 3000,
     databaseUrl: 'postgres://unused',
+    databasePassword: undefined,
     publicUrl: ORIGIN,
     allowedHosts: [],
     trustProxy: false,

@@ -10,7 +10,10 @@ import { createLogger } from './logger.ts';
 import { findMigrationsDir, migrate } from './migrate.ts';
 
 const config = loadConfigOrExit(process.env);
-const sql = createDb(config.databaseUrl);
+const sql = createDb(
+  config.databaseUrl,
+  config.databasePassword === undefined ? {} : { password: config.databasePassword },
+);
 const logger = createLogger(config.logLevel === 'info' ? 'warn' : config.logLevel, {
   write: (line: string) => process.stderr.write(line),
 });
