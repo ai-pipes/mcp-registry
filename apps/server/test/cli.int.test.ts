@@ -6,7 +6,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vite-plus
 import { DEFAULT_MIN_SIMILARITY } from '../src/modules/search/index.ts';
 import { getServerSecret } from '../src/modules/catalog/index.ts';
 import { Connection } from '../src/modules/connections/domain/connection.ts';
-import { authenticateToken } from '../src/modules/identity/index.ts';
+import { authenticateToken, completeLinkLogin } from '../src/modules/identity/index.ts';
 import { runCli } from '../src/platform/cli-commands.ts';
 import type { Config } from '../src/platform/config.ts';
 import { buildContainer, type Container } from '../src/platform/container.ts';
@@ -113,6 +113,33 @@ beforeEach(async () => {
 });
 
 describe('cli users and tokens', () => {
+  it('login-link prints a link that signs the person in', async () => {
+    await cli(['create-user', '--sub', 'bob', '--name', 'Bob']);
+    const r = await cli(['login-link', 'bob']);
+    expect(r.code).toBe(0);
+    expect(r.out).toHaveLength(1);
+    const match = /^https:\/\/mcp\.example\.com\/login#link=(ll_\S+)$/.exec(r.out[0] ?? '');
+    expect(match).not.toBeNull();
+    const done = await completeLinkLogin(containerFor().identity, {
+      code: match?.[1] ?? '',
+      ip: '203.0.113.9',
+    });
+    expect(done.ok).toBe(true);
+  });
+
+  it('login-link for an unknown sub exits 1 and prints nothing to stdout', async () => {
+    const r = await cli(['login-link', 'ghost']);
+    expect(r.code).toBe(1);
+    expect(r.out).toEqual([]);
+    expect(r.err.join('\n')).toContain('not_found');
+  });
+
+  it('login-link without a sub exits 2', async () => {
+    const r = await cli(['login-link']);
+    expect(r.code).toBe(2);
+    expect(r.out).toEqual([]);
+  });
+
   it('create-user is idempotent by sub', async () => {
     const a = await cli(['create-user', '--sub', 'bob', '--name', 'Bob']);
     const b = await cli(['create-user', '--sub', 'bob', '--name', 'Bob']);

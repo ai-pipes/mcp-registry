@@ -7,6 +7,7 @@ import { OpenidProvider } from '../modules/identity/index.ts';
 import { errorFields } from '../shared-kernel/index.ts';
 import { loadConfigOrExit } from './config.ts';
 import { buildContainer } from './container.ts';
+import { announceFirstStart } from './bootstrap.ts';
 import { createDb } from './db.ts';
 import { createLogger } from './logger.ts';
 import { createHttpApp } from './http/app.ts';
@@ -49,6 +50,7 @@ if (config.secretsKeyOld) {
 
 const applied = await migrate(sql, findMigrationsDir(import.meta.url));
 logger.info({ applied }, 'migrations applied');
+await announceFirstStart(container, config, logger);
 
 // Modules register their event handlers here (type → handler) as they appear.
 const worker = startOutboxWorker({

@@ -10,7 +10,14 @@ import {
   toAuthMode,
 } from '../modules/catalog/index.ts';
 import { resealConnections } from '../modules/connections/index.ts';
-import { actAs, createToken, type Principal, provisionUser } from '../modules/identity/index.ts';
+import {
+  actAs,
+  createToken,
+  issueLoginLink,
+  loginLinkUrl,
+  type Principal,
+  provisionUser,
+} from '../modules/identity/index.ts';
 import { reindexAll } from '../modules/search/index.ts';
 import { DomainError } from '../shared-kernel/index.ts';
 import type { Container } from './container.ts';
@@ -33,6 +40,9 @@ const USAGE = `Usage: node dist/cli.js <command>
       For the smoke test and emergency access.
   create-token <sub> --name <name>
       Create an API token for <sub>; prints the token and the claude mcp add command.
+  login-link <sub>
+      Print a one-time sign-in link (valid 15 minutes) for an existing, enabled person. For a
+      server without OIDC_*, or emergency access.
   create-server --json <file> --as <admin-sub> [--secret-env <VAR>]
       Create a server from a ServerInput JSON file and synchronise it at once. The secret
       (shared key or OAuth client secret) is read from the variable <VAR> or from stdin,
@@ -116,6 +126,14 @@ const createTokenCommand: Command = async (args, c, io) => {
   io.out(t.token);
   io.out(connectCommand(c.config.publicUrl, t.token));
   io.err('The token is shown only once; store it now.');
+  return 0;
+};
+
+const loginLinkCommand: Command = async (args, c, io) => {
+  const { positionals } = parse(args, {}, 1);
+  const r = await issueLoginLink(c.identity, { sub: positionals[0] ?? '' });
+  if (!r.ok) throw r.error;
+  io.out(loginLinkUrl(c.config.publicUrl, r.value.code));
   return 0;
 };
 
@@ -243,6 +261,7 @@ const rotateSecretsKeyCommand: Command = async (args, c, io) => {
 const COMMANDS: Record<string, Command> = {
   'create-user': createUserCommand,
   'create-token': createTokenCommand,
+  'login-link': loginLinkCommand,
   'create-server': createServerCommand,
   sync: syncCommand,
   reindex: reindexCommand,
