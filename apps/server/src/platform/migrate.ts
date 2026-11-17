@@ -22,6 +22,18 @@ export function findMigrationsDir(moduleUrl: string): string {
   }
 }
 
+/** The database holds a migration this build does not ship: it was migrated by a newer version. */
+export class NewerDatabaseError extends Error {
+  readonly migration: string;
+  constructor(migration: string) {
+    super(
+      `the database was migrated by a newer version of mcp-registry (unknown migration: ${migration}); start that version or restore the backup taken before the upgrade`,
+    );
+    this.name = 'NewerDatabaseError';
+    this.migration = migration;
+  }
+}
+
 export async function migrate(sql: Sql, dir: string): Promise<string[]> {
   const files = (await readdir(dir)).filter((f) => MIGRATION_FILE.test(f)).toSorted();
   const applied: string[] = [];
@@ -41,6 +53,8 @@ export async function migrate(sql: Sql, dir: string): Promise<string[]> {
           (r) => r.name,
         ),
       );
+      const unknown = [...done].toSorted().find((name) => !files.includes(name));
+      if (unknown !== undefined) throw new NewerDatabaseError(unknown);
       await files
         .filter((file) => !done.has(file))
         .reduce(async (prev, file) => {

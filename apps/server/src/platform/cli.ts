@@ -1,20 +1,19 @@
 // Operator CLI: `node dist/cli.js <command>` (see USAGE in cli-commands.ts). Runs migrations
 // first, so it also works against a fresh database. Logs go to stderr; command output to stdout.
 // Needs the same environment as the server (it reads the same config); OIDC is not contacted.
-import { VERSION } from './version.ts';
-import { runCli } from './cli-commands.ts';
+import { runCli, runVersionFlag } from './cli-commands.ts';
 import { readSecretInput } from './cli-input.ts';
 import { loadConfigOrExit } from './config.ts';
 import { buildContainer } from './container.ts';
 import { createDb } from './db.ts';
 import { createLogger } from './logger.ts';
-import { findMigrationsDir, migrate } from './migrate.ts';
+import { findMigrationsDir, migrate, NewerDatabaseError } from './migrate.ts';
 
 // `--version` needs no configuration and no database.
-if (process.argv[2] === '--version') {
-  process.stdout.write(`${VERSION}\n`);
-  process.exit(0);
-}
+const versionExit = runVersionFlag(process.argv.slice(2), {
+  out: (line) => process.stdout.write(`${line}\n`),
+});
+if (versionExit !== null) process.exit(versionExit);
 
 const config = loadConfigOrExit(process.env);
 const sql = createDb(
@@ -33,6 +32,11 @@ try {
     out: (line) => process.stdout.write(`${line}\n`),
     err: (line) => process.stderr.write(`${line}\n`),
   });
+} catch (error) {
+  // A database from a newer version: a plain message and exit 1, not a stack trace.
+  if (!(error instanceof NewerDatabaseError)) throw error;
+  process.stderr.write(`error: ${error.message}\n`);
+  process.exitCode = 1;
 } finally {
   await sql.end({ timeout: 5 });
 }

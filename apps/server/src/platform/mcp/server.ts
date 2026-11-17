@@ -15,9 +15,8 @@ import type { Container } from '../container.ts';
 import { errorResponse } from '../http/errors.ts';
 import { defaultBodyLimit } from '../http/security.ts';
 import { SERVER_INSTRUCTIONS } from './instructions.ts';
+import { VERSION } from '../version.ts';
 import { registerTools } from './tools.ts';
-
-const SERVER_VERSION = '0.0.0';
 
 /**
  * One MCP server per request, for one authenticated person: every tool answers for them only.
@@ -25,7 +24,7 @@ const SERVER_VERSION = '0.0.0';
  */
 function buildMcpServer(c: Container, principal: Principal): McpServer {
   const server = new McpServer(
-    { name: 'mcp-registry', version: SERVER_VERSION },
+    { name: 'mcp-registry', version: VERSION },
     { instructions: SERVER_INSTRUCTIONS, capabilities: { tools: { listChanged: false } } },
   );
   registerTools(server, c, principal);

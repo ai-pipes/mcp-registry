@@ -11,7 +11,7 @@ import { announceFirstStart, checkSecretsKey } from './bootstrap.ts';
 import { createDb } from './db.ts';
 import { createLogger } from './logger.ts';
 import { createHttpApp } from './http/app.ts';
-import { findMigrationsDir, migrate } from './migrate.ts';
+import { findMigrationsDir, migrate, NewerDatabaseError } from './migrate.ts';
 import { startOutboxWorker } from './outbox-worker.ts';
 import { startScheduler } from './scheduler.ts';
 import { VERSION } from './version.ts';
@@ -29,6 +29,8 @@ const sql = createDb(
   config.databasePassword === undefined ? {} : { password: config.databasePassword },
 );
 const logger = createLogger(config.logLevel);
+// First record of every start: a failed start (migration, key check) shows which version failed.
+logger.info({ version: VERSION }, 'starting');
 // Discovered lazily, on the first sign-in: the gateway (/mcp, tokens) works while it is down.
 // Without OIDC_* there is no provider: people sign in with a one-time link.
 const { client } = config.oidc;
@@ -52,7 +54,15 @@ if (config.secretsKeyOld) {
   );
 }
 
-const applied = await migrate(sql, findMigrationsDir(import.meta.url));
+let applied: string[];
+try {
+  applied = await migrate(sql, findMigrationsDir(import.meta.url));
+} catch (error) {
+  if (!(error instanceof NewerDatabaseError)) throw error;
+  logger.fatal(error.message);
+  await sql.end({ timeout: 5 });
+  process.exit(1);
+}
 logger.info({ applied }, 'migrations applied');
 if (!(await checkSecretsKey(sql, config, logger)).proceed) {
   await sql.end({ timeout: 5 });

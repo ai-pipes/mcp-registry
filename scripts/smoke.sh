@@ -7,7 +7,9 @@
 #   → the upstream got the secret header on every request, the client and the app logs never
 #     saw the secret → docker compose down -v.
 # Runs as its own compose project with its own env file and port, so it never touches a
-# deployment started from .env in the same checkout. Needs docker, openssl, node 22 and
+# deployment started from .env in the same checkout. With SMOKE_IMAGE=<image> the app runs from
+# that prebuilt image (scripts/smoke.prebuilt.compose.yml) instead of being built here; the image
+# is never removed. The test upstream is always built from the Dockerfile. Needs docker, openssl, node 22 and
 # `pnpm install` (for the MCP client). OIDC is a placeholder: discovery is lazy. The smoke
 # exercises the CLI and the /mcp path only; it never signs in to the UI.
 set -euo pipefail
@@ -39,9 +41,16 @@ OIDC_CLIENT_SECRET=smoke
 LOG_LEVEL=info
 EOF2
 
+FILES=(-f docker-compose.yml -f scripts/smoke.compose.yml)
+BUILD_FLAG=--build
+if [ -n "${SMOKE_IMAGE:-}" ]; then
+  export SMOKE_IMAGE
+  FILES+=(-f scripts/smoke.prebuilt.compose.yml)
+  BUILD_FLAG=
+fi
+
 compose() {
-  docker compose -p "$PROJECT" --env-file "$ENV_FILE" \
-    -f docker-compose.yml -f scripts/smoke.compose.yml "$@"
+  docker compose -p "$PROJECT" --env-file "$ENV_FILE" "${FILES[@]}" "$@"
 }
 
 cleanup() {
@@ -65,8 +74,12 @@ fail() {
   exit 1
 }
 
-step "docker compose up -d --build"
-compose up -d --build
+if [ -n "${SMOKE_IMAGE:-}" ]; then
+  step "docker compose up -d (prebuilt image ${SMOKE_IMAGE})"
+else
+  step "docker compose up -d --build"
+fi
+compose up -d $BUILD_FLAG
 
 step "waiting for ${BASE_URL}/healthz (up to ${HEALTH_TIMEOUT}s)"
 deadline=$((SECONDS + HEALTH_TIMEOUT))

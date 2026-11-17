@@ -265,6 +265,7 @@ Inside the container: `node dist/cli.js <command>` (same environment as the serv
 | `reindex`                                                           | Rebuild the search index (if `search_tools` misses a tool that is in the catalog).                                           |
 | `rotate-secrets-key`                                                | Re-encrypt every stored secret from `SECRETS_KEY_OLD` to `SECRETS_KEY`. Safe to repeat.                                      |
 | `reset-key-check --yes`                                             | Remove the stored key check so the next start records the configured `SECRETS_KEY` (see "Recovering from a key mismatch").   |
+| `--version`                                                         | Print the gateway version (needs no configuration and no database).                                                          |
 
 ### Rotating `SECRETS_KEY`
 
@@ -346,18 +347,70 @@ docker compose -p mcp-registry -f quickstart.compose.yml run --rm app node dist/
 
 ## Versioning and upgrades
 
-Releases follow [semantic versioning](https://semver.org); changes are listed in [CHANGELOG.md](./CHANGELOG.md). Within 1.x these do not break:
+Releases follow [semantic versioning](https://semver.org); changes are listed in [CHANGELOG.md](./CHANGELOG.md). The version is shown by `node dist/cli.js --version`, under your name in the web UI sidebar, in the `serverInfo` that `/mcp` reports to MCP clients, and in the `version` field of the `starting` and `listening` log records.
 
-- environment variables: names and meaning (new ones may be added, with defaults that keep the old behaviour);
-- CLI commands, their arguments and exit codes (0 success, 1 operation failed, 2 bad invocation);
-- the four meta-tools of `/mcp` (`list_servers`, `search_tools`, `describe_tool`, `call_tool`): their names and input schemas;
-- the database schema: migrations only move forward and run at startup under an advisory lock.
+### What stays stable within 1.x
 
-`/api/**` is the web UI's internal interface and may change in minor versions; do not build integrations on it. Agents use `/mcp`, scripts use the CLI.
+- **Environment variables:** names and meaning. New ones may be added. The defaults of tuning values (`SEARCH_MIN_SIMILARITY`, `SYNC_INTERVAL_HOURS`, `CALL_LOG_RETENTION_DAYS`, `UPSTREAM_MAX_RESPONSE_BYTES`, `MCP_MAX_BODY_BYTES`) may change in a minor release, with a changelog entry. Embeddings stay 384-dimensional for all of 1.x.
+- **CLI:** command names, arguments and exit codes (0 success, 1 operation failed, 2 bad invocation). Output text is for people and may change, except that `create-token` prints the token on the first line of stdout (the second line is the `claude mcp add` command, the reminder goes to stderr) and `login-link` prints the link as the only line on stdout.
+- **`/mcp`:** Streamable HTTP at `/mcp` with `Authorization: Bearer sk_...`; the four tools `list_servers`, `search_tools`, `describe_tool`, `call_tool`; their input and output fields are not removed or changed in meaning (new optional fields may appear); the `<server>.<tool>` ref format.
+- **URLs registered outside the gateway:** `<PUBLIC_URL>/api/auth/callback` and `<PUBLIC_URL>/api/connections/callback`; `/healthz` answers 200 with the body `ok`.
+- **Data:** a database from 0.1.0 or from any earlier 1.x is upgraded automatically at startup; existing `sk_` tokens, sessions and connections keep working across upgrades. The tables themselves are internal: do not read or write them.
+- **Deployment names that the documented commands rely on:** in `quickstart.compose.yml` the project name `mcp-registry`, the services `app`, `db`, `init` and the volumes `secrets` and `pgdata`; in the image, port 3000 and `node dist/cli.js`.
 
-To upgrade, back up the database (`pg_dump`) and the secrets key, replace the image, start. From 0.1.0 you can go straight to any 1.x release. There are no down migrations: to go back to an older version, restore the backup taken before the upgrade.
+Not covered: the rest of `/api/**` (the web client's internal interface), and the shape and text of log records. Agents use `/mcp`, scripts use the CLI; for automation use `login-link`, not log parsing (the `grep "one-time link"` above is a convenience for a person).
 
-The version is shown by `node dist/cli.js --version`, under your name in the web UI sidebar, and in the `version` field of the `listening` log record at startup.
+### Image tags
+
+`ghcr.io/ai-pipes/mcp-registry` is published for tagged releases only, and only after the release workflow has tested the image. `1.0.0` is exactly that release; `1.0` follows the newest 1.0.x patch release and `1` the newest 1.x release; `latest` follows the newest release, including future major versions. `quickstart.compose.yml` uses `:1`. To control when you upgrade, pin an exact tag: `MCP_REGISTRY_IMAGE=ghcr.io/ai-pipes/mcp-registry:1.0.0`.
+
+### Upgrading
+
+There are no down migrations, so a backup is the way back. Every command below was run, with a different project name, against stacks of both layouts. In the commands, `docker compose` is the one you already use for the stack (the quick start needs `-p mcp-registry`, plus the same `--env-file` or environment as before).
+
+1. **Back up the database and the key.** Source layout (`docker-compose.yml` + `.env`):
+
+   ```sh
+   docker compose exec -T db pg_dump -Fc -U mcp -d mcp > mcp-$(date +%F).dump
+   cp .env .env.backup                       # holds SECRETS_KEY
+   ```
+
+   Quick start (the key is the `secrets_key` file in the `secrets` volume):
+
+   ```sh
+   docker compose -p mcp-registry exec -T db pg_dump -Fc -U mcp -d mcp > mcp-$(date +%F).dump
+   (umask 077; docker compose -p mcp-registry exec -T app cat /secrets/secrets_key > secrets_key.backup)
+   ```
+
+   Keep the dump and the key together: a database restored without its key has no usable secrets.
+
+2. **Upgrade.** Source layout: check out the release tag and rebuild.
+
+   ```sh
+   git fetch --tags && git checkout v<version>
+   docker compose up -d --build
+   ```
+
+   Quick start: replace your saved `quickstart.compose.yml` with the one from the release tag, then pull and start with the same `--env-file` or environment as before. `up -d` alone does not pull a tag such as `:1` that is already cached; `pull` fetches the new image and `up -d` then recreates the app.
+
+   ```sh
+   docker compose -p mcp-registry --env-file my.env -f quickstart.compose.yml pull
+   docker compose -p mcp-registry --env-file my.env -f quickstart.compose.yml up -d
+   ```
+
+3. **Start with the key you have been using.** The first start with a version that has the key check records it; a different key later stops the server (see "Recovering from a key mismatch"). Migrations run at startup under a lock; check `docker compose logs app` for the `starting` record with the new version and for `listening`.
+
+### Going back
+
+A database that a newer version has migrated is refused by an older one: the server logs `the database was migrated by a newer version of mcp-registry (unknown migration: ...)` and exits with code 1 (Compose keeps restarting it; the CLI fails the same way). Going back means restoring the dump taken before the upgrade, which discards everything written since. Stop the app, recreate the database, restore, start the old version (use the `docker compose` of your layout as above):
+
+```sh
+docker compose stop app
+docker compose exec -T db psql -U mcp -d postgres -c 'drop database mcp with (force)' -c 'create database mcp owner mcp'
+docker compose exec -T db pg_restore -U mcp -d mcp --exit-on-error < mcp-2026-11-17.dump
+```
+
+Then start the old version: source layout, check out the old tag and `docker compose up -d --build`; quick start, `MCP_REGISTRY_IMAGE=ghcr.io/ai-pipes/mcp-registry:<old version> docker compose -p mcp-registry --env-file my.env -f quickstart.compose.yml up -d` with the old release's compose file. Put the key from the backup back if you rotated it after the dump was taken.
 
 ## Development
 

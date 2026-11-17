@@ -20,6 +20,7 @@ const serverVersion: string =
   typeof serverPkg.version === 'string'
     ? serverPkg.version
     : '';
+if (serverVersion === '') throw new Error('apps/server/package.json has no non-empty "version"');
 const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const DOMAIN_APPLICATION = 'apps/server/src/modules/*/{domain,application}/**';

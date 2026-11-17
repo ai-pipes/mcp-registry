@@ -26,7 +26,15 @@ bash scripts/e2e-image.sh    # Playwright against the built image (pnpm exec pla
 - **Never weaken a rule to get green.** No `eslint-disable`, no `@ts-ignore`, no edits to `.dependency-cruiser.cjs` or coverage thresholds, no `it.skip`, no CSP exceptions. Fix the code. If you believe a rule is wrong, propose the change in a separate PR with its reasoning.
 - **UI** uses shadcn/ui on Base UI (no Radix); all strings live in `apps/web/src/strings.ts`; the CSP forbids inline scripts and `<style>` elements.
 - **Never log secrets, tokens, or call arguments and results.**
+- **Changelog.** A change an operator can see (a setting, a CLI command, an upgrade step, a changed default, a fix they would notice) adds a line to `CHANGELOG.md` in the same pull request.
 - Keep docs in step: a new module, term, command or environment variable updates `CLAUDE.md`, `README.md` and `.env.example` in the same PR.
+
+## Releasing
+
+1. Date the changelog entry (`## [<version>] - YYYY-MM-DD`; `Unreleased` blocks the release) and add the compare link at the bottom.
+2. Make sure `apps/server/package.json` has the version (the only place it is set).
+3. Merge to `main`.
+4. Tag `v<version>` on `main` and push the tag. The release workflow checks the tag, the changelog entry and that the commit is on `main`, builds the image, tests it (version printed by the amd64 and arm64 images, quick-start smoke, compose smoke) and only then pushes it to GHCR.
 
 ## Commits
 

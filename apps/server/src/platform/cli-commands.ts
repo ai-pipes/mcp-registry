@@ -337,16 +337,23 @@ async function guardKey(name: string, c: Container, io: CliIo): Promise<number |
 }
 
 /**
+ * `--version`: prints the gateway version and returns 0, or returns null when `argv` is not that
+ * flag. The entry point (cli.ts) calls it before loading the configuration or opening the
+ * database, so it needs neither.
+ */
+export function runVersionFlag(argv: string[], io: Pick<CliIo, 'out'>): number | null {
+  if (argv[0] !== '--version') return null;
+  io.out(VERSION);
+  return 0;
+}
+
+/**
  * Runs one CLI command against an already built container, through the modules' public use
  * cases. Returns the exit code: 0 success, 1 the operation failed, 2 bad invocation (usage
  * printed to `err`). Secrets are never printed.
  */
 export async function runCli(argv: string[], c: Container, io: CliIo): Promise<number> {
   const [name = '', ...args] = argv;
-  if (name === '--version') {
-    io.out(VERSION);
-    return 0;
-  }
   const command = COMMANDS[name];
   try {
     if (!command) {

@@ -18,6 +18,7 @@ import { buildContainer, type Container } from '../../src/platform/container.ts'
 import { createHttpApp } from '../../src/platform/http/app.ts';
 import { createLogger } from '../../src/platform/logger.ts';
 import { SERVER_INSTRUCTIONS } from '../../src/platform/mcp/instructions.ts';
+import { VERSION } from '../../src/platform/version.ts';
 import { type FakeUpstream, startFakeUpstream } from '../fake-upstream.ts';
 import { FakeEmbedder } from '../fakes/fake-embedder.ts';
 import { startPg, truncateAll } from '../pg.ts';
@@ -235,6 +236,7 @@ describe('/mcp: the agent sees four meta-tools', () => {
       'search_tools',
     ]);
     expect(client.getInstructions()).toBe(SERVER_INSTRUCTIONS);
+    expect(client.getServerVersion()).toMatchObject({ name: 'mcp-registry', version: VERSION });
     expect(client.getServerCapabilities()?.tools?.listChanged).not.toBe(true);
     const size = JSON.stringify(first).length + SERVER_INSTRUCTIONS.length;
     expect(size, `tools/list + instructions: ${size} characters`).toBeLessThan(8000);
