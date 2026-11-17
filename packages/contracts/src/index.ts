@@ -1,8 +1,10 @@
 export { ErrorBody } from './errors.ts';
 export {
+  AuthMethods,
   CallbackQuery,
   CreateTokenRequest,
   CreateTokenResponse,
+  LinkLoginBody,
   LoginQuery,
   MeResponse,
   Role,

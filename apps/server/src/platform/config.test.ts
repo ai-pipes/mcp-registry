@@ -46,9 +46,11 @@ describe('loadConfig', () => {
       upstreamMaxResponseBytes: 20 * 1024 * 1024,
       mcpMaxBodyBytes: 10 * 1024 * 1024,
       oidc: {
-        issuer: 'https://id.example.com',
-        clientId: 'mcp-gateway',
-        clientSecret: 'client-secret',
+        client: {
+          issuer: 'https://id.example.com',
+          clientId: 'mcp-gateway',
+          clientSecret: 'client-secret',
+        },
         loginGroup: 'mcp-users',
         adminGroup: 'mcp-admins',
         scopes: 'openid profile email groups',
@@ -125,6 +127,36 @@ describe('loadConfig', () => {
     }
     expect(message).toContain('SECRETS_KEY');
     expect(message).not.toContain('bad-secret-value-xyz');
+  });
+
+  it('starts without OIDC when none of the three variables is set', () => {
+    const { OIDC_ISSUER: _a, OIDC_CLIENT_ID: _b, OIDC_CLIENT_SECRET: _c, ...without } = base;
+    expect(loadConfig(without).oidc.client).toBeNull();
+    const empty = { ...base, OIDC_ISSUER: '', OIDC_CLIENT_ID: '', OIDC_CLIENT_SECRET: '' };
+    const c = loadConfig(empty);
+    expect(c.oidc.client).toBeNull();
+    // The group policy keeps its defaults: provisionUser uses it without a provider.
+    expect(c.oidc).toMatchObject({ loginGroup: 'mcp-users', adminGroup: 'mcp-admins' });
+  });
+
+  it('refuses a partial OIDC configuration and names what is missing', () => {
+    let message = '';
+    try {
+      loadConfig({ ...base, OIDC_CLIENT_ID: '', OIDC_CLIENT_SECRET: '' });
+    } catch (e) {
+      if (e instanceof Error) message = e.message;
+    }
+    expect(message).toContain('OIDC_CLIENT_ID');
+    expect(message).toContain('OIDC_CLIENT_SECRET');
+    expect(message).not.toContain('OIDC_ISSUER:');
+  });
+
+  it('keeps a full OIDC configuration unchanged', () => {
+    expect(loadConfig(base).oidc.client).toEqual({
+      issuer: 'https://id.example.com',
+      clientId: 'mcp-gateway',
+      clientSecret: 'client-secret',
+    });
   });
 
   it('requires OIDC_ISSUER', () => {

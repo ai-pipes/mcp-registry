@@ -34,9 +34,7 @@ function configFor(over: Partial<Config> = {}): Config {
     cookieSecure: true,
     secretsKey: KEY,
     oidc: {
-      issuer: 'https://id.example.com',
-      clientId: 'id',
-      clientSecret: 'secret',
+      client: { issuer: 'https://id.example.com', clientId: 'id', clientSecret: 'secret' },
       loginGroup: 'mcp-users',
       adminGroup: 'mcp-admins',
       scopes: 'openid profile email groups',

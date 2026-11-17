@@ -1,6 +1,13 @@
-import { CallbackQuery, LoginQuery, type MeResponse } from '@mcp/contracts';
+import {
+  type AuthMethods,
+  CallbackQuery,
+  LinkLoginBody,
+  LoginQuery,
+  type MeResponse,
+} from '@mcp/contracts';
 import { Hono } from 'hono';
-import { readQuery } from '../../../../platform/http/request.ts';
+import { readJson, readQuery } from '../../../../platform/http/request.ts';
+import { completeLinkLogin } from '../../application/login-link.ts';
 import { completeOidcLogin, startOidcLogin } from '../../application/oidc-login.ts';
 import type { IdentityDeps } from '../../application/ports.ts';
 import { logout } from '../../application/sessions.ts';
@@ -22,13 +29,43 @@ import type { IdentityEnv } from './shared.ts';
  */
 export type BrowserRouteOptions = {
   cookieSecure: boolean;
+  /** Whether `OIDC_*` is set; without it people sign in with a one-time link. */
+  oidcConfigured: boolean;
   logError: (error: unknown, message: string) => void;
+};
+
+/** Status of each way a link sign-in can fail: wrong code, refused person, too many tries. */
+const LINK_ERROR_STATUS: Partial<Record<string, 401 | 403 | 429>> = {
+  invalid_link: 401,
+  disabled: 403,
+  rate_limited: 429,
 };
 
 /** `/api/auth`: login and callback are the only /api routes reachable without a session. */
 export function authRoutes(deps: IdentityDeps, opts: BrowserRouteOptions) {
   return new Hono<IdentityEnv>()
+    .get('/methods', (c) => {
+      const methods: AuthMethods = { oidc: opts.oidcConfigured };
+      return c.json(methods);
+    })
+    .post('/link', async (c) => {
+      const { code } = await readJson(c, LinkLoginBody);
+      const r = await completeLinkLogin(deps, { code, ip: c.get('clientIp') });
+      if (!r.ok) {
+        if (r.error.code === 'rate_limited' && r.error.retryAfterSec !== undefined) {
+          c.header('Retry-After', String(r.error.retryAfterSec));
+        }
+        // The message is fixed text: it never carries the code.
+        return c.json(
+          { error: { code: r.error.code, message: r.error.message } },
+          LINK_ERROR_STATUS[r.error.code] ?? 400,
+        );
+      }
+      setSessionCookie(c, r.value.sessionId, opts.cookieSecure);
+      return c.body(null, 204);
+    })
     .get('/login', async (c) => {
+      if (!opts.oidcConfigured) return c.redirect('/?loginError=oidc_not_configured', 302);
       const { returnTo } = readQuery(c, LoginQuery);
       const started = await startOidcLogin(deps, { returnTo });
       // The provider is unreachable: back to the UI with a fixed code, as the callback does.

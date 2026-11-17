@@ -106,7 +106,14 @@ export function createHttpApp(c: Container, opts: HttpAppOptions = {}): HttpApp 
   const logError = (error: unknown, message: string) => {
     logger.error({ err: errorFields(error) }, message);
   };
-  app.route('/api', identityRoutes(c.identity, { cookieSecure: config.cookieSecure, logError }));
+  app.route(
+    '/api',
+    identityRoutes(c.identity, {
+      cookieSecure: config.cookieSecure,
+      oidcConfigured: config.oidc.client !== null,
+      logError,
+    }),
+  );
   app.route('/api/connections', connectionRoutes(c.connections, c.identity, { logError }));
   app.route('/api', toolRoutes(c.catalog, c.identity));
   app.route('/api/servers', serverRoutes(c.catalogSync, c.identity));
