@@ -21,7 +21,7 @@ import {
 import { reindexAll } from '../modules/search/index.ts';
 import { DomainError } from '../shared-kernel/index.ts';
 import type { Container } from './container.ts';
-import { resealKeyCheck } from './crypto/key-check.ts';
+import { inspectKeyCheck, removeKeyCheck, resealKeyCheck } from './crypto/key-check.ts';
 import { AesGcmSecretBox } from './crypto/secret-box.ts';
 
 export type CliIo = {
@@ -54,7 +54,11 @@ const USAGE = `Usage: node dist/cli.js <command>
       Rebuild the search index for every server.
   rotate-secrets-key
       Re-seal every stored secret (server secrets and people's tokens) from SECRETS_KEY_OLD
-      to SECRETS_KEY. Safe to repeat.`;
+      to SECRETS_KEY. Safe to repeat.
+  reset-key-check --yes
+      Remove the stored key check, so the next start records the configured SECRETS_KEY. Use it
+      only after restoring the right key, or when the key is lost for good (stored server secrets
+      and personal connections then stay unreadable and must be entered again).`;
 
 /** Bad invocation: printed with the usage, exit code 2. */
 class UsageError extends Error {}
@@ -219,6 +223,13 @@ const reindexCommand: Command = async (args, c, io) => {
 const resealLine = (what: string, s: ResealSummary) =>
   `${what}: ${s.resealed} re-sealed, ${s.current} already under the new key`;
 
+const KEY_CHECK_TEXT = {
+  resealed: 're-sealed',
+  current: 'already current',
+  absent: 'none stored',
+  unreadable: 'cannot be read with either key',
+} as const;
+
 const rotateSecretsKeyCommand: Command = async (args, c, io) => {
   parse(args, {}, 0);
   const old = c.config.secretsKeyOld;
@@ -233,7 +244,7 @@ const rotateSecretsKeyCommand: Command = async (args, c, io) => {
   io.out(resealLine('server secrets', servers));
   io.out(resealLine('connections', connections));
   const keyCheck = await resealKeyCheck(c.sql, { current: c.config.secretsKey, previous: old });
-  io.out(`key check: ${keyCheck}`);
+  io.out(`key check: ${KEY_CHECK_TEXT[keyCheck]}`);
   await c.audit.record({
     actorId: null,
     action: 'secrets.rotate',
@@ -263,6 +274,27 @@ const rotateSecretsKeyCommand: Command = async (args, c, io) => {
   return 1;
 };
 
+const resetKeyCheckCommand: Command = async (args, c, io) => {
+  const { values } = parse(args, { yes: { type: 'boolean' } }, 0);
+  if (values.yes !== true) {
+    throw new UsageError(
+      '--yes is required: reset-key-check removes the stored key check, so the next start records the configured SECRETS_KEY',
+    );
+  }
+  const removed = await removeKeyCheck(c.sql);
+  await c.audit.record({
+    actorId: null,
+    action: 'secrets.key_check_reset',
+    meta: { via: 'cli', removed },
+  });
+  io.out(
+    removed
+      ? 'key check removed: the next start records the configured SECRETS_KEY'
+      : 'key check: nothing to remove',
+  );
+  return 0;
+};
+
 const COMMANDS: Record<string, Command> = {
   'create-user': createUserCommand,
   'create-token': createTokenCommand,
@@ -271,7 +303,36 @@ const COMMANDS: Record<string, Command> = {
   sync: syncCommand,
   reindex: reindexCommand,
   'rotate-secrets-key': rotateSecretsKeyCommand,
+  'reset-key-check': resetKeyCheckCommand,
 };
+
+/** Commands that handle the key themselves: they run on a mismatch without the guard. */
+const KEY_AWARE = new Set(['rotate-secrets-key', 'reset-key-check']);
+/** Commands that seal a new secret with SECRETS_KEY: refused on a mismatch (the rest only warn). */
+const SEALING = new Set(['create-server']);
+
+/**
+ * Before a command: a stored key check that SECRETS_KEY does not open means this key is not the
+ * one the data was set up with. Read-only (the check is never created here). Returns an exit
+ * code when the command must not run.
+ */
+async function guardKey(name: string, c: Container, io: CliIo): Promise<number | null> {
+  if (KEY_AWARE.has(name)) return null;
+  const verdict = await inspectKeyCheck(c.sql, {
+    current: c.config.secretsKey,
+    ...(c.config.secretsKeyOld ? { previous: c.config.secretsKeyOld } : {}),
+  });
+  if (verdict !== 'mismatch') return null;
+  const hint = 'See "Recovering from a key mismatch" in the README.';
+  if (SEALING.has(name)) {
+    io.err(
+      `error: SECRETS_KEY does not match the data in this database; refusing to seal a new secret with it. ${hint}`,
+    );
+    return 1;
+  }
+  io.err(`warning: SECRETS_KEY does not match the data in this database. ${hint}`);
+  return null;
+}
 
 /**
  * Runs one CLI command against an already built container, through the modules' public use
@@ -285,6 +346,8 @@ export async function runCli(argv: string[], c: Container, io: CliIo): Promise<n
     if (!command) {
       throw new UsageError(name === '' ? 'no command given' : `unknown command "${name}"`);
     }
+    const refused = await guardKey(name, c, io);
+    if (refused !== null) return refused;
     return await command(args, c, io);
   } catch (error) {
     if (error instanceof UsageError) {

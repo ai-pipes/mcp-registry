@@ -15,7 +15,7 @@ Only the latest release receives security fixes. Upgrade before reporting if you
 mcp-registry is designed for individuals and small teams running it inside a private network, behind a TLS-terminating reverse proxy, with a trusted operator. Within that scope:
 
 - **Stored secrets.** Upstream server secrets (shared keys, OAuth client secrets) and people's OAuth tokens and personal access tokens are encrypted at rest with AES-256-GCM under `SECRETS_KEY`. Anyone who has both the database and the key can read them. Keep the key out of the database backups' storage location and restrict access to the host.
-- **The secrets key is checked at every start.** The server keeps a value sealed with `SECRETS_KEY` in `platform.key_check` and refuses to start (one fatal log record, exit code 1) when the configured key opens neither it nor, during rotation, `SECRETS_KEY_OLD`. It never generates or replaces the key itself. The key can also be given as a file (`SECRETS_KEY_FILE`, and `PGPASSWORD_FILE` for the database password); errors name the variable and the path, never the content.
+- **The secrets key is checked at every start.** The server keeps a value sealed with `SECRETS_KEY` in `platform.key_check` and refuses to start (one fatal log record, exit code 1) when neither `SECRETS_KEY` nor `SECRETS_KEY_OLD` opens it. The check proves that the key is the one recorded on the first start with the check, not that it opens the stored secrets; it is an operational guard against a wrong key, not a security boundary: someone with write access to the database can remove the row (and `node dist/cli.js reset-key-check --yes` does it on purpose). The server never generates or replaces the key itself. For recovery see "Recovering from a key mismatch" in the README. The key can also be given as a file (`SECRETS_KEY_FILE`, and `PGPASSWORD_FILE` for the database password); errors name the variable and the path, never the content.
 - **Back up the database and the key together.** One without the other is useless: a database without its key has no readable secrets or connections, a key without the database protects nothing.
 - **No secret leaves the server.** Upstream secrets and personal tokens are never returned to the browser or to MCP clients and never written to logs; admin forms treat them as write-only.
 - **No payload logging.** `call_tool` arguments and results are not logged or stored; the call log records who called which tool, when, how long it took and the outcome.
@@ -45,8 +45,8 @@ OIDC is optional. Without `OIDC_ISSUER`, `OIDC_CLIENT_ID` and `OIDC_CLIENT_SECRE
 
 - `docker compose down -v` removes both volumes, so it destroys the data and the key. Plain `docker compose down` keeps them.
 - Back up the `secrets` volume together with `pgdata` (or the database dump and the key file); keep the backup of the key apart from the database backup's storage location.
-- A database kept with a lost or replaced key makes the server refuse to start (the key check above). With the quick start, losing the `secrets` volume while keeping `pgdata` also generates a new database password, so the app cannot connect to Postgres either.
-- Postgres is not published to the host; only the app is.
+- A database kept with a lost or replaced key makes the server refuse to start (the key check above; see the recovery steps in the README). With the quick start, losing the `secrets` volume while keeping `pgdata` also generates a new database password, so the app cannot connect to Postgres either.
+- Postgres is not published to the host; only the app is, and by default on `127.0.0.1` only (`BIND_ADDRESS=0.0.0.0` exposes it; do that only with a real `PUBLIC_URL` behind HTTPS).
 - The session cookie keeps the `Secure` flag by default. Chrome and Firefox accept it on `http://localhost`; Safari does not, and plain http on a LAN address needs `COOKIE_SECURE=false`. Run anything beyond localhost behind HTTPS.
 
 ### Out of scope

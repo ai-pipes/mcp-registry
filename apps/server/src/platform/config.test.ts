@@ -89,9 +89,11 @@ describe('loadConfig', () => {
       } catch (error) {
         message = error instanceof Error ? error.message : '';
       }
-      expect(message).toContain('SECRETS_KEY');
+      expect(message).toContain('SECRETS_KEY_FILE');
+      expect(message).toContain('/k');
       expect(message).toContain('32 bytes');
       expect(message).not.toContain(short);
+      expect(message).not.toMatch(/(^|[^_A-Z])SECRETS_KEY(?!_)/);
     });
 
     it('needs neither file variable', () => {

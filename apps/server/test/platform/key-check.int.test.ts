@@ -98,7 +98,7 @@ describe('checkSecretsKey', () => {
     expect(records).toHaveLength(1);
     expect(records[0]?.level).toBe(60);
     expect(records[0]?.msg).toBe(
-      'SECRETS_KEY does not match the data in this database; restore the original key (stored secrets cannot be read with this one)',
+      'SECRETS_KEY does not match the data in this database; restore the original key (stored secrets cannot be read with this one). See "Recovering from a key mismatch" in the README.',
     );
     const text = JSON.stringify(records);
     for (const k of [original, wrong]) {

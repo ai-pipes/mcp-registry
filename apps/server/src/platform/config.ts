@@ -218,7 +218,19 @@ export function loadConfig(
       { path: ['SECRETS_KEY_OLD'], message: 'must differ from SECRETS_KEY' },
     )
     .safeParse(set);
-  if (!parsed.success) throw new ConfigError(parsed.error.issues);
+  if (!parsed.success) {
+    const keyFile = keyFromFile === undefined ? undefined : set.SECRETS_KEY_FILE;
+    // A key that came from a file is reported against SECRETS_KEY_FILE and its path, not SECRETS_KEY.
+    throw new ConfigError(
+      keyFile === undefined
+        ? parsed.error.issues
+        : parsed.error.issues.map((i) =>
+            i.path[0] === 'SECRETS_KEY'
+              ? { ...i, path: ['SECRETS_KEY_FILE'], message: `${i.message} (the file ${keyFile})` }
+              : i,
+          ),
+    );
+  }
   const e = parsed.data;
   const config: Config = {
     port: e.PORT,

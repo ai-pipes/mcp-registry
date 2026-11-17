@@ -347,7 +347,7 @@ describe('cli rotate-secrets-key', () => {
     expect(r.out).toEqual([
       'server secrets: 1 re-sealed, 0 already under the new key',
       'connections: 2 re-sealed, 0 already under the new key',
-      'key check: absent',
+      'key check: none stored',
     ]);
     for (const s of ['access-token-1', 'refresh-token-1', 'pat-token-1', SECRET]) {
       expect(r.all).not.toContain(s);
@@ -368,7 +368,7 @@ describe('cli rotate-secrets-key', () => {
     expect(again.out).toEqual([
       'server secrets: 0 re-sealed, 1 already under the new key',
       'connections: 0 re-sealed, 2 already under the new key',
-      'key check: absent',
+      'key check: none stored',
     ]);
     const audit = await pg.sql`select meta from platform.audit_log where action = 'secrets.rotate'`;
     expect(audit).toHaveLength(2);
@@ -380,9 +380,31 @@ describe('cli rotate-secrets-key', () => {
       container: containerFor({ secretsKey: NEW, secretsKeyOld: OLD }),
     });
     expect(r.code).toBe(0);
-    expect(r.out).toContain('key check: resealed');
+    expect(r.out).toContain('key check: re-sealed');
     expect(await verifySecretsKey(pg.sql, { current: NEW })).toBe('ok');
     expect(await verifySecretsKey(pg.sql, { current: OLD })).toBe('mismatch');
+  });
+
+  it('says the key check is already current on a repeat', async () => {
+    await verifySecretsKey(pg.sql, { current: NEW });
+    const r = await cli(['rotate-secrets-key'], {
+      container: containerFor({ secretsKey: NEW, secretsKeyOld: OLD }),
+    });
+    expect(r.code).toBe(0);
+    expect(r.out).toContain('key check: already current');
+  });
+
+  it('fails (exit 1) naming the key check when neither key opens it', async () => {
+    await verifySecretsKey(pg.sql, { current: new Uint8Array(randomBytes(32)) });
+    const [before] = await pg.sql<{ sealed: Uint8Array }[]>`select sealed from platform.key_check`;
+    const r = await cli(['rotate-secrets-key'], {
+      container: containerFor({ secretsKey: NEW, secretsKeyOld: OLD }),
+    });
+    expect(r.code).toBe(1);
+    expect(r.out).toContain('key check: cannot be read with either key');
+    expect(r.err.join('\n')).toContain('key check');
+    const [after] = await pg.sql<{ sealed: Uint8Array }[]>`select sealed from platform.key_check`;
+    expect(Buffer.from(after!.sealed).equals(Buffer.from(before!.sealed))).toBe(true);
   });
 
   it('refuses to run without SECRETS_KEY_OLD', async () => {
@@ -400,5 +422,89 @@ describe('cli rotate-secrets-key', () => {
     expect(r.code).toBe(1);
     expect(r.err.join('\n')).toContain('fake');
     expect(r.err.join('\n')).toMatch(/\/gitea/);
+  });
+});
+
+const rows = () => pg.sql`select 1 from platform.key_check`;
+
+describe('cli reset-key-check', () => {
+  const OTHER = new Uint8Array(randomBytes(32));
+  it('removes the stored value, so the next start records the configured key', async () => {
+    await verifySecretsKey(pg.sql, { current: KEY });
+    expect(await verifySecretsKey(pg.sql, { current: OTHER })).toBe('mismatch');
+    const r = await cli(['reset-key-check', '--yes']);
+    expect(r.code).toBe(0);
+    expect(r.out).toEqual(['key check removed: the next start records the configured SECRETS_KEY']);
+    expect(await rows()).toHaveLength(0);
+    expect(await verifySecretsKey(pg.sql, { current: OTHER })).toBe('created');
+    const audit =
+      await pg.sql`select 1 from platform.audit_log where action = 'secrets.key_check_reset'`;
+    expect(audit).toHaveLength(1);
+  });
+
+  it('without --yes exits 2, says what it does and removes nothing', async () => {
+    await verifySecretsKey(pg.sql, { current: KEY });
+    const r = await cli(['reset-key-check']);
+    expect(r.code).toBe(2);
+    expect(r.err.join('\n')).toContain('--yes');
+    expect(r.err.join('\n')).toMatch(/removes the stored key check/);
+    expect(await rows()).toHaveLength(1);
+  });
+
+  it('exits 0 when there is nothing to remove', async () => {
+    const r = await cli(['reset-key-check', '--yes']);
+    expect(r.code).toBe(0);
+    expect(r.out).toEqual(['key check: nothing to remove']);
+  });
+});
+
+describe('cli on a key mismatch', () => {
+  const OTHER = new Uint8Array(randomBytes(32));
+  const mismatched = () => containerFor({ secretsKey: OTHER });
+
+  beforeEach(async () => {
+    await verifySecretsKey(pg.sql, { current: KEY });
+  });
+
+  it('warns on stderr and proceeds for commands that seal nothing', async () => {
+    const r = await cli(['create-user', '--sub', 'bob', '--name', 'Bob'], {
+      container: mismatched(),
+    });
+    expect(r.code).toBe(0);
+    expect(r.err).toHaveLength(1);
+    expect(r.err[0]).toMatch(/^warning: SECRETS_KEY does not match the data in this database/);
+    expect(r.err[0]).toContain('Recovering from a key mismatch');
+    expect(r.out).toHaveLength(1);
+  });
+
+  it('refuses create-server (it would seal a secret with the wrong key), exit 1', async () => {
+    await admin();
+    const r = await cli(['create-server', '--json', await serverJson(), '--as', 'owner'], {
+      stdin: SECRET,
+      container: mismatched(),
+    });
+    expect(r.code).toBe(1);
+    expect(r.err.join('\n')).toContain('SECRETS_KEY does not match');
+    expect(r.all).not.toContain(SECRET);
+    expect(await pg.sql`select 1 from catalog.servers`).toHaveLength(0);
+  });
+
+  it('stays silent when the key matches, and never creates the check from the CLI', async () => {
+    const ok = await cli(['create-user', '--sub', 'bob', '--name', 'Bob']);
+    expect(ok.err).toEqual([]);
+    await pg.sql`delete from platform.key_check`;
+    const r = await cli(['create-user', '--sub', 'eve', '--name', 'Eve'], {
+      container: mismatched(),
+    });
+    expect(r.err).toEqual([]);
+    expect(await pg.sql`select 1 from platform.key_check`).toHaveLength(0);
+  });
+
+  it('does not warn for rotate-secrets-key and reset-key-check', async () => {
+    const reset = await cli(['reset-key-check', '--yes'], { container: mismatched() });
+    expect(reset.err).toEqual([]);
+    await verifySecretsKey(pg.sql, { current: KEY });
+    const rot = await cli(['rotate-secrets-key'], { container: mismatched() });
+    expect(rot.err.join('\n')).not.toContain('warning');
   });
 });

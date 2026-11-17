@@ -71,3 +71,17 @@ export async function resealKeyCheck(
     where sealed = ${existing} returning id`;
   return updated.length > 0 ? 'resealed' : 'current';
 }
+
+/** Read-only: what the stored check value says about the keys; never creates or changes it. */
+export async function inspectKeyCheck(
+  sql: Sql,
+  keys: Keys,
+): Promise<Exclude<KeyCheck, 'created'> | 'absent'> {
+  return judgeKeyCheck(await readSealed(sql), keys);
+}
+
+/** Deletes the stored check value, so the next start records the configured key. True when one existed. */
+export async function removeKeyCheck(sql: Sql): Promise<boolean> {
+  const removed = await sql`delete from platform.key_check returning id`;
+  return removed.length > 0;
+}

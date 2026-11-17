@@ -21,11 +21,15 @@ IMAGE="mcp-registry:quickstart-smoke"
 HEALTH_TIMEOUT=120
 MISMATCH_TIMEOUT=60
 FATAL_TEXT='SECRETS_KEY does not match the data in this database; restore the original key (stored secrets cannot be read with this one)'
+FATAL_HINT='Recovering from a key mismatch'
 
 export MCP_REGISTRY_IMAGE="$IMAGE" PORT PUBLIC_URL="$BASE_URL"
 
 # The stack is described only by quickstart.compose.yml on stdin, as in the documented command.
-compose() { docker compose -p "$PROJECT" -f - "$@" <quickstart.compose.yml; }
+# `--env-file /dev/null` keeps a `.env` in the repository root (which Compose would read) out of the run.
+compose() { docker compose --env-file /dev/null -p "$PROJECT" -f - "$@" <quickstart.compose.yml; }
+# The documented file-less form, for commands after the stack is up (no -f, no env file).
+pcompose() { docker compose -p "$PROJECT" "$@"; }
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/mcp-quickstart-smoke.XXXXXX")"
 
@@ -56,6 +60,10 @@ fail() {
 
 app_log() { compose logs --no-color --no-log-prefix app 2>&1; }
 
+# Rendered configuration of the app service for the current environment, captured (not piped into
+# `grep -q`, which can end the producer early and fail under pipefail).
+rendered() { compose config 2>&1; }
+
 wait_healthy() {
   local deadline=$((SECONDS + HEALTH_TIMEOUT))
   until [ "$(curl -fsS "${BASE_URL}/healthz" 2>/dev/null || true)" = "ok" ]; do
@@ -79,12 +87,20 @@ mcp_tools_ok() {
   done
 }
 
-step "pass-through: a variable from the caller's environment reaches the app service"
-# Cheaper than a second full start: the rendered config must carry the value.
-LOG_LEVEL=debug compose config | grep -qE '^ +LOG_LEVEL: debug$' ||
-  fail "LOG_LEVEL from the environment did not reach the app service"
-compose config | grep -qE '^ +LOG_LEVEL: ""$' || fail "an unset optional variable is not empty in the app service"
-echo "config: LOG_LEVEL passes through"
+step "pass-through and defaults of the rendered configuration"
+cfg="$(export LOG_LEVEL=debug; rendered)"
+grep -qE '^ +LOG_LEVEL: debug$' <<<"$cfg" || fail "LOG_LEVEL from the environment did not reach the app service"
+cfg="$(rendered)"
+grep -qE '^ +LOG_LEVEL: ""$' <<<"$cfg" || fail "an unset optional variable is not empty in the app service"
+grep -qE '^ +SECRETS_KEY_OLD: ""$' <<<"$cfg" || fail "SECRETS_KEY_OLD is not passed through (empty) to the app service"
+grep -qE '^ +host_ip: 127\.0\.0\.1$' <<<"$cfg" || fail "the port is not published on 127.0.0.1 by default"
+cfg="$(unset MCP_REGISTRY_IMAGE; rendered)"
+grep -qF 'image: ghcr.io/ai-pipes/mcp-registry:1' <<<"$cfg" ||
+  fail "the default image is not ghcr.io/ai-pipes/mcp-registry:1"
+cfg="$(unset PUBLIC_URL; export PORT=38081 BIND_ADDRESS=0.0.0.0; rendered)"
+grep -qE '^ +PUBLIC_URL: http://localhost:38081$' <<<"$cfg" || fail "PORT without PUBLIC_URL did not give PUBLIC_URL http://localhost:<PORT>"
+grep -qE '^ +host_ip: 0\.0\.0\.0$' <<<"$cfg" || fail "BIND_ADDRESS did not change the published address"
+echo "config: pass-through, 127.0.0.1 by default, PUBLIC_URL follows PORT, default image"
 
 step "docker build (${IMAGE})"
 docker build -q -t "$IMAGE" . >/dev/null
@@ -120,6 +136,18 @@ step "GET /api/auth/me → admin"
 me="$(curl -fsS "${BASE_URL}/api/auth/me" -H @"$WORK/cookie.hdr")" || fail "GET /api/auth/me failed"
 grep -q '"role":"admin"' <<<"$me" || fail "the signed-in person is not an admin"
 echo "me: admin"
+
+step "documented file-less commands: login-link through -p, logs through -p"
+# Exactly what the compose header and the README tell people to type (no -f, no env file).
+link_out="$(pcompose exec -T app node dist/cli.js login-link local-admin 2>"$WORK/login-link.err")" ||
+  fail "login-link local-admin exited non-zero"
+grep -qE "^${BASE_URL}/login#link=ll_[A-Za-z0-9_-]+$" <<<"$link_out" ||
+  fail "login-link did not print a link of the expected shape"
+unset link_out
+logs_out="$(pcompose logs app 2>&1)" || fail "docker compose -p logs app failed"
+grep -q 'one-time link' <<<"$logs_out" || fail "no 'one-time link' record in the logs read through -p"
+unset logs_out
+echo "login-link: exit 0, link shape ok (redacted); logs through -p: ok"
 
 step "POST /api/tokens → sk_ token; tools/list on /mcp"
 created="$(curl -fsS -X POST "${BASE_URL}/api/tokens" -H @"$WORK/cookie.hdr" \
@@ -163,6 +191,7 @@ while [ "$SECONDS" -lt "$deadline" ]; do
 done
 [ -n "$seen" ] || fail "the app log has no fatal record about the key mismatch"
 log="$(app_log)"
+grep -qF "$FATAL_HINT" <<<"$log" || fail "the fatal record does not point to the recovery section"
 grep -qF "${old_key%$'\n'}" <<<"$log" && fail "the app log contains the old key"
 grep -qF "$new_key" <<<"$log" && fail "the app log contains the new key"
 echo "mismatch: not healthy, fatal record logged, no key in the log"

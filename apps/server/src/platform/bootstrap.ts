@@ -31,7 +31,8 @@ export async function announceFirstStart(
 }
 
 /**
- * Start-up check that SECRETS_KEY is the key the stored secrets were sealed with. Logs the verdict
+ * Start-up check that SECRETS_KEY is the key recorded on the first start with the check (it does
+ * not test the stored secrets themselves). Logs the verdict
  * (never key material) and returns whether the server may continue.
  */
 export async function checkSecretsKey(
@@ -51,7 +52,7 @@ export async function checkSecretsKey(
     );
   } else if (verdict === 'mismatch') {
     logger.fatal(
-      'SECRETS_KEY does not match the data in this database; restore the original key (stored secrets cannot be read with this one)',
+      'SECRETS_KEY does not match the data in this database; restore the original key (stored secrets cannot be read with this one). See "Recovering from a key mismatch" in the README.',
     );
   }
   return { proceed: verdict !== 'mismatch' };
