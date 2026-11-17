@@ -48,7 +48,7 @@ export async function listUsers(
   );
 }
 
-/** Disabling also ends every session and revokes every token of the person. */
+/** Disabling also ends every session, drops pending login links and revokes every token of the person. */
 export async function setDisabled(
   deps: IdentityDeps,
   input: { principal: Principal; userId: string; disabled: boolean },
@@ -59,6 +59,7 @@ export async function setDisabled(
   if (!found) return err(new IdentityError('not_found', 'user not found'));
   if (input.disabled) {
     await deps.sessions.deleteByUser(input.userId);
+    await deps.loginLinks.deleteByUser(input.userId);
     await deps.tokens.revokeAllByUser(input.userId, deps.clock.now());
   }
   await deps.audit.record({

@@ -35,7 +35,10 @@ function setup(syncIntervalHours: number) {
   return startScheduler({
     catalogSync: deps,
     gateway: { callLog, quota },
-    identity: { sessions: { deleteDead } },
+    identity: {
+      sessions: { deleteDead },
+      loginLinks: { deleteExpired: () => Promise.resolve(0) },
+    },
     clock: { now: () => NOW },
     config: { syncIntervalHours, callLogRetentionDays: 90 },
     logger,

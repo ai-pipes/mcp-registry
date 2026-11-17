@@ -7,6 +7,7 @@ import { OpenidProvider } from '../modules/identity/index.ts';
 import { errorFields } from '../shared-kernel/index.ts';
 import { loadConfigOrExit } from './config.ts';
 import { buildContainer } from './container.ts';
+import { announceFirstStart } from './bootstrap.ts';
 import { createDb } from './db.ts';
 import { createLogger } from './logger.ts';
 import { createHttpApp } from './http/app.ts';
@@ -25,16 +26,21 @@ const config = loadConfigOrExit(process.env);
 const sql = createDb(config.databaseUrl);
 const logger = createLogger(config.logLevel);
 // Discovered lazily, on the first sign-in: the gateway (/mcp, tokens) works while it is down.
-const oidc = new OpenidProvider({
-  issuer: config.oidc.issuer,
-  clientId: config.oidc.clientId,
-  clientSecret: config.oidc.clientSecret,
-  scopes: config.oidc.scopes,
-  groupsClaim: config.oidc.groupsClaim,
-  redirectUri: new URL('/api/auth/callback', config.publicUrl).toString(),
-  logger,
-});
-const container = buildContainer(config, sql, { oidc, logger });
+// Without OIDC_* there is no provider: people sign in with a one-time link.
+const { client } = config.oidc;
+const oidc =
+  client === null
+    ? undefined
+    : new OpenidProvider({
+        issuer: client.issuer,
+        clientId: client.clientId,
+        clientSecret: client.clientSecret,
+        scopes: config.oidc.scopes,
+        groupsClaim: config.oidc.groupsClaim,
+        redirectUri: new URL('/api/auth/callback', config.publicUrl).toString(),
+        logger,
+      });
+const container = buildContainer(config, sql, { ...(oidc ? { oidc } : {}), logger });
 if (config.secretsKeyOld) {
   // The previous key still opens secrets while it is set: finish the rotation.
   logger.warn(
@@ -44,6 +50,7 @@ if (config.secretsKeyOld) {
 
 const applied = await migrate(sql, findMigrationsDir(import.meta.url));
 logger.info({ applied }, 'migrations applied');
+await announceFirstStart(container, config, logger);
 
 // Modules register their event handlers here (type → handler) as they appear.
 const worker = startOutboxWorker({

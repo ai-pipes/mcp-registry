@@ -33,9 +33,7 @@ function configFor(): Config {
     cookieSecure: true,
     secretsKey: new Uint8Array(randomBytes(32)),
     oidc: {
-      issuer: 'https://id.example.com',
-      clientId: 'id',
-      clientSecret: 'secret',
+      client: { issuer: 'https://id.example.com', clientId: 'id', clientSecret: 'secret' },
       loginGroup: 'mcp-users',
       adminGroup: 'mcp-admins',
       scopes: 'openid profile email groups',

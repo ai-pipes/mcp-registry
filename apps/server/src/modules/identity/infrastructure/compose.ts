@@ -2,6 +2,7 @@ import type { Sql } from '../../../platform/db.ts';
 import type { IdentityDeps } from '../application/ports.ts';
 import { cryptoRandom, nodeSha256 } from './crypto.ts';
 import {
+  PgLoginLinkRepository,
   PgPendingLoginRepository,
   PgSessionRepository,
   PgTokenRepository,
@@ -18,8 +19,10 @@ export function createPgIdentity(sql: Sql): PgIdentity {
     tokens: new PgTokenRepository(sql),
     sessions: new PgSessionRepository(sql),
     pendingLogins: new PgPendingLoginRepository(sql),
+    loginLinks: new PgLoginLinkRepository(sql),
     sha256: nodeSha256,
     random: cryptoRandom,
     tokenLimiter: new InMemoryRateLimiter(30, 60, 60),
+    linkLimiter: new InMemoryRateLimiter(10, 60, 60),
   };
 }

@@ -49,6 +49,8 @@ export type IdentityErrorCode =
   | 'forbidden'
   | 'not_found'
   | 'invalid_input'
+  /** A login link is unknown, already used or expired. */
+  | 'invalid_link'
   /** The identity provider cannot be reached right now; try signing in again later. */
   | 'idp_unavailable';
 

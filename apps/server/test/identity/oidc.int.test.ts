@@ -37,9 +37,7 @@ function configFor(issuer: string): Config {
     cookieSecure: false,
     secretsKey: new Uint8Array(randomBytes(32)),
     oidc: {
-      issuer,
-      clientId: idp.clientId,
-      clientSecret: idp.clientSecret,
+      client: { issuer, clientId: idp.clientId, clientSecret: idp.clientSecret },
       loginGroup: 'mcp-users',
       adminGroup: 'mcp-admins',
       scopes: 'openid profile email groups',
@@ -56,15 +54,18 @@ function configFor(issuer: string): Config {
   };
 }
 
+function oidcClient(config: Config): NonNullable<Config['oidc']['client']> {
+  if (!config.oidc.client) throw new Error('test config has no OIDC client');
+  return config.oidc.client;
+}
+
 beforeAll(async () => {
   pg = await startPg();
   idp = new FakeIdp();
   await idp.start();
   const config = configFor(idp.issuer);
   const oidc = new OpenidProvider({
-    issuer: config.oidc.issuer,
-    clientId: config.oidc.clientId,
-    clientSecret: config.oidc.clientSecret,
+    ...oidcClient(config),
     redirectUri: `${ORIGIN}/api/auth/callback`,
     logger: { warn: (fields, msg) => warnings.push({ fields, msg }) },
   });
@@ -462,9 +463,7 @@ describe('an identity provider that is down at startup', () => {
     try {
       const config = configFor(idp.issuer);
       const lazy = new OpenidProvider({
-        issuer: config.oidc.issuer,
-        clientId: config.oidc.clientId,
-        clientSecret: config.oidc.clientSecret,
+        ...oidcClient(config),
         redirectUri: `${ORIGIN}/api/auth/callback`,
       });
       const c = buildContainer(config, pg.sql, { logger: createLogger('silent'), oidc: lazy });

@@ -33,7 +33,7 @@ describe('routes and access', () => {
     renderWithApp(routes, { route: `/?loginError=${code}` });
     const alert = await screen.findByRole('alert');
     expect(alert.textContent).toContain(text);
-    const link = screen.getByRole('link', { name: 'Sign in with SSO' });
+    const link = await screen.findByRole('link', { name: 'Sign in with SSO' });
     expect(link.getAttribute('href')).toBe('/api/auth/login?returnTo=%2Fcatalog');
   });
 

@@ -1,6 +1,7 @@
 import { Navigate, Outlet, type RouteObject } from 'react-router';
 import { RequireAdmin, RequireAuth } from '@/auth/RequireAuth.tsx';
 import { AuthProvider } from '@/auth/AuthProvider.tsx';
+import { LinkLogin } from '@/auth/LinkLogin.tsx';
 import { CatalogPage } from '@/catalog/CatalogPage.tsx';
 import { AuditPage } from '@/admin/audit/AuditPage.tsx';
 import { CallsPage } from '@/admin/calls/CallsPage.tsx';
@@ -22,10 +23,12 @@ export const routes: RouteObject[] = [
   {
     element: (
       <AuthProvider>
-        <Outlet />
+        <LinkLogin />
       </AuthProvider>
     ),
     children: [
+      // `/login#link=<code>` is handled by LinkLogin; without a fragment there is nothing to do here.
+      { path: 'login', element: <Navigate to="/catalog" replace /> },
       {
         element: <RequireAuth />,
         children: [

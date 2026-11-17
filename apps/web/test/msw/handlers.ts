@@ -1,5 +1,5 @@
 import type { ErrorBody } from '@mcp/contracts';
-import { HttpResponse } from 'msw';
+import { HttpResponse, http } from 'msw';
 import { setupServer } from 'msw/node';
 
 /** `ErrorBody` JSON response, as the server sends for every non-2xx. */
@@ -9,4 +9,7 @@ export function errorResponse(status: number, code: string, message = code) {
 }
 
 /** The msw server shared by all web tests (started in test/setup.ts); tests add `server.use(...)`. */
-export const server = setupServer();
+export const server = setupServer(
+  // Default: SSO is configured; tests for a server without it override this.
+  http.get('/api/auth/methods', () => HttpResponse.json({ oidc: true })),
+);

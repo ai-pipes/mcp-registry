@@ -14,6 +14,14 @@ export type MeResponse = z.infer<typeof MeResponse>;
 /** `GET /api/auth/login?returnTo=` */
 export const LoginQuery = z.object({ returnTo: z.string().max(2048).default('/') });
 
+/** `GET /api/auth/methods`: how this server lets people sign in. */
+export const AuthMethods = z.object({ oidc: z.boolean() });
+export type AuthMethods = z.infer<typeof AuthMethods>;
+
+/** `POST /api/auth/link`: the one-time code from a sign-in link. */
+export const LinkLoginBody = z.object({ code: z.string().min(1).max(100) });
+export type LinkLoginBody = z.infer<typeof LinkLoginBody>;
+
 /** `GET /api/auth/callback` — either a code or an error from the provider. */
 export const CallbackQuery = z.object({
   state: z.string().min(1).max(256),

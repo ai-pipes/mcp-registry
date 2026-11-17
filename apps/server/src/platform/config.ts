@@ -58,9 +58,10 @@ const schema = z.object({
   COOKIE_SECURE: bool(true),
   SECRETS_KEY: secretsKey,
   SECRETS_KEY_OLD: secretsKey.optional(),
-  OIDC_ISSUER: z.url(),
-  OIDC_CLIENT_ID: z.string().min(1),
-  OIDC_CLIENT_SECRET: z.string().min(1),
+  // All three or none: without them the server signs people in with a one-time link.
+  OIDC_ISSUER: z.url().optional(),
+  OIDC_CLIENT_ID: z.string().min(1).optional(),
+  OIDC_CLIENT_SECRET: z.string().min(1).optional(),
   OIDC_LOGIN_GROUP: z.string().min(1).default('mcp-users'),
   OIDC_ADMIN_GROUP: z.string().min(1).default('mcp-admins'),
   OIDC_SCOPES: oidcScopes,
@@ -87,9 +88,8 @@ export class ConfigError extends Error {
 }
 
 interface OidcConfig {
-  issuer: string;
-  clientId: string;
-  clientSecret: string;
+  /** The provider and the gateway's client there; null when no `OIDC_*` is set. */
+  client: { issuer: string; clientId: string; clientSecret: string } | null;
   /** Members of this group (or of `adminGroup`) may sign in. */
   loginGroup: string;
   /** Members of this group are admins. */
@@ -148,6 +148,20 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
   // An empty value (`KEY=` in .env) means "unset", so defaults and optionality apply to it.
   const set = Object.fromEntries(Object.entries(env).filter(([, v]) => v !== ''));
   const parsed = schema
+    .superRefine((e, ctx) => {
+      const names = ['OIDC_ISSUER', 'OIDC_CLIENT_ID', 'OIDC_CLIENT_SECRET'] as const;
+      const given = names.filter((n) => e[n] !== undefined);
+      if (given.length === 0 || given.length === names.length) return;
+      for (const n of names) {
+        if (e[n] === undefined) {
+          ctx.addIssue({
+            code: 'custom',
+            path: [n],
+            message: 'required when another OIDC_* variable is set (all three or none)',
+          });
+        }
+      }
+    })
     .refine(
       (e) =>
         e.SECRETS_KEY_OLD === undefined ||
@@ -167,9 +181,16 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     cookieSecure: e.COOKIE_SECURE,
     secretsKey: e.SECRETS_KEY,
     oidc: {
-      issuer: e.OIDC_ISSUER,
-      clientId: e.OIDC_CLIENT_ID,
-      clientSecret: e.OIDC_CLIENT_SECRET,
+      client:
+        e.OIDC_ISSUER !== undefined &&
+        e.OIDC_CLIENT_ID !== undefined &&
+        e.OIDC_CLIENT_SECRET !== undefined
+          ? {
+              issuer: e.OIDC_ISSUER,
+              clientId: e.OIDC_CLIENT_ID,
+              clientSecret: e.OIDC_CLIENT_SECRET,
+            }
+          : null,
       loginGroup: e.OIDC_LOGIN_GROUP,
       adminGroup: e.OIDC_ADMIN_GROUP,
       scopes: e.OIDC_SCOPES,

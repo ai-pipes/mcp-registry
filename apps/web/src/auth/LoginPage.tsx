@@ -1,4 +1,7 @@
+import { AuthMethods } from '@mcp/contracts';
+import { useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router';
+import { api } from '@/api/client.ts';
 import { ErrorAlert } from '@/components/ErrorAlert.tsx';
 import { buttonVariants } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -26,6 +29,12 @@ function safeReturnTo(path: string): string {
 export function LoginPage({ returnTo }: { returnTo: string }) {
   useSystemTheme();
   const [params] = useSearchParams();
+  // No answer (yet, or failed) is treated as SSO: the button is the safe default.
+  const methods = useQuery({
+    queryKey: ['auth', 'methods'],
+    queryFn: () => api.get('/api/auth/methods', AuthMethods),
+    retry: false,
+  });
   const code = params.get('loginError');
   const href = `/api/auth/login?returnTo=${encodeURIComponent(safeReturnTo(returnTo))}`;
   return (
@@ -47,10 +56,21 @@ export function LoginPage({ returnTo }: { returnTo: string }) {
               }
             />
           )}
-          <p className="text-sm text-muted-foreground">{strings.login.hint}</p>
-          <a href={href} className={buttonVariants()}>
-            {strings.login.submit}
-          </a>
+          {methods.isPending ? null : methods.data?.oidc === false ? (
+            <>
+              <p className="text-sm text-muted-foreground">{strings.login.localHint}</p>
+              <code className="rounded-md bg-muted px-3 py-2 font-mono text-sm">
+                {strings.login.localCommand}
+              </code>
+            </>
+          ) : (
+            <>
+              <p className="text-sm text-muted-foreground">{strings.login.hint}</p>
+              <a href={href} className={buttonVariants()}>
+                {strings.login.submit}
+              </a>
+            </>
+          )}
         </CardContent>
       </Card>
     </main>

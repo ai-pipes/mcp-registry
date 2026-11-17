@@ -1,5 +1,7 @@
 import type { Sql } from '../../../platform/db.ts';
 import type {
+  LoginLinkRecord,
+  LoginLinkRepository,
   PendingLogin,
   PendingLoginRepository,
   SessionRecord,
@@ -74,6 +76,11 @@ export class PgUserRepository implements UserRepository {
     if (!isUuid(id)) return false;
     const r = await this.sql`update identity.users set disabled = ${disabled} where id = ${id}`;
     return r.count > 0;
+  }
+
+  async touchLastLogin(id: string, at: Date): Promise<void> {
+    if (!isUuid(id)) return;
+    await this.sql`update identity.users set last_login_at = ${at} where id = ${id}`;
   }
 }
 
@@ -223,5 +230,44 @@ export class PgPendingLoginRepository implements PendingLoginRepository {
           expiresAt: r.expires_at,
         }
       : null;
+  }
+}
+
+interface LoginLinkRow {
+  code_hash: string;
+  user_id: string;
+  created_at: Date;
+  expires_at: Date;
+}
+
+const toLoginLink = (r: LoginLinkRow): LoginLinkRecord => ({
+  codeHash: r.code_hash,
+  userId: r.user_id,
+  createdAt: r.created_at,
+  expiresAt: r.expires_at,
+});
+
+export class PgLoginLinkRepository implements LoginLinkRepository {
+  constructor(private readonly sql: Sql) {}
+
+  async insert(l: LoginLinkRecord): Promise<void> {
+    await this.sql`insert into identity.login_links (code_hash, user_id, created_at, expires_at)
+      values (${l.codeHash}, ${l.userId}, ${l.createdAt}, ${l.expiresAt})`;
+  }
+
+  async consume(codeHash: string): Promise<LoginLinkRecord | null> {
+    const [r] = await this.sql<LoginLinkRow[]>`
+      delete from identity.login_links where code_hash = ${codeHash} returning *`;
+    return r ? toLoginLink(r) : null;
+  }
+
+  async deleteByUser(userId: string): Promise<void> {
+    await this.sql`delete from identity.login_links where user_id = ${userId}`;
+  }
+
+  async deleteExpired(now: Date): Promise<number> {
+    const rows = await this.sql`
+      delete from identity.login_links where expires_at <= ${now} returning code_hash`;
+    return rows.length;
   }
 }

@@ -7,6 +7,8 @@ import { isApiError } from '@/api/errors.ts';
 export interface Auth {
   me: MeResponse | null;
   status: 'loading' | 'signed-in' | 'signed-out';
+  /** `/me` failed for a reason other than 401: `status` is `signed-out`, but the session state is unknown. */
+  sessionUnknown: boolean;
   /** Ends the session on the server, then drops everything cached. */
   logout: () => Promise<void>;
 }
@@ -32,6 +34,12 @@ async function fetchMe(): Promise<MeResponse | null> {
   }
 }
 
+/** After a sign-in that happened outside this provider: drops the old session's cache and reloads `me`. */
+export async function reloadSession(queryClient: QueryClient): Promise<void> {
+  queryClient.removeQueries({ predicate: (q) => q.queryKey[0] !== ME_KEY[0] });
+  await queryClient.invalidateQueries({ queryKey: ME_KEY });
+}
+
 const AuthContext = createContext<Auth | null>(null);
 
 /**
@@ -52,12 +60,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const me = query.data ?? null;
+  const sessionUnknown = query.isError;
   const status: Auth['status'] = query.isPending ? 'loading' : me ? 'signed-in' : 'signed-out';
 
   const value = useMemo<Auth>(
     () => ({
       me,
       status,
+      sessionUnknown,
       async logout() {
         await queryClient.cancelQueries();
         try {
@@ -72,7 +82,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         resetSession(queryClient, null);
       },
     }),
-    [me, status, queryClient],
+    [me, status, sessionUnknown, queryClient],
   );
 
   return <AuthContext value={value}>{children}</AuthContext>;

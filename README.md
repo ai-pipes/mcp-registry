@@ -43,7 +43,7 @@ Search returns an empty list when nothing is relevant enough, rather than paddin
 
 ## Quick start (Docker Compose)
 
-Requirements: Docker with Compose, an OIDC provider, and (for anything beyond localhost) a TLS-terminating reverse proxy in front of the gateway.
+Requirements: Docker with Compose, and (for anything beyond localhost) a TLS-terminating reverse proxy in front of the gateway.
 
 ```sh
 git clone https://github.com/ai-pipes/mcp-registry.git && cd mcp-registry
@@ -57,6 +57,7 @@ PUBLIC_URL=https://mcp.example.com
 TRUST_PROXY=true                       # behind a reverse proxy
 POSTGRES_PASSWORD=$(openssl rand -base64 32)
 SECRETS_KEY=$(openssl rand -base64 32) # back this up: without it stored secrets are lost
+# Optional: sign in through your OIDC provider. Set all three or none (see "First admin").
 OIDC_ISSUER=https://id.example.com
 OIDC_CLIENT_ID=...
 OIDC_CLIENT_SECRET=...
@@ -75,9 +76,24 @@ Compose runs the app and `pgvector/pgvector:pg17`; Postgres is not published. Mi
 
 ### First admin
 
-Put yourself in the admin group of your OIDC provider (`OIDC_ADMIN_GROUP`, default `mcp-admins`) and sign in at `PUBLIC_URL`. Role and groups are taken from the provider on every login.
+**With OIDC** (`OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` set): put yourself in the admin group of your provider (`OIDC_ADMIN_GROUP`, default `mcp-admins`) and sign in at `PUBLIC_URL`. Role and groups are taken from the provider on every login.
 
-Without a working provider (emergency access, scripted setups) you can create a person with the CLI inside the container. `<sub>` is the person's subject ID at the provider:
+**Without OIDC** (none of the three set): on the first start the server creates the admin `local-admin` and logs a one-time sign-in link. Open it within 15 minutes:
+
+```sh
+docker compose logs app | grep "one-time link"   # the link is in the "url" field
+```
+
+The link looks like `https://mcp.example.com/login#link=ll_...`; it works once. The page asks for one confirmation click before it signs you in. The link is logged at `warn` level, so with `LOG_LEVEL` set to `error` or stricter use `login-link local-admin` instead. Until `local-admin` has signed in, every start logs a new link (each invalidates the previous one). To sign in again, or to let another person in, print a link with the CLI; `<sub>` is the person's subject ID (for `create-user`, any name you choose):
+
+```sh
+docker compose exec app node dist/cli.js create-user --sub jane --name "Jane"   # new person; add --admin for an admin
+docker compose exec app node dist/cli.js login-link jane
+```
+
+`login-link` also works with OIDC configured (emergency access). Links are valid for 15 minutes and a person has at most one live link. Anyone who can read the container log right after the first start can use the link, so see [SECURITY.md](SECURITY.md#running-without-oidc). Without OIDC there is no group management: admins see every active server, members see servers open to everyone or to the login group. To move to OIDC later, see [SECURITY.md](SECURITY.md#switching-to-oidc-later).
+
+With OIDC you can also create a person with the CLI, for example when the provider is down. `<sub>` is the person's subject ID at the provider:
 
 ```sh
 docker compose exec app node dist/cli.js create-user --sub <sub> --name "Jane" --admin
@@ -102,37 +118,39 @@ claude mcp add --transport http mcp-registry https://mcp.example.com/mcp \
 
 All settings are environment variables (see `.env.example`). An empty value (`KEY=`) counts as unset.
 
-| Variable                      | Default                       | Meaning                                                                                                                                  |
-| ----------------------------- | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `PUBLIC_URL`                  | required                      | External URL of the gateway (scheme + host + port). Used for OIDC/OAuth redirect URIs, the `claude mcp add` command and `Origin` checks. |
-| `DATABASE_URL`                | required (Compose sets it)    | Postgres connection string. Compose defaults to `postgres://mcp@db:5432/mcp` with `POSTGRES_PASSWORD`.                                   |
-| `POSTGRES_PASSWORD`           | required by Compose           | Password of the bundled Postgres. Set it before the first start; it is stored in the volume afterwards.                                  |
-| `PORT`                        | `3000`                        | Listening port (with Compose: the host port; the container always listens on 3000).                                                      |
-| `ALLOWED_HOSTS`               | empty                         | Extra accepted `Host` values for `/mcp`, comma-separated. The `PUBLIC_URL` host, `localhost` and `127.0.0.1` are always accepted.        |
-| `TRUST_PROXY`                 | `false`                       | Take the client IP from `X-Forwarded-For`. Enable only behind a reverse proxy.                                                           |
-| `TRUST_PROXY_HOPS`            | `1`                           | Number of trusted proxies in front of the gateway (1-5).                                                                                 |
-| `COOKIE_SECURE`               | `true`                        | `Secure` flag on the session cookie. Works with HTTPS and with `http://localhost`.                                                       |
-| `SECRETS_KEY`                 | required                      | AES-256-GCM key, base64 of exactly 32 bytes (`openssl rand -base64 32`). Encrypts server secrets and people's tokens.                    |
-| `SECRETS_KEY_OLD`             | unset                         | Previous key, only during key rotation. Must differ from `SECRETS_KEY`.                                                                  |
-| `OIDC_ISSUER`                 | required                      | Issuer URL of the OIDC provider. Discovery happens on the first login, not at startup.                                                   |
-| `OIDC_CLIENT_ID`              | required                      | Client ID registered for the gateway.                                                                                                    |
-| `OIDC_CLIENT_SECRET`          | required                      | Client secret registered for the gateway.                                                                                                |
-| `OIDC_LOGIN_GROUP`            | `mcp-users`                   | Members of this group may sign in.                                                                                                       |
-| `OIDC_ADMIN_GROUP`            | `mcp-admins`                  | Members of this group may sign in and are admins.                                                                                        |
-| `OIDC_SCOPES`                 | `openid profile email groups` | Scopes of the login request, space- or comma-separated; must include `openid`.                                                           |
-| `OIDC_GROUPS_CLAIM`           | `groups`                      | Claim with the person's groups: a list of names, or an object whose keys are the names.                                                  |
-| `SYNC_INTERVAL_HOURS`         | `6`                           | Catalog synchronisation period, hours (1-8760).                                                                                          |
-| `CALL_LOG_RETENTION_DAYS`     | `90`                          | How long call log entries are kept.                                                                                                      |
-| `UPSTREAM_MAX_RESPONSE_BYTES` | `20971520` (20 MiB)           | Larger upstream responses are refused (memory protection).                                                                               |
-| `MCP_MAX_BODY_BYTES`          | `10485760` (10 MiB)           | Request body limit of `/mcp` (tool arguments may carry base64 files). The rest of the HTTP API is limited to 1 MiB.                      |
-| `EMBEDDER`                    | `local`                       | `local` (bundled model) or `openai-compatible` (`POST <EMBEDDER_URL>/embeddings`).                                                       |
-| `EMBEDDER_URL`                | unset                         | Base URL of the embeddings API, only for `openai-compatible`.                                                                            |
-| `EMBEDDER_MODEL`              | unset                         | Model name for `openai-compatible`. Must produce 384-dimensional vectors.                                                                |
-| `MODEL_DIR`                   | `/app/models`                 | Directory of the local model. The image already contains it.                                                                             |
-| `SEARCH_MIN_SIMILARITY`       | `0.83`                        | Cosine-similarity floor (0-1) for vector search candidates.                                                                              |
-| `LOG_LEVEL`                   | `info`                        | `fatal`, `error`, `warn`, `info`, `debug`, `trace` or `silent`.                                                                          |
+| Variable                      | Default                       | Meaning                                                                                                                                                 |
+| ----------------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PUBLIC_URL`                  | required                      | External URL of the gateway (scheme + host + port). Used for OIDC/OAuth redirect URIs, the `claude mcp add` command and `Origin` checks.                |
+| `DATABASE_URL`                | required (Compose sets it)    | Postgres connection string. Compose defaults to `postgres://mcp@db:5432/mcp` with `POSTGRES_PASSWORD`.                                                  |
+| `POSTGRES_PASSWORD`           | required by Compose           | Password of the bundled Postgres. Set it before the first start; it is stored in the volume afterwards.                                                 |
+| `PORT`                        | `3000`                        | Listening port (with Compose: the host port; the container always listens on 3000).                                                                     |
+| `ALLOWED_HOSTS`               | empty                         | Extra accepted `Host` values for `/mcp`, comma-separated. The `PUBLIC_URL` host, `localhost` and `127.0.0.1` are always accepted.                       |
+| `TRUST_PROXY`                 | `false`                       | Take the client IP from `X-Forwarded-For`. Enable only behind a reverse proxy.                                                                          |
+| `TRUST_PROXY_HOPS`            | `1`                           | Number of trusted proxies in front of the gateway (1-5).                                                                                                |
+| `COOKIE_SECURE`               | `true`                        | `Secure` flag on the session cookie. Works with HTTPS and with `http://localhost`.                                                                      |
+| `SECRETS_KEY`                 | required                      | AES-256-GCM key, base64 of exactly 32 bytes (`openssl rand -base64 32`). Encrypts server secrets and people's tokens.                                   |
+| `SECRETS_KEY_OLD`             | unset                         | Previous key, only during key rotation. Must differ from `SECRETS_KEY`.                                                                                 |
+| `OIDC_ISSUER`                 | unset                         | Issuer URL of the OIDC provider. Set all three `OIDC_*` or none; without them people sign in with one-time links. Discovery happens on the first login. |
+| `OIDC_CLIENT_ID`              | unset                         | Client ID registered for the gateway (with `OIDC_ISSUER` and `OIDC_CLIENT_SECRET`).                                                                     |
+| `OIDC_CLIENT_SECRET`          | unset                         | Client secret registered for the gateway (with `OIDC_ISSUER` and `OIDC_CLIENT_ID`).                                                                     |
+| `OIDC_LOGIN_GROUP`            | `mcp-users`                   | Members of this group may sign in.                                                                                                                      |
+| `OIDC_ADMIN_GROUP`            | `mcp-admins`                  | Members of this group may sign in and are admins.                                                                                                       |
+| `OIDC_SCOPES`                 | `openid profile email groups` | Scopes of the login request, space- or comma-separated; must include `openid`.                                                                          |
+| `OIDC_GROUPS_CLAIM`           | `groups`                      | Claim with the person's groups: a list of names, or an object whose keys are the names.                                                                 |
+| `SYNC_INTERVAL_HOURS`         | `6`                           | Catalog synchronisation period, hours (1-8760).                                                                                                         |
+| `CALL_LOG_RETENTION_DAYS`     | `90`                          | How long call log entries are kept.                                                                                                                     |
+| `UPSTREAM_MAX_RESPONSE_BYTES` | `20971520` (20 MiB)           | Larger upstream responses are refused (memory protection).                                                                                              |
+| `MCP_MAX_BODY_BYTES`          | `10485760` (10 MiB)           | Request body limit of `/mcp` (tool arguments may carry base64 files). The rest of the HTTP API is limited to 1 MiB.                                     |
+| `EMBEDDER`                    | `local`                       | `local` (bundled model) or `openai-compatible` (`POST <EMBEDDER_URL>/embeddings`).                                                                      |
+| `EMBEDDER_URL`                | unset                         | Base URL of the embeddings API, only for `openai-compatible`.                                                                                           |
+| `EMBEDDER_MODEL`              | unset                         | Model name for `openai-compatible`. Must produce 384-dimensional vectors.                                                                               |
+| `MODEL_DIR`                   | `/app/models`                 | Directory of the local model. The image already contains it.                                                                                            |
+| `SEARCH_MIN_SIMILARITY`       | `0.83`                        | Cosine-similarity floor (0-1) for vector search candidates.                                                                                             |
+| `LOG_LEVEL`                   | `info`                        | `fatal`, `error`, `warn`, `info`, `debug`, `trace` or `silent`.                                                                                         |
 
 ## OIDC setup
+
+Optional: skip this section to run without a provider (see "First admin").
 
 Any OIDC provider works if it can put the person's groups (or roles) into one claim of the ID token or the UserInfo response: a flat list of names, or an object whose keys are the names. The claim name is `OIDC_GROUPS_CLAIM` (default `groups`), the requested scopes are `OIDC_SCOPES` (default `openid profile email groups`).
 
@@ -238,6 +256,7 @@ Inside the container: `node dist/cli.js <command>` (same environment as the serv
 | ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | `create-user --sub <sub> --name <name> [--admin]`                   | Create or update a person as a first login would. Idempotent by `sub`; without `--admin` an existing admin becomes a member. |
 | `create-token <sub> --name <name>`                                  | Issue an `sk_` token and print the `claude mcp add` command.                                                                 |
+| `login-link <sub>`                                                  | Print a one-time sign-in link (15 minutes) for an existing, enabled person. For servers without OIDC, or emergency access.   |
 | `create-server --json <file> --as <admin-sub> [--secret-env <VAR>]` | Create a server and sync it. The secret comes from `<VAR>` or stdin.                                                         |
 | `sync <slug> [--as <admin-sub>]`                                    | Sync a server's tools (without `--as`: as the scheduler).                                                                    |
 | `reindex`                                                           | Rebuild the search index (if `search_tools` misses a tool that is in the catalog).                                           |
