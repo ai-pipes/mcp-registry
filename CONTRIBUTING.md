@@ -31,7 +31,7 @@ bash scripts/e2e-image.sh    # Playwright against the built image (pnpm exec pla
 
 ## Releasing
 
-1. Rehearse: `gh workflow run release --ref <branch>` and wait for a green result. A manual run builds and tests everything (both architectures, both smoke tests) but never publishes.
+1. Rehearse: `gh workflow run release --ref <branch>` (once the workflow file with the `workflow_dispatch` trigger is on `main`) and wait for a green result. A pull request that touches the release path (workflow, Dockerfile, compose files, smoke scripts, lockfile) rehearses automatically. A rehearsal builds and tests everything (both architectures, both smoke tests) but never publishes and needs no secrets.
 2. Date the changelog entry (`## [<version>] - YYYY-MM-DD`; `Unreleased` blocks the release) and add the compare link at the bottom.
 3. Make sure `apps/server/package.json` has the version (the only place it is set).
 4. Merge to `main`.

@@ -2,27 +2,48 @@
 # ghcr.io/<owner>/<repo> for linux/amd64 and linux/arm64 with semver tags (1.2.3, 1.2, 1, latest).
 # Nothing is pushed before the version check, the ancestry check, the version printed by the
 # amd64 and arm64 images and both smoke tests (quick start and compose) have passed.
-# A manual run (workflow_dispatch, any branch) is a rehearsal: every build and test step runs, the
-# version check only needs a non-empty version, the ancestry check is skipped, and the registry
-# login, the metadata step and the pushing build are skipped (the multi-arch build runs with
-# push: false instead). A manual run can never publish.
+# Two jobs: `test` (contents: read only, every event) and `publish` (tag push only, the only job
+# with packages: write).
+# Any event other than a tag push is a rehearsal: a manual run (workflow_dispatch, any branch) or a
+# pull request that touches the release path. It builds and tests everything, the version check only
+# needs a non-empty version, the ancestry check is skipped and a multi-arch build runs with
+# push: false. A rehearsal never reads a secret, has no write permission and can never publish, so
+# it also works for pull requests from forks.
 name: release
 
 on:
   push:
     tags: ['v*']
   workflow_dispatch:
+  # Files the image build and the two smoke tests depend on that ci.yml does not exercise in this
+  # form (ci.yml builds and smokes the image for code changes, so apps/** is not listed).
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - Dockerfile
+      - .dockerignore
+      - docker-compose.yml
+      - quickstart.compose.yml
+      - package.json
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+      - scripts/quickstart-smoke.sh
+      - scripts/smoke.sh
+      - scripts/smoke.compose.yml
+      - scripts/smoke.prebuilt.compose.yml
+      - scripts/check-release-version.mjs
+      - scripts/download-model.mjs
 
 permissions:
   contents: read
-  packages: write
 
+# A newer push to the same pull request cancels the older rehearsal; a tag release is never cancelled.
 concurrency:
   group: release-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name != 'push' }}
 
 jobs:
-  image:
+  test:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
@@ -37,7 +58,7 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: node scripts/check-release-version.mjs "$TAG"
       - name: Rehearsal, check the version is set
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name != 'push'
         run: node scripts/check-release-version.mjs --rehearsal
       - name: Check the tagged commit is on main
         if: github.event_name == 'push'
@@ -99,24 +120,8 @@ jobs:
           actual="$(docker run --rm --platform linux/arm64 mcp-registry:rc-arm64 node dist/cli.js --version)"
           echo "expected=$expected actual=$actual"
           [ -n "$expected" ] && [ "$actual" = "$expected" ]
-      # Only now the registry is touched, and only for a tag push.
-      - if: github.event_name == 'push'
-        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - id: meta
-        if: github.event_name == 'push'
-        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
-        with:
-          images: ghcr.io/${{ github.repository }}
-          tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
       - name: Rehearsal, multi-arch build without pushing
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name != 'push'
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
@@ -127,8 +132,37 @@ jobs:
             type=gha,scope=rc-amd64
             type=gha,scope=rc-arm64
           cache-to: type=gha,mode=max,scope=rc-publish,ignore-error=true
+
+  # Only now the registry is touched, and only for a tag push. The image is rebuilt from the cache
+  # scopes the test job exported (a cache miss only makes it slower).
+  publish:
+    needs: test
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
       - name: Push the multi-arch image
-        if: github.event_name == 'push'
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
