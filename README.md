@@ -366,7 +366,7 @@ Not covered: the rest of `/api/**` (the web client's internal interface), and th
 
 ### Upgrading
 
-There are no down migrations, so a backup is the way back. The compose commands below (backup, `pull`, `up -d`, restore) were run, with a different project name, against stacks of both layouts; `git fetch --tags && git checkout v<version>` was not. In the commands, `docker compose` is the one you already use for the stack (the quick start needs `-p mcp-registry`, plus the same `--env-file` or environment as before).
+There are no down migrations, so a backup is the way back. The compose commands below (backup, `up -d`, restore) were run, with a different project name, against stacks of both layouts. `pull` was run only against a locally built image served from a local registry, since no `:1` image is published yet, and `git fetch --tags && git checkout v<version>` was not run. In the commands, `docker compose` is the one you already use for the stack (the quick start needs `-p mcp-registry`, plus the same `--env-file` or environment as before).
 
 1. **Back up the database and the key.** Source layout (`docker-compose.yml` + `.env`):
 

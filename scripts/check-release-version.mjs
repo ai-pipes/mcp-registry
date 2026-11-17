@@ -2,7 +2,7 @@
 // the version in apps/server/package.json (the only source of the gateway version), and
 // CHANGELOG.md must have a dated heading `## [<version>] - YYYY-MM-DD` for it (so
 // `## [1.0.0] - Unreleased` blocks the release until it is dated).
-// `--rehearsal` (manual workflow runs) only requires a non-empty version, prints it and skips the tag
+// `--rehearsal` (every non-tag workflow run: manual or pull request) only requires a non-empty version, prints it and skips the tag
 // and changelog checks.
 // Exit codes: 0 match (prints the version), 1 mismatch, empty version or no dated changelog entry,
 // 2 no tag given.
