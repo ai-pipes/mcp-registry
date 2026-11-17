@@ -12,3 +12,10 @@ minimumReleaseAgeExclude:
   - '@huggingface/transformers@4.3.2'
   - lucide-react@1.63.0
   - react-router@8.5.1
+# Advisories `pnpm audit` skips. Each entry needs a reason and a removal condition.
+auditConfig:
+  ignoreGhsas:
+    # picomatch <= 4.0.7, ReDoS. Reaches the tree only through development tooling (vitest and
+    # its globbing), never the runtime image, and no patched release exists yet. Remove this
+    # entry as soon as picomatch 4.0.8 is published and the lockfile is updated.
+    - GHSA-fc5q-39xc-vjpf
