@@ -14,3 +14,12 @@ updates:
       # Bump together with the runtime.
       - dependency-name: '@types/node'
         update-types: ['version-update:semver-major']
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    ignore:
+      # The runtime stays on Node 22 (the tag in the Dockerfile); take only digest and 22.x updates.
+      # Bump the major together with `@types/node` and CI.
+      - dependency-name: node
+        update-types: ['version-update:semver-major']

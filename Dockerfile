@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # --- base: Node 22 + the pnpm version from package.json ---------------------------------------
-FROM node:22-slim AS base
+FROM node:22-slim@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee AS base
 RUN npm install --global --no-fund --no-audit pnpm@11.16.0
 WORKDIR /app
 
@@ -31,7 +31,7 @@ COPY packages/contracts/package.json packages/contracts/
 RUN pnpm install --frozen-lockfile --prod --ignore-scripts
 
 # --- model: Xenova/multilingual-e5-small (q8), pinned revision, checked by SHA-256 -----------
-FROM node:22-slim AS model
+FROM node:22-slim@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee AS model
 COPY scripts/download-model.mjs /tmp/download-model.mjs
 RUN node /tmp/download-model.mjs /app/models
 
@@ -44,7 +44,7 @@ EXPOSE 8080
 CMD ["node", "--experimental-strip-types", "--no-warnings", "apps/server/test/smoke/upstream.ts"]
 
 # --- runtime ----------------------------------------------------------------------------------
-FROM node:22-slim AS runtime
+FROM node:22-slim@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee AS runtime
 ENV NODE_ENV=production \
     PORT=3000 \
     MODEL_DIR=/app/models \

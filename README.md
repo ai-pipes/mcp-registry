@@ -362,11 +362,11 @@ Not covered: the rest of `/api/**` (the web client's internal interface), and th
 
 ### Image tags
 
-`ghcr.io/ai-pipes/mcp-registry` is published for tagged releases only, and only after the release workflow has tested the image. `1.0.0` is exactly that release; `1.0` follows the newest 1.0.x patch release and `1` the newest 1.x release; `latest` follows the newest release, including future major versions. `quickstart.compose.yml` uses `:1`. To control when you upgrade, pin an exact tag: `MCP_REGISTRY_IMAGE=ghcr.io/ai-pipes/mcp-registry:1.0.0`.
+`ghcr.io/ai-pipes/mcp-registry` is published for tagged releases only, and only after the release workflow has tested the image. `1.0.0` is exactly that release; `1.0` and `1` point to the latest release of their line and `latest` to the latest release overall. The workflow sets them from the tag that was pushed last, not from the highest version, so releasing an older patch after a newer one moves them back. `quickstart.compose.yml` uses `:1`. To control when you upgrade, pin an exact tag: `MCP_REGISTRY_IMAGE=ghcr.io/ai-pipes/mcp-registry:1.0.0`.
 
 ### Upgrading
 
-There are no down migrations, so a backup is the way back. Every command below was run, with a different project name, against stacks of both layouts. In the commands, `docker compose` is the one you already use for the stack (the quick start needs `-p mcp-registry`, plus the same `--env-file` or environment as before).
+There are no down migrations, so a backup is the way back. The compose commands below (backup, `up -d`, restore) were run, with a different project name, against stacks of both layouts. `pull` was run only against a locally built image served from a local registry, since no `:1` image is published yet, and `git fetch --tags && git checkout v<version>` was not run. In the commands, `docker compose` is the one you already use for the stack (the quick start needs `-p mcp-registry`, plus the same `--env-file` or environment as before).
 
 1. **Back up the database and the key.** Source layout (`docker-compose.yml` + `.env`):
 
@@ -391,7 +391,7 @@ There are no down migrations, so a backup is the way back. Every command below w
    docker compose up -d --build
    ```
 
-   Quick start: replace your saved `quickstart.compose.yml` with the one from the release tag, then pull and start with the same `--env-file` or environment as before. `up -d` alone does not pull a tag such as `:1` that is already cached; `pull` fetches the new image and `up -d` then recreates the app.
+   Quick start: replace your saved `quickstart.compose.yml` with the one from the release tag, then pull and start with the same `--env-file` or environment as before. The `--env-file my.env` flag in the commands below is needed only if you started the stack with a settings file; without one, run the same commands without it. `up -d` alone does not pull a tag such as `:1` that is already cached; `pull` fetches the new image and `up -d` then recreates the app.
 
    ```sh
    docker compose -p mcp-registry --env-file my.env -f quickstart.compose.yml pull
@@ -410,7 +410,7 @@ docker compose exec -T db psql -U mcp -d postgres -c 'drop database mcp with (fo
 docker compose exec -T db pg_restore -U mcp -d mcp --exit-on-error < mcp-2026-11-17.dump
 ```
 
-Then start the old version: source layout, check out the old tag and `docker compose up -d --build`; quick start, `MCP_REGISTRY_IMAGE=ghcr.io/ai-pipes/mcp-registry:<old version> docker compose -p mcp-registry --env-file my.env -f quickstart.compose.yml up -d` with the old release's compose file. Put the key from the backup back if you rotated it after the dump was taken.
+Then start the old version: source layout, check out the old tag and `docker compose up -d --build`; quick start, `MCP_REGISTRY_IMAGE=ghcr.io/ai-pipes/mcp-registry:<old version> docker compose -p mcp-registry --env-file my.env -f quickstart.compose.yml up -d` with the old release's compose file (drop `--env-file my.env` if you do not use a settings file). Put the key from the backup back if you rotated it after the dump was taken.
 
 ## Development
 
