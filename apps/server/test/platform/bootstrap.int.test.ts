@@ -110,6 +110,11 @@ describe('announceFirstStart', () => {
     expect(first.records).toHaveLength(1);
     expect(second.records).toHaveLength(1);
     expect(codeOf(second.records[0])).not.toBe(codeOf(first.records[0]));
+    const stale = await completeLinkLogin(second.c.identity, {
+      code: codeOf(first.records[0]),
+      ip: '203.0.113.9',
+    });
+    expect(!stale.ok && stale.error.code).toBe('invalid_link');
     const done = await completeLinkLogin(second.c.identity, {
       code: codeOf(second.records[0]),
       ip: '203.0.113.9',
@@ -134,6 +139,35 @@ describe('announceFirstStart', () => {
     if (!made.ok) throw made.error;
     const { records } = await start(configFor(false));
     expect(records).toEqual([]);
+  });
+
+  it('logs and continues when the announcement fails', async () => {
+    const config = configFor(false);
+    const real = containerFor(config);
+    const failing: Container = {
+      ...real,
+      identity: {
+        ...real.identity,
+        users: {
+          ...real.identity.users,
+          list: () => Promise.reject(new Error('secret-db-detail')),
+        },
+      },
+    };
+    const lines: string[] = [];
+    const sink = new Writable({
+      write(chunk: Buffer, _enc, done) {
+        lines.push(chunk.toString());
+        done();
+      },
+    });
+    await expect(
+      announceFirstStart(failing, config, createLogger('info', sink)),
+    ).resolves.toBeUndefined();
+    const records = lines.map((l) => LogRecord.parse(JSON.parse(l)));
+    expect(records).toHaveLength(1);
+    expect(records[0]?.level).toBe(50);
+    expect(lines.join('')).not.toMatch(/secret-db-detail|#link=|ll_/);
   });
 
   it('prints nothing and creates nobody when OIDC is configured', async () => {

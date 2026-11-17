@@ -22,6 +22,8 @@ export async function issueLoginLink(
   if (!user) return err(new IdentityError('not_found', `no user with sub "${input.sub}"`));
   if (user.disabled) return err(new IdentityError('disabled', 'account is disabled'));
   const now = deps.clock.now();
+  // At most one live link per person: an earlier, possibly logged or shared one stops working.
+  await deps.loginLinks.deleteByUser(user.id);
   const code = newLoginCode(deps.random.base64url(32));
   const expiresAt = loginLinkExpiry(now);
   await deps.loginLinks.insert({

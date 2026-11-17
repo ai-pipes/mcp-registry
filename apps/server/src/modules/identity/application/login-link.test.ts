@@ -40,6 +40,17 @@ describe('issueLoginLink', () => {
     expect(JSON.stringify(entry)).not.toContain(code);
   });
 
+  it("issuing a new link invalidates the person's earlier link", async () => {
+    const f = makeDeps();
+    await person(f);
+    const a = await issue(f);
+    const b = await issue(f);
+    const first = await completeLinkLogin(f.deps, { code: a.code, ip: '1.1.1.1' });
+    expect(!first.ok && first.error.code).toBe('invalid_link');
+    const second = await completeLinkLogin(f.deps, { code: b.code, ip: '1.1.1.1' });
+    expect(second.ok).toBe(true);
+  });
+
   it('refuses an unknown sub with not_found and a disabled person with disabled', async () => {
     const f = makeDeps();
     const unknown = await issueLoginLink(f.deps, { sub: 'nobody' });
@@ -170,7 +181,7 @@ describe('bootstrapLocalAdmin', () => {
     expect(second?.code.startsWith('ll_')).toBe(true);
     expect(second?.code).not.toBe(first?.code);
     expect(f.users.size).toBe(1);
-    expect(f.loginLinks.size).toBe(2);
+    expect(f.loginLinks.size).toBe(1);
   });
 
   it('returns null once local-admin has signed in', async () => {
