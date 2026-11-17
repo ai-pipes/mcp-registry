@@ -1,4 +1,4 @@
-# MCP gateway quick start: no .env, no OIDC, no files to prepare.
+# MCP gateway quick start: works with no settings at all (no .env, no OIDC, no files to prepare).
 #
 #   curl -fsSL <raw url>/quickstart.compose.yml | docker compose -f - up -d
 #
@@ -7,9 +7,12 @@
 # The secrets key and the database password are generated into the `secrets` volume by the
 # one-shot `init` service and never rewritten. Losing that volume while keeping `pgdata` makes the
 # stored secrets unreadable: back both up together. Postgres is reachable only from the app.
-# Optional variables: MCP_REGISTRY_IMAGE, PORT, PUBLIC_URL (the address people use, for example
-# https://mcp.example.com), COOKIE_SECURE=false (only for plain http on an address other than
-# localhost).
+#
+# Settings are optional and come from the caller's shell environment or from
+# `docker compose --env-file <file> -f - up -d`: MCP_REGISTRY_IMAGE, PORT, PUBLIC_URL (the address
+# people use, for example https://mcp.example.com) and the variables listed under the app's
+# `environment:` (OIDC login, proxy, cookie, limits, search, logging; see .env.example). An empty
+# value counts as unset. SECRETS_KEY, DATABASE_URL and PGPASSWORD are owned by this file.
 name: mcp-registry
 
 services:
@@ -61,10 +64,30 @@ services:
     environment:
       PORT: '3000'
       PUBLIC_URL: ${PUBLIC_URL:-http://localhost:3000}
-      COOKIE_SECURE: ${COOKIE_SECURE:-true}
       DATABASE_URL: postgres://mcp@db:5432/mcp
       SECRETS_KEY_FILE: /secrets/secrets_key
       PGPASSWORD_FILE: /secrets/pg_password
+      # Optional settings; empty means unset (config.ts drops empty values before validation).
+      OIDC_ISSUER: ${OIDC_ISSUER:-}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+      OIDC_LOGIN_GROUP: ${OIDC_LOGIN_GROUP:-}
+      OIDC_ADMIN_GROUP: ${OIDC_ADMIN_GROUP:-}
+      OIDC_SCOPES: ${OIDC_SCOPES:-}
+      OIDC_GROUPS_CLAIM: ${OIDC_GROUPS_CLAIM:-}
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-}
+      TRUST_PROXY: ${TRUST_PROXY:-}
+      TRUST_PROXY_HOPS: ${TRUST_PROXY_HOPS:-}
+      COOKIE_SECURE: ${COOKIE_SECURE:-}
+      SYNC_INTERVAL_HOURS: ${SYNC_INTERVAL_HOURS:-}
+      CALL_LOG_RETENTION_DAYS: ${CALL_LOG_RETENTION_DAYS:-}
+      UPSTREAM_MAX_RESPONSE_BYTES: ${UPSTREAM_MAX_RESPONSE_BYTES:-}
+      MCP_MAX_BODY_BYTES: ${MCP_MAX_BODY_BYTES:-}
+      EMBEDDER: ${EMBEDDER:-}
+      EMBEDDER_URL: ${EMBEDDER_URL:-}
+      EMBEDDER_MODEL: ${EMBEDDER_MODEL:-}
+      SEARCH_MIN_SIMILARITY: ${SEARCH_MIN_SIMILARITY:-}
+      LOG_LEVEL: ${LOG_LEVEL:-}
     volumes:
       - secrets:/secrets:ro
     ports:

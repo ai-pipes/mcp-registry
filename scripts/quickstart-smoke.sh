@@ -26,15 +26,19 @@ compose() { docker compose -p "$PROJECT" -f - "$@" <quickstart.compose.yml; }
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/mcp-quickstart-smoke.XXXXXX")"
 
+# The first-start log record holds the live sign-in link: it never reaches this script's output.
+redact() { sed -E 's/link=ll_[A-Za-z0-9_-]+/link=<redacted>/g'; }
+
 cleanup() {
   local code=$?
   if [ "$code" -ne 0 ]; then
-    echo "--- app logs (last 80 lines; secrets are not logged) ---"
-    compose logs --no-color --tail 80 app || true
+    echo "--- app logs (last 80 lines; sign-in link code redacted) ---"
+    compose logs --no-color --tail 80 app 2>&1 | redact || true
     echo "--- db logs (last 20 lines) ---"
-    compose logs --no-color --tail 20 db || true
+    compose logs --no-color --tail 20 db 2>&1 | redact || true
   fi
   compose down -v --remove-orphans >/dev/null 2>&1 || true
+  docker image rm -f "$IMAGE" >/dev/null 2>&1 || true
   rm -rf "$WORK"
   if [ "$code" -eq 0 ]; then echo "QUICKSTART SMOKE OK"; else echo "QUICKSTART SMOKE FAILED"; fi
   exit "$code"
@@ -61,8 +65,9 @@ wait_healthy() {
 # tools/list on /mcp with $1 as the Bearer token; prints nothing, succeeds only with the 4 meta-tools.
 mcp_tools_ok() {
   local out
+  (umask 077 && printf 'Authorization: Bearer %s\n' "$1" >"$WORK/auth.hdr")
   out="$(curl -sS -X POST "${BASE_URL}/mcp" \
-    -H "Authorization: Bearer $1" \
+    -H @"$WORK/auth.hdr" \
     -H 'Content-Type: application/json' \
     -H 'Accept: application/json, text/event-stream' \
     -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}')" || return 1
@@ -70,6 +75,13 @@ mcp_tools_ok() {
     grep -q "\"name\":\"${t}\"" <<<"$out" || return 1
   done
 }
+
+step "pass-through: a variable from the caller's environment reaches the app service"
+# Cheaper than a second full start: the rendered config must carry the value.
+LOG_LEVEL=debug compose config | grep -qE '^ +LOG_LEVEL: debug$' ||
+  fail "LOG_LEVEL from the environment did not reach the app service"
+compose config | grep -qE '^ +LOG_LEVEL: ""$' || fail "an unset optional variable is not empty in the app service"
+echo "config: LOG_LEVEL passes through"
 
 step "docker build (${IMAGE})"
 docker build -q -t "$IMAGE" . >/dev/null
@@ -88,24 +100,26 @@ code="$(app_log | grep '/login#link=ll_' | sed -E 's/.*#link=(ll_[A-Za-z0-9_-]+)
 echo "link: 1 record"
 
 step "POST /api/auth/link → 204 and a session cookie"
+(umask 077 && printf '{"code":"%s"}' "$code" >"$WORK/link.json")
 status="$(curl -sS -o /dev/null -D "$WORK/headers" -w '%{http_code}' -X POST "${BASE_URL}/api/auth/link" \
-  -H "Origin: ${BASE_URL}" -H 'Content-Type: application/json' -d "{\"code\":\"${code}\"}")"
+  -H "Origin: ${BASE_URL}" -H 'Content-Type: application/json' --data @"$WORK/link.json")"
 [ "$status" = "204" ] || fail "POST /api/auth/link answered ${status}, expected 204"
 # curl does not send a Secure cookie over plain http, so the name=value pair is passed by hand.
 cookie="$(grep -i '^set-cookie:' "$WORK/headers" | head -n 1 | sed -E 's/^[^:]+: *//; s/;.*//' | tr -d '\r')"
 [ -n "$cookie" ] || fail "no session cookie in the response"
+(umask 077 && printf 'Cookie: %s\n' "$cookie" >"$WORK/cookie.hdr")
 grep -i '^set-cookie:' "$WORK/headers" | grep -qi 'httponly' || fail "session cookie is not HttpOnly"
 grep -i '^set-cookie:' "$WORK/headers" | grep -qi '; *secure' ||
   fail "session cookie is not Secure by default"
 echo "signed in (cookie: HttpOnly, Secure)"
 
 step "GET /api/auth/me → admin"
-me="$(curl -fsS "${BASE_URL}/api/auth/me" -H "Cookie: ${cookie}")" || fail "GET /api/auth/me failed"
+me="$(curl -fsS "${BASE_URL}/api/auth/me" -H @"$WORK/cookie.hdr")" || fail "GET /api/auth/me failed"
 grep -q '"role":"admin"' <<<"$me" || fail "the signed-in person is not an admin"
 echo "me: admin"
 
 step "POST /api/tokens → sk_ token; tools/list on /mcp"
-created="$(curl -fsS -X POST "${BASE_URL}/api/tokens" -H "Cookie: ${cookie}" \
+created="$(curl -fsS -X POST "${BASE_URL}/api/tokens" -H @"$WORK/cookie.hdr" \
   -H "Origin: ${BASE_URL}" -H 'Content-Type: application/json' -d '{"name":"quickstart-smoke"}')" ||
   fail "POST /api/tokens failed"
 token="$(sed -E 's/.*"token":"(sk_[^"]+)".*/\1/' <<<"$created")"
@@ -140,7 +154,8 @@ while [ "$SECONDS" -lt "$deadline" ]; do
   if [ "$(curl -fsS "${BASE_URL}/healthz" 2>/dev/null || true)" = "ok" ]; then
     fail "the app became healthy with a key that does not match the data"
   fi
-  if app_log | grep -qF "$FATAL_TEXT"; then seen=1; fi
+  log="$(app_log)"
+  if grep -qF "$FATAL_TEXT" <<<"$log"; then seen=1; fi
   sleep 3
 done
 [ -n "$seen" ] || fail "the app log has no fatal record about the key mismatch"
