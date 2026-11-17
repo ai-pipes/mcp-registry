@@ -7,6 +7,13 @@ import { ErrorAlert } from '@/components/ErrorAlert.tsx';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   Table,
@@ -20,8 +27,44 @@ import { formatDateTime } from '@/lib/format.ts';
 import { strings } from '@/strings.ts';
 
 const t = strings.calls;
-const SELECT_CLASS =
-  'h-8 rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50';
+const ALL = 'all';
+
+/**
+ * A filter dropdown with an "All" entry (empty value). Base UI Select, not a native `<select>`:
+ * WebKit reports a `style-src-attr` violation for every native `<select>` under the strict CSP
+ * (its internal inline style is checked against the page policy), which e2e/csp.spec.ts forbids.
+ */
+function FilterSelect({
+  id,
+  value,
+  onChange,
+  items,
+}: {
+  id: string;
+  value: string;
+  onChange: (value: string) => void;
+  items: { value: string; label: string }[];
+}) {
+  const all = [{ value: ALL, label: t.allOutcomes }, ...items];
+  return (
+    <Select
+      value={value === '' ? ALL : value}
+      onValueChange={(v) => onChange(v === ALL ? '' : String(v))}
+      items={all}
+    >
+      <SelectTrigger id={id} size="sm" className="min-w-40">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {all.map((i) => (
+          <SelectItem key={i.value} value={i.value}>
+            {i.label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
 
 /** `/admin/calls`: the call log (who, which tool, how it ended), newest first. */
 export function CallsPage() {
@@ -52,35 +95,21 @@ export function CallsPage() {
       <div className="flex flex-wrap gap-4">
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="calls-server">{t.filterServer}</Label>
-          <select
+          <FilterSelect
             id="calls-server"
-            className={SELECT_CLASS}
             value={server}
-            onChange={(e) => setServer(e.target.value)}
-          >
-            <option value="">{t.allOutcomes}</option>
-            {(servers.data ?? []).map((s) => (
-              <option key={s.slug} value={s.slug}>
-                {s.name}
-              </option>
-            ))}
-          </select>
+            onChange={setServer}
+            items={(servers.data ?? []).map((s) => ({ value: s.slug, label: s.name }))}
+          />
         </div>
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="calls-outcome">{t.filterOutcome}</Label>
-          <select
+          <FilterSelect
             id="calls-outcome"
-            className={SELECT_CLASS}
             value={outcome}
-            onChange={(e) => setOutcome(e.target.value)}
-          >
-            <option value="">{t.allOutcomes}</option>
-            {CallOutcome.options.map((o) => (
-              <option key={o} value={o}>
-                {t.outcome[o]}
-              </option>
-            ))}
-          </select>
+            onChange={setOutcome}
+            items={CallOutcome.options.map((o) => ({ value: o, label: t.outcome[o] ?? o }))}
+          />
         </div>
       </div>
       {calls.isError ? (
