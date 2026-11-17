@@ -20,11 +20,12 @@ describe('migrate', () => {
     expect(rows.map((r) => r.name)).toContain('0001_platform.sql');
   });
 
-  it('creates the platform schema: outbox and audit_log', async () => {
+  it('creates the platform schema: outbox, audit_log and key_check', async () => {
     const rows = await pg.sql<{ table_name: string }[]>`
       select table_name from information_schema.tables where table_schema = 'platform'`;
     expect(rows.map((r) => r.table_name).toSorted()).toEqual([
       'audit_log',
+      'key_check',
       'outbox',
       'schema_migrations',
     ]);

@@ -10,6 +10,7 @@ import { authenticateToken, completeLinkLogin } from '../src/modules/identity/in
 import { runCli } from '../src/platform/cli-commands.ts';
 import type { Config } from '../src/platform/config.ts';
 import { buildContainer, type Container } from '../src/platform/container.ts';
+import { verifySecretsKey } from '../src/platform/crypto/key-check.ts';
 import { AesGcmSecretBox } from '../src/platform/crypto/secret-box.ts';
 import { createLogger } from '../src/platform/logger.ts';
 import { type FakeUpstream, startFakeUpstream } from './fake-upstream.ts';
@@ -346,6 +347,7 @@ describe('cli rotate-secrets-key', () => {
     expect(r.out).toEqual([
       'server secrets: 1 re-sealed, 0 already under the new key',
       'connections: 2 re-sealed, 0 already under the new key',
+      'key check: absent',
     ]);
     for (const s of ['access-token-1', 'refresh-token-1', 'pat-token-1', SECRET]) {
       expect(r.all).not.toContain(s);
@@ -366,9 +368,21 @@ describe('cli rotate-secrets-key', () => {
     expect(again.out).toEqual([
       'server secrets: 0 re-sealed, 1 already under the new key',
       'connections: 0 re-sealed, 2 already under the new key',
+      'key check: absent',
     ]);
     const audit = await pg.sql`select meta from platform.audit_log where action = 'secrets.rotate'`;
     expect(audit).toHaveLength(2);
+  });
+
+  it('re-seals the key check', async () => {
+    await verifySecretsKey(pg.sql, { current: OLD });
+    const r = await cli(['rotate-secrets-key'], {
+      container: containerFor({ secretsKey: NEW, secretsKeyOld: OLD }),
+    });
+    expect(r.code).toBe(0);
+    expect(r.out).toContain('key check: resealed');
+    expect(await verifySecretsKey(pg.sql, { current: NEW })).toBe('ok');
+    expect(await verifySecretsKey(pg.sql, { current: OLD })).toBe('mismatch');
   });
 
   it('refuses to run without SECRETS_KEY_OLD', async () => {

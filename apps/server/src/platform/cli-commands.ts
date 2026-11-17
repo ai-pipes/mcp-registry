@@ -21,6 +21,7 @@ import {
 import { reindexAll } from '../modules/search/index.ts';
 import { DomainError } from '../shared-kernel/index.ts';
 import type { Container } from './container.ts';
+import { resealKeyCheck } from './crypto/key-check.ts';
 import { AesGcmSecretBox } from './crypto/secret-box.ts';
 
 export type CliIo = {
@@ -231,6 +232,8 @@ const rotateSecretsKeyCommand: Command = async (args, c, io) => {
   const connections = await resealConnections(c.connections, keys);
   io.out(resealLine('server secrets', servers));
   io.out(resealLine('connections', connections));
+  const keyCheck = await resealKeyCheck(c.sql, { current: c.config.secretsKey, previous: old });
+  io.out(`key check: ${keyCheck}`);
   await c.audit.record({
     actorId: null,
     action: 'secrets.rotate',
@@ -246,12 +249,14 @@ const rotateSecretsKeyCommand: Command = async (args, c, io) => {
         current: connections.current,
         failed: connections.failed.length,
       },
+      keyCheck,
     },
   });
-  const failed = [
+  const failed: string[] = [
     ...servers.failed.map((slug) => `server ${slug}`),
     ...connections.failed.map((key) => `connection ${key}`),
   ];
+  if (keyCheck === 'unreadable') failed.push('key check');
   if (failed.length === 0) return 0;
   io.err('error: neither key opens (left as they were):');
   for (const f of failed) io.err(`  ${f}`);
