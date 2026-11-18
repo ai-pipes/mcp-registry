@@ -22,6 +22,11 @@ package compat_test
 //     "keeps working data from before the check existed" (with a sealed server secret): racing
 //     two app processes on one empty database is not reproducible from the outside. The
 //     "first start after the check did not exist" case is ported by deleting the row.
+//   - bootstrap.int.test.ts "serves /mcp with a token when OIDC is not configured": covered by
+//     the control of TestPlatformBearerNeverOpensTheWebAPI (a token opens /mcp, tools/list shows
+//     four tools) on the shared stack, which has no OIDC, and by /api/auth/methods in
+//     TestFirstStartAnnouncementNeedsAnEmptyDatabaseAndNoOIDC (oidc=true there; the shared
+//     stack's oidc=false is asserted below in TestPlatformMethodsWithoutOIDC).
 //   - bootstrap.int.test.ts "logs and continues when the announcement fails": needs a failing
 //     user repository. "prints nothing when other people exist" and "prints nothing and creates
 //     nobody when OIDC is configured" are ported (TestFirstStartAnnouncement, subtests).
@@ -50,6 +55,7 @@ const (
 
 	firstStartMsg   = "first start: open this one-time link within 15 minutes to sign in as admin"
 	keyMismatchMsg  = `SECRETS_KEY does not match the data in this database; restore the original key (stored secrets cannot be read with this one). See "Recovering from a key mismatch" in the README.`
+	keyCreatedMsg   = "secrets key check created: SECRETS_KEY is now verified at every start"
 	keyOldOnlyMsg   = "the secrets key check still opens with SECRETS_KEY_OLD only: run rotate-secrets-key"
 	pinoFatal       = 60
 	pinoWarn        = 40
@@ -83,7 +89,7 @@ var securityHeaders = map[string]string{
 
 var requestID = regexp.MustCompile(`^[0-9a-f-]{36}$`)
 
-func assertSecurityHeaders(t *testing.T, what string, r harness.Response) {
+func assertSecurityHeaders(t *testing.T, what string, r harness.Response, wantRequestID bool) {
 	t.Helper()
 	for name, want := range securityHeaders {
 		if got := r.Header.Values(name); len(got) != 1 || got[0] != want {
@@ -98,8 +104,8 @@ func assertSecurityHeaders(t *testing.T, what string, r harness.Response) {
 			t.Errorf("%s: unexpected header %s = %q", what, name, v)
 		}
 	}
-	// A foreign Host is refused by the MCP transport before the access-log middleware: no id.
-	if id := r.Header.Get("X-Request-Id"); !requestID.MatchString(id) && what != "foreign host on mcp" {
+	id := r.Header.Get("X-Request-Id")
+	if wantRequestID && !requestID.MatchString(id) || !wantRequestID && id != "" {
 		t.Errorf("%s: X-Request-Id = %q", what, id)
 	}
 }
@@ -170,22 +176,25 @@ func TestPlatformSecurityHeaders(t *testing.T) {
 		name   string
 		req    func() harness.Response
 		status int
+		// noRequestID: a foreign Host is refused by the MCP transport before the access-log
+		// middleware, so that response has the security headers but no X-Request-Id.
+		noRequestID bool
 	}{
-		{"index", func() harness.Response { return index }, 200},
-		{"healthz", func() harness.Response { return anon.Do(t, "GET", "/healthz", nil) }, 200},
-		{"api 401", func() harness.Response { return anon.Do(t, "GET", "/api/auth/me", nil) }, 401},
-		{"api 200", func() harness.Response { return admin.Do(t, "GET", "/api/auth/me", nil) }, 200},
-		{"404 text", func() harness.Response { return anon.Do(t, "GET", "/no-such-page", nil) }, 404},
-		{"api 404", func() harness.Response { return anon.Do(t, "GET", "/api/no-such", nil) }, 404},
-		{"static asset", func() harness.Response { return anon.Do(t, "GET", asset, nil) }, 200},
-		{"static asset 404", func() harness.Response { return anon.Do(t, "GET", "/assets/no-such.js", nil) }, 404},
-		{"spa route", func() harness.Response { return anon.Do(t, "GET", "/catalog", nil, "Accept: text/html") }, 200},
-		{"csrf 403", func() harness.Response { return anon.Do(t, "POST", "/api/tokens", nil, "Origin:") }, 403},
-		{"mcp 401", func() harness.Response { return anon.Do(t, "GET", "/mcp", nil) }, 401},
+		{"index", func() harness.Response { return index }, 200, false},
+		{"healthz", func() harness.Response { return anon.Do(t, "GET", "/healthz", nil) }, 200, false},
+		{"api 401", func() harness.Response { return anon.Do(t, "GET", "/api/auth/me", nil) }, 401, false},
+		{"api 200", func() harness.Response { return admin.Do(t, "GET", "/api/auth/me", nil) }, 200, false},
+		{"404 text", func() harness.Response { return anon.Do(t, "GET", "/no-such-page", nil) }, 404, false},
+		{"api 404", func() harness.Response { return anon.Do(t, "GET", "/api/no-such", nil) }, 404, false},
+		{"static asset", func() harness.Response { return anon.Do(t, "GET", asset, nil) }, 200, false},
+		{"static asset 404", func() harness.Response { return anon.Do(t, "GET", "/assets/no-such.js", nil) }, 404, false},
+		{"spa route", func() harness.Response { return anon.Do(t, "GET", "/catalog", nil, "Accept: text/html") }, 200, false},
+		{"csrf 403", func() harness.Response { return anon.Do(t, "POST", "/api/tokens", nil, "Origin:") }, 403, false},
+		{"mcp 401", func() harness.Response { return anon.Do(t, "GET", "/mcp", nil) }, 401, false},
 		{"413", func() harness.Response {
 			return anon.Do(t, "POST", "/api/tokens", make([]byte, restBodyLimit+1), "Content-Type: application/json", "Connection: close")
-		}, 413},
-		{"foreign host on mcp", func() harness.Response { return anon.Do(t, "GET", "/mcp", nil, "Host: evil.example") }, 403},
+		}, 413, false},
+		{"foreign host on mcp", func() harness.Response { return anon.Do(t, "GET", "/mcp", nil, "Host: evil.example") }, 403, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -193,7 +202,7 @@ func TestPlatformSecurityHeaders(t *testing.T) {
 			if r.Status != c.status {
 				t.Fatalf("status %d, want %d (body %.200q)", r.Status, c.status, r.Body)
 			}
-			assertSecurityHeaders(t, c.name, r)
+			assertSecurityHeaders(t, c.name, r, !c.noRequestID)
 		})
 	}
 
@@ -216,26 +225,44 @@ func TestPlatformHealthz(t *testing.T) {
 func TestPlatformAccessLog(t *testing.T) {
 	s := harness.Shared(t)
 	marker := harness.Unique("sk_secret-token")
-	path := "/healthz?probe=" + harness.Unique("p")
-	s.Anonymous().Do(t, "GET", path, nil, "Authorization: Bearer "+marker)
+	query := "probe=" + harness.Unique("p")
+	r := s.Anonymous().Do(t, "GET", "/healthz?"+query, nil, "Authorization: Bearer "+marker)
+	id := r.Header.Get("X-Request-Id")
+	if r.Status != 200 || !requestID.MatchString(id) {
+		t.Fatalf("probe: %d, X-Request-Id %q", r.Status, id)
+	}
+	// Wait for exactly this request's record (the readiness probes leave /healthz records too).
 	var rec map[string]any
-	harness.Eventually(t, "the request to appear in the access log", func() bool {
+	harness.Eventually(t, "the probe's record (reqId "+id+") in the access log", func() bool {
 		recs, _ := logRecords(t, s.Logs(t))
-		for _, r := range recs {
-			if r["msg"] == "request" && r["path"] == "/healthz" && r["status"] == float64(200) {
-				rec = r
+		for _, x := range recs {
+			if x["reqId"] == id {
+				rec = x
+				return true
 			}
 		}
-		return rec != nil
+		return false
 	})
-	if rec["method"] != "GET" {
+	if rec["msg"] != "request" || level(rec) != pinoInfo || rec["method"] != "GET" || rec["path"] != "/healthz" || rec["status"] != float64(200) {
 		t.Fatalf("access log record: %v", rec)
 	}
-	if strings.Contains(s.Logs(t), marker) {
-		t.Fatal("the access log contains the Authorization header value")
+	if ms, ok := rec["ms"].(float64); !ok || ms < 0 {
+		t.Fatalf("access log record has no ms: %v", rec)
 	}
-	if strings.Contains(s.Logs(t), "probe=") {
-		t.Fatal("the access log contains the query string")
+	if ip, ok := rec["ip"].(string); !ok || ip == "" {
+		t.Fatalf("access log record has no ip: %v", rec)
+	}
+	for _, name := range []string{"headers", "query", "authorization", "req", "url"} {
+		if _, ok := rec[name]; ok {
+			t.Fatalf("access log record has a %q field: %v", name, rec)
+		}
+	}
+	logs := s.Logs(t) // read after the record is there: the negative checks cover this request's line
+	if strings.Contains(logs, marker) {
+		t.Fatal("the app log contains the Authorization header value")
+	}
+	if strings.Contains(logs, query) || strings.Contains(logs, "probe=") {
+		t.Fatal("the app log contains the query string")
 	}
 }
 
@@ -325,7 +352,7 @@ func TestPlatformBearerNeverOpensTheWebAPI(t *testing.T) {
 			t.Errorf("%s %s with a valid token: %d %s", c.method, c.path, r.Status, r.Body)
 			continue
 		}
-		if c.path == "/api/auth/me" && errorCode(t, r) != want {
+		if errorCode(t, r) != want {
 			t.Errorf("%s %s: %s", c.method, c.path, r.Body)
 		}
 	}
@@ -363,7 +390,7 @@ func TestPlatformBodyLimit(t *testing.T) {
 	})
 	t.Run("the limit applies before sign-in", func(t *testing.T) {
 		r := s.Anonymous().Do(t, "POST", "/api/tokens", padded(restBodyLimit+1), "Content-Type: application/json", "Connection: close")
-		if r.Status != 413 {
+		if r.Status != 413 || errorCode(t, r) != want {
 			t.Fatalf("%d %.200s", r.Status, r.Body)
 		}
 	})
@@ -388,9 +415,13 @@ func TestPlatformStaticFilesAndSPA(t *testing.T) {
 	const html = "Accept: text/html"
 
 	index := anon.Do(t, "GET", "/", nil, html)
-	if index.Status != 200 || !strings.HasPrefix(index.Header.Get("Content-Type"), "text/html") ||
+	// GET / is served as a static file (index.html): its own Content-Type spelling and no
+	// Cache-Control at all, unlike the SPA routes below.
+	if index.Status != 200 || index.Header.Get("Content-Type") != "text/html; charset=utf-8" ||
+		len(index.Header.Values("Cache-Control")) != 0 ||
 		!strings.Contains(string(index.Body), `<div id="root">`) {
-		t.Fatalf("GET / with Accept text/html: %d %q %.200s", index.Status, index.Header.Get("Content-Type"), index.Body)
+		t.Fatalf("GET / with Accept text/html: %d %q Cache-Control %q %.200s", index.Status,
+			index.Header.Get("Content-Type"), index.Header.Values("Cache-Control"), index.Body)
 	}
 	assets := regexp.MustCompile(`/assets/[^"']+`).FindAllString(string(index.Body), -1)
 	if len(assets) < 2 {
@@ -426,7 +457,7 @@ func TestPlatformStaticFilesAndSPA(t *testing.T) {
 		for _, p := range []string{"/catalog", "/servers/gitea", "/admin/servers/new", "/connections"} {
 			r := anon.Do(t, "GET", p, nil, html)
 			if r.Status != 200 || r.Header.Get("Cache-Control") != "no-cache" ||
-				!strings.HasPrefix(r.Header.Get("Content-Type"), "text/html") ||
+				r.Header.Get("Content-Type") != "text/html; charset=UTF-8" ||
 				!strings.Contains(string(r.Body), `<div id="root">`) {
 				t.Errorf("%s: %d Cache-Control %q %.100s", p, r.Status, r.Header.Get("Cache-Control"), r.Body)
 			}
@@ -472,8 +503,9 @@ func TestPlatformStaticFilesAndSPA(t *testing.T) {
 			t.Errorf("/mcp: %d %s", mcp.Status, mcp.Body)
 		}
 		mcpSub := anon.Do(t, "GET", "/mcp/sub", nil, html)
-		if strings.Contains(string(mcpSub.Body), `<div id="root">`) {
-			t.Errorf("/mcp/sub answered with the shell: %d", mcpSub.Status)
+		// /mcp/sub is not a route of the MCP endpoint: the plain-text 404, not the shell.
+		if mcpSub.Status != 404 || string(mcpSub.Body) != "Not found" {
+			t.Errorf("/mcp/sub: %d %.100s", mcpSub.Status, mcpSub.Body)
 		}
 		hz := anon.Do(t, "GET", "/healthz/x", nil, html)
 		if hz.Status != 404 || strings.Contains(string(hz.Body), `<div id="root">`) {
@@ -531,6 +563,15 @@ func keyCheckBytes(t *testing.T, s *harness.Stack) []byte {
 	return b
 }
 
+// assertKeyCreatedOnce: one info-level record that the check was recorded, from this container run.
+func assertKeyCreatedOnce(t *testing.T, recs []map[string]any) {
+	t.Helper()
+	created := recordsWithMsg(recs, keyCreatedMsg)
+	if len(created) != 1 || level(created[0]) != pinoInfo {
+		t.Fatalf("key-check records: %v", created)
+	}
+}
+
 func healthy(t *testing.T, s *harness.Stack) {
 	t.Helper()
 	if r := s.Anonymous().Do(t, "GET", "/healthz", nil); r.Status != 200 || string(r.Body) != "ok" {
@@ -583,6 +624,8 @@ func TestPlatformMigrationsAndKeyCheck(t *testing.T) {
 		if n := len(recordsAtLevel(recs, pinoFatal)); n != 0 {
 			t.Fatalf("fatal records on a healthy start: %d", n)
 		}
+		// This container's log is the first run only: exactly one info record about the check.
+		assertKeyCreatedOnce(t, recs)
 	})
 
 	t.Run("a restart with the same key applies nothing and keeps the check", func(t *testing.T) {
@@ -598,6 +641,9 @@ func TestPlatformMigrationsAndKeyCheck(t *testing.T) {
 			t.Fatal("the key check was rewritten by a restart")
 		}
 		recs, _ := logRecords(t, s.Logs(t))
+		if n := len(recordsWithMsg(recs, keyCreatedMsg)); n != 0 {
+			t.Fatalf("%d key-check records on a restart with a matching key", n)
+		}
 		if len(recordsAtLevel(recs, pinoFatal)) != 0 {
 			t.Fatalf("fatal records after a restart with the same key: %v", recs)
 		}
@@ -613,10 +659,12 @@ func TestPlatformMigrationsAndKeyCheck(t *testing.T) {
 		if _, err := s.DB.Exec(context.Background(), "delete from platform.key_check"); err != nil {
 			t.Fatal(err)
 		}
-		s.SwapImage(t, image, "")
+		s.SwapImage(t, image, "") // a new container: its log holds this run only
 		if n := rowCount(t, s, "select count(*) from platform.key_check"); n != 1 {
 			t.Fatalf("key_check rows: %d", n)
 		}
+		recs, _ := logRecords(t, s.Logs(t))
+		assertKeyCreatedOnce(t, recs)
 	})
 
 	t.Run("another key: exit 1, one fatal record, no key in the log, check unchanged", func(t *testing.T) {
@@ -651,11 +699,11 @@ func TestPlatformMigrationsAndKeyCheck(t *testing.T) {
 		assertNoKey(t, s.Logs(t), key, next)
 
 		r := s.CLI(t, "", "rotate-secrets-key")
-		if r.Code != 0 || !strings.Contains(r.Stdout, "key check: re-sealed") {
+		if r.Code != 0 || !hasLine(r.Stdout, "key check: re-sealed") {
 			t.Fatalf("rotate-secrets-key: %+v", r)
 		}
 		again := s.CLI(t, "", "rotate-secrets-key")
-		if again.Code != 0 || !strings.Contains(again.Stdout, "key check: already current") {
+		if again.Code != 0 || !hasLine(again.Stdout, "key check: already current") {
 			t.Fatalf("second rotate-secrets-key: %+v", again)
 		}
 
@@ -671,7 +719,12 @@ func TestPlatformMigrationsAndKeyCheck(t *testing.T) {
 		if code != 1 {
 			t.Fatalf("the old key alone: exit %d, logs %s", code, logs)
 		}
-		// Restore the stack's own key for the next subtests: both keys, new one current.
+		oldRecs, _ := logRecords(t, logs)
+		if fatal := recordsAtLevel(oldRecs, pinoFatal); len(fatal) != 1 || fatal[0]["msg"] != keyMismatchMsg {
+			t.Fatalf("fatal records with the old key alone: %v", fatal)
+		}
+		assertNoKey(t, logs, key, next)
+		// Bring the app back with the new key alone and make it the stack's key.
 		s.SwapImage(t, image, "", map[string]string{"SECRETS_KEY": next, "SECRETS_KEY_OLD": ""})
 		key = next
 	})
@@ -836,9 +889,8 @@ func TestFirstStartAnnouncement(t *testing.T) {
 func TestFirstStartAnnouncementNeedsAnEmptyDatabaseAndNoOIDC(t *testing.T) {
 	t.Run("nothing when another person exists", func(t *testing.T) {
 		s := harness.Start(t, harness.Options{})
-		// The first start has already created local-admin; build the state "other people exist"
-		// from a clean database: a second stack where a person exists before the first restart
-		// would be needed, so assert the documented rule through the people count instead.
+		// The first start created local-admin; a second person is added before the restart, and
+		// the restart must neither announce a link nor create anybody.
 		if n := rowCount(t, s, "select count(*) from identity.users"); n != 1 {
 			t.Fatalf("users: %d", n)
 		}
@@ -848,6 +900,9 @@ func TestFirstStartAnnouncementNeedsAnEmptyDatabaseAndNoOIDC(t *testing.T) {
 		s.SwapImage(t, platformImage(), "")
 		if n := len(linkRecords(t, s.Logs(t))); n != 0 {
 			t.Fatalf("%d link records although another person exists", n)
+		}
+		if n := rowCount(t, s, "select count(*) from identity.users"); n != 2 {
+			t.Fatalf("users after the restart: %d, want 2", n)
 		}
 	})
 	t.Run("nothing, and nobody created, with OIDC configured", func(t *testing.T) {
@@ -878,4 +933,24 @@ func firstWithSuffix(list []string, suffix string) string {
 		}
 	}
 	return "/assets/missing" + suffix
+}
+
+// hasLine reports whether text has a line equal to want (after trimming the line).
+func hasLine(text, want string) bool {
+	for _, l := range strings.Split(text, "\n") {
+		if strings.TrimSpace(l) == want {
+			return true
+		}
+	}
+	return false
+}
+
+func TestPlatformMethodsWithoutOIDC(t *testing.T) {
+	var m struct {
+		OIDC bool `json:"oidc"`
+	}
+	harness.Shared(t).Anonymous().Do(t, "GET", "/api/auth/methods", nil).JSON(t, "AuthMethods", &m)
+	if m.OIDC {
+		t.Fatal("methods.oidc is true without OIDC configured")
+	}
 }
