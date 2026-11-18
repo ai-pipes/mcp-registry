@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "authorizeUrl": {
+      "format": "uri",
+      "maxLength": 2048,
+      "type": "string"
+    },
+    "clientId": {
+      "maxLength": 500,
+      "minLength": 1,
+      "type": "string"
+    },
+    "extraAuthorizeParams": {
+      "additionalProperties": {
+        "maxLength": 1000,
+        "type": "string"
+      },
+      "propertyNames": {
+        "maxLength": 100,
+        "type": "string"
+      },
+      "type": "object"
+    },
+    "revokeUrl": {
+      "format": "uri",
+      "maxLength": 2048,
+      "type": "string"
+    },
+    "scopes": {
+      "items": {
+        "maxLength": 200,
+        "minLength": 1,
+        "type": "string"
+      },
+      "maxItems": 50,
+      "type": "array"
+    },
+    "tokenUrl": {
+      "format": "uri",
+      "maxLength": 2048,
+      "type": "string"
+    }
+  },
+  "required": [
+    "authorizeUrl",
+    "tokenUrl",
+    "clientId",
+    "scopes"
+  ],
+  "type": "object"
+}

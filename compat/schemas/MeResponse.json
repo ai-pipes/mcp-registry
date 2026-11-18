@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "groups": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "name": {
+      "type": "string"
+    },
+    "role": {
+      "enum": [
+        "admin",
+        "member"
+      ],
+      "type": "string"
+    },
+    "userId": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "userId",
+    "name",
+    "role",
+    "groups"
+  ],
+  "type": "object"
+}

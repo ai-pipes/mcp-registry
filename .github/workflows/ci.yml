@@ -38,6 +38,8 @@ jobs:
       - run: pnpm audit --audit-level=high
       # Docker is available on ubuntu runners, so the Testcontainers integration tests run.
       - run: pnpm verify
+      # The Go compat suite validates REST responses with JSON Schemas generated from the zod contracts.
+      - run: make compat-schemas && git diff --exit-code compat/schemas && test -z "$(git status --porcelain compat/schemas)"
 
   smoke:
     needs: verify

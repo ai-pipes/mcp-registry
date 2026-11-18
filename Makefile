@@ -3,7 +3,7 @@ GO_ARCH_LINT := github.com/fe3dback/go-arch-lint@v1.14.0
 GOFUMPT := mvdan.cc/gofumpt@v0.12.0
 VERSION := $(shell node -p "require('./apps/server/package.json').version")
 
-.PHONY: compat compat-image-ts go-lint go-lint-new go-fmt-check go-arch-lint go-verify go-build print-go-arch-lint print-golangci-lint
+.PHONY: compat compat-schemas compat-image-ts go-lint go-lint-new go-fmt-check go-arch-lint go-verify go-build print-go-arch-lint print-golangci-lint
 
 go-lint:
 	go run $(GOLANGCI_LINT) run
@@ -32,6 +32,10 @@ go-verify: go-lint go-arch-lint
 	go vet ./...
 	go vet -tags compat ./...
 	go test ./...
+
+# Regenerates compat/schemas from the zod contracts; CI fails when the committed files are stale.
+compat-schemas:
+	node --experimental-strip-types packages/contracts/scripts/export-json-schema.mjs compat/schemas
 
 compat-image-ts:
 	docker build -t mcp-registry:compat-ts .

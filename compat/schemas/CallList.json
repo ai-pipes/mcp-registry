@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "items": {
+    "additionalProperties": false,
+    "properties": {
+      "durationMs": {
+        "maximum": 9007199254740991,
+        "minimum": -9007199254740991,
+        "type": "integer"
+      },
+      "id": {
+        "type": "string"
+      },
+      "outcome": {
+        "enum": [
+          "ok",
+          "upstream_error",
+          "timeout",
+          "transport_error",
+          "denied:not_found",
+          "denied:invalid_arguments",
+          "denied:quota",
+          "denied:needs_connection",
+          "denied:expired"
+        ],
+        "type": "string"
+      },
+      "server": {
+        "type": "string"
+      },
+      "startedAt": {
+        "type": "string"
+      },
+      "tokenId": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "tool": {
+        "type": "string"
+      },
+      "userId": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "id",
+      "userId",
+      "tokenId",
+      "server",
+      "tool",
+      "startedAt",
+      "durationMs",
+      "outcome"
+    ],
+    "type": "object"
+  },
+  "type": "array"
+}

@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "enum": [
+    "ok",
+    "upstream_error",
+    "timeout",
+    "transport_error",
+    "denied:not_found",
+    "denied:invalid_arguments",
+    "denied:quota",
+    "denied:needs_connection",
+    "denied:expired"
+  ],
+  "type": "string"
+}

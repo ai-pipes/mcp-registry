@@ -1,0 +1,146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "none",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "header": {
+          "maxLength": 100,
+          "minLength": 1,
+          "type": "string"
+        },
+        "kind": {
+          "const": "shared_secret",
+          "type": "string"
+        },
+        "template": {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "header",
+        "template"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "header": {
+          "maxLength": 100,
+          "minLength": 1,
+          "type": "string"
+        },
+        "kind": {
+          "const": "pat_user",
+          "type": "string"
+        },
+        "template": {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "header",
+        "template"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "header": {
+          "maxLength": 100,
+          "minLength": 1,
+          "type": "string"
+        },
+        "kind": {
+          "const": "oauth_user",
+          "type": "string"
+        },
+        "oauth": {
+          "additionalProperties": false,
+          "properties": {
+            "authorizeUrl": {
+              "format": "uri",
+              "maxLength": 2048,
+              "type": "string"
+            },
+            "clientId": {
+              "maxLength": 500,
+              "minLength": 1,
+              "type": "string"
+            },
+            "extraAuthorizeParams": {
+              "additionalProperties": {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              "propertyNames": {
+                "maxLength": 100,
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "revokeUrl": {
+              "format": "uri",
+              "maxLength": 2048,
+              "type": "string"
+            },
+            "scopes": {
+              "items": {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              "maxItems": 50,
+              "type": "array"
+            },
+            "tokenUrl": {
+              "format": "uri",
+              "maxLength": 2048,
+              "type": "string"
+            }
+          },
+          "required": [
+            "authorizeUrl",
+            "tokenUrl",
+            "clientId",
+            "scopes"
+          ],
+          "type": "object"
+        },
+        "template": {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "oauth",
+        "header",
+        "template"
+      ],
+      "type": "object"
+    }
+  ]
+}

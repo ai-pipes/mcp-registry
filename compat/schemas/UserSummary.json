@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "createdAt": {
+      "type": "string"
+    },
+    "disabled": {
+      "type": "boolean"
+    },
+    "email": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "groups": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "id": {
+      "type": "string"
+    },
+    "lastLoginAt": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "name": {
+      "type": "string"
+    },
+    "role": {
+      "enum": [
+        "admin",
+        "member"
+      ],
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "name",
+    "email",
+    "role",
+    "groups",
+    "disabled",
+    "createdAt",
+    "lastLoginAt"
+  ],
+  "type": "object"
+}

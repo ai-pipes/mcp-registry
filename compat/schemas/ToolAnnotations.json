@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "destructiveHint": {
+      "type": "boolean"
+    },
+    "idempotentHint": {
+      "type": "boolean"
+    },
+    "openWorldHint": {
+      "type": "boolean"
+    },
+    "readOnlyHint": {
+      "type": "boolean"
+    }
+  },
+  "type": "object"
+}

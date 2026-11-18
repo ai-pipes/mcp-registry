@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "items": {
+    "additionalProperties": false,
+    "properties": {
+      "description": {
+        "type": "string"
+      },
+      "name": {
+        "type": "string"
+      },
+      "slug": {
+        "type": "string"
+      },
+      "tools": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "annotations": {
+              "additionalProperties": false,
+              "properties": {
+                "destructiveHint": {
+                  "type": "boolean"
+                },
+                "idempotentHint": {
+                  "type": "boolean"
+                },
+                "openWorldHint": {
+                  "type": "boolean"
+                },
+                "readOnlyHint": {
+                  "type": "boolean"
+                }
+              },
+              "type": "object"
+            },
+            "description": {
+              "type": "string"
+            },
+            "ref": {
+              "type": "string"
+            },
+            "title": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "ref",
+            "title",
+            "description",
+            "annotations"
+          ],
+          "type": "object"
+        },
+        "type": "array"
+      }
+    },
+    "required": [
+      "slug",
+      "name",
+      "description",
+      "tools"
+    ],
+    "type": "object"
+  },
+  "type": "array"
+}

@@ -29,8 +29,8 @@ type Response struct {
 	Body   []byte
 }
 
-// validateSchema is replaced by the real JSON Schema validator in a later task.
-var validateSchema = func(_ string, _ []byte) error { return nil }
+// validateSchema is wired to ValidateSchema in schema.go.
+var validateSchema func(schema string, body []byte) error
 
 const fakesHost = "host.docker.internal"
 
