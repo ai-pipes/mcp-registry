@@ -20,6 +20,9 @@ type CLIResult struct {
 // stdin is passed when it is not empty.
 func (s *Stack) CLI(t *testing.T, stdin string, args ...string) CLIResult {
 	t.Helper()
+	if up, err := s.running(); err != nil || !up {
+		t.Fatalf("cli %v: the app container is not running (%v)", args, err)
+	}
 	argv := []string{"exec"}
 	if stdin != "" {
 		argv = append(argv, "-i")
@@ -40,6 +43,10 @@ func (s *Stack) CLI(t *testing.T, stdin string, args ...string) CLIResult {
 	case err == nil:
 	case errors.As(err, &ee):
 		res.Code = ee.ExitCode()
+		// 125-127 and a daemon error are docker's own failures, not the CLI's answer.
+		if res.Code >= 125 && res.Code <= 127 || strings.HasPrefix(res.Stderr, "Error response from daemon") {
+			t.Fatalf("docker exec failed (exit %d): %s", res.Code, strings.TrimSpace(s.scrub(res.Stderr)))
+		}
 	default:
 		t.Fatalf("docker exec: %v", err)
 	}

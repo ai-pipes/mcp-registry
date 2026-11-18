@@ -97,7 +97,9 @@ func (s *Stack) signIn(t *testing.T, sub, name string, extra ...string) *Client 
 }
 
 // Do sends one request. body is nil, a string or []byte (sent as is), or any value (sent as JSON).
-// hdr entries are "Name: Value".
+// hdr entries are "Name: Value", applied after the default Origin (= BaseURL). "Host: x" sets the
+// request's Host (net/http ignores a Host header). An entry with an empty value, such as
+// "Origin:", removes that header, so a request without Origin can be sent.
 func (c *Client) Do(t *testing.T, method, path string, body any, hdr ...string) Response {
 	t.Helper()
 	var rd io.Reader
@@ -128,7 +130,15 @@ func (c *Client) Do(t *testing.T, method, path string, body any, hdr ...string) 
 		if !ok {
 			t.Fatalf("header %q is not \"Name: Value\"", h)
 		}
-		req.Header.Set(strings.TrimSpace(name), strings.TrimSpace(value))
+		name, value = strings.TrimSpace(name), strings.TrimSpace(value)
+		switch {
+		case strings.EqualFold(name, "Host"):
+			req.Host = value
+		case value == "":
+			req.Header.Del(name)
+		default:
+			req.Header.Set(name, value)
+		}
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -152,25 +162,29 @@ func (c *Client) Token(t *testing.T, name string) string {
 	var out struct {
 		Token string `json:"token"`
 	}
-	r.JSON(t, "", &out)
+	r.Decode(t, &out)
 	if !strings.HasPrefix(out.Token, "sk_") {
 		t.Fatalf("POST /api/tokens: unexpected token %q", Redact(out.Token))
 	}
 	return out.Token
 }
 
-// JSON decodes the body into into and, when schema is not empty, validates the body against
-// compat/schemas/<schema>.json.
+// JSON validates the body against compat/schemas/<schema>.json and decodes it into into. The
+// schema name must not be empty; use Decode for the rare unvalidated body.
 func (r Response) JSON(t *testing.T, schema string, into any) {
 	t.Helper()
-	if schema != "" {
-		if err := validateSchema(schema, r.Body); err != nil {
-			t.Fatalf("response does not match schema %s: %v", schema, err)
-		}
+	if schema == "" {
+		t.Fatal("Response.JSON needs a schema name; use Decode for an unvalidated body")
 	}
-	if into == nil {
-		return
+	if err := validateSchema(schema, r.Body); err != nil {
+		t.Fatalf("response does not match schema %s: %v", schema, err)
 	}
+	r.Decode(t, into)
+}
+
+// Decode unmarshals the body into into without schema validation.
+func (r Response) Decode(t *testing.T, into any) {
+	t.Helper()
 	if err := json.Unmarshal(r.Body, into); err != nil {
 		t.Fatalf("decode response (status %d): %v", r.Status, err)
 	}

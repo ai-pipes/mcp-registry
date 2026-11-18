@@ -5,6 +5,7 @@ package harness
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -23,17 +24,28 @@ func Eventually(t *testing.T, what string, f func() bool) {
 
 func eventuallyWithin(t testing.TB, what string, limit time.Duration, f func() bool) {
 	t.Helper()
+	if err := waitFor(what, limit, func() (bool, error) { return f(), nil }); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// waitFor polls f every 100 ms until it reports done, returns an error, or the limit passes.
+func waitFor(what string, limit time.Duration, f func() (bool, error)) error {
 	deadline := time.NewTimer(limit)
 	defer deadline.Stop()
 	tick := time.NewTicker(pollStep)
 	defer tick.Stop()
 	for {
-		if f() {
-			return
+		done, err := f()
+		if err != nil {
+			return fmt.Errorf("waiting for %s: %w", what, err)
+		}
+		if done {
+			return nil
 		}
 		select {
 		case <-deadline.C:
-			t.Fatalf("timed out after %s waiting for %s", limit, what)
+			return fmt.Errorf("timed out after %s waiting for %s", limit, what)
 		case <-tick.C:
 		}
 	}
