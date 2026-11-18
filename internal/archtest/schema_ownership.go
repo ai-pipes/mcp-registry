@@ -25,10 +25,16 @@ type Violation struct {
 	Import string // forbidden import path (ImpureDomainImports)
 }
 
-var schemaRef = regexp.MustCompile(`\b(identity|catalog|connections|search|gateway)\.[a-z_]+\b`)
+var (
+	schemaRef = regexp.MustCompile(`\b(identity|catalog|connections|search|gateway)\.[a-z_]+\b`)
+	// sqlWord marks a literal as SQL. Without it `catalog.tools_changed` (an event name) would
+	// look like a table of the catalog schema.
+	sqlWord = regexp.MustCompile(`(?i)\b(select|insert|update|delete|from|join|into)\b`)
+)
 
 // ForeignSchemaRefs reports string literals in non-test Go files of every module under
-// modulesDir that mention a table of another module's database schema (`<schema>.<table>`).
+// modulesDir that look like SQL (contain select, insert, update, delete, from, join or into as a
+// word) and mention a table of another module's database schema (`<schema>.<table>`).
 // Literals joined with `+` are folded first, so a reference cannot hide in a concatenation.
 func ForeignSchemaRefs(modulesDir string) ([]Violation, error) {
 	var out []Violation
@@ -42,6 +48,9 @@ func ForeignSchemaRefs(modulesDir string) ([]Violation, error) {
 			return fmt.Errorf("parse %s: %w", path, err)
 		}
 		scan := func(node ast.Node, text string) {
+			if !sqlWord.MatchString(text) {
+				return
+			}
 			for _, m := range schemaRef.FindAllStringSubmatch(text, -1) {
 				if m[1] == module {
 					continue

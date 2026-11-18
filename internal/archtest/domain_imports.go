@@ -11,9 +11,17 @@ import (
 
 // impureStd lists standard-library packages (and their subtrees) a domain package must not
 // import: network, process and file-system access, and database drivers' entry point.
-var impureStd = []string{"net", "os", "database/sql", "io/fs", "syscall"}
+var impureStd = []string{"net", "os", "database/sql", "io/fs", "io/ioutil", "syscall"}
+
+// pureStd are subtrees of impureStd that are plain value packages.
+var pureStd = []string{"net/url", "net/netip"}
 
 func isImpure(path string) bool {
+	for _, p := range pureStd {
+		if path == p || strings.HasPrefix(path, p+"/") {
+			return false
+		}
+	}
 	for _, p := range impureStd {
 		if path == p || strings.HasPrefix(path, p+"/") {
 			return true

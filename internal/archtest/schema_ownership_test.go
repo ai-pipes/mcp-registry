@@ -43,3 +43,17 @@ func TestRepositoryDomainsAreStdlibPure(t *testing.T) {
 		t.Fatalf("got %+v err=%v", v, err)
 	}
 }
+
+func TestEventNamesAreNotSchemaReferences(t *testing.T) {
+	v, err := ForeignSchemaRefs("testdata/schema-events")
+	if err != nil || len(v) != 0 {
+		t.Fatalf("got %+v err=%v", v, err)
+	}
+}
+
+func TestIoutilInDomainIsReported(t *testing.T) {
+	v, err := ImpureDomainImports("testdata/domain-stdlib-ioutil")
+	if err != nil || len(v) != 1 || v[0].Import != "io/ioutil" {
+		t.Fatalf("got %+v err=%v", v, err)
+	}
+}

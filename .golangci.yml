@@ -43,11 +43,25 @@ linters:
               desc: deps-only-in-infra, the MCP SDK is allowed in infra and http only
   exclusions:
     rules:
-      # Tests run pinned tools and write fixtures into temp directories; the paths and
-      # commands are constants of the repository, not input.
-      - path: _test\.go
+      # internal/archtest runs the pinned linters and writes fixtures into temp directories.
+      # Commands, paths and modes are constants of the repository, not input. Only these
+      # rules, only this directory; gosec stays on for every other test.
+      - path: internal/archtest/
         linters:
           - gosec
+        text: 'G204: ' # subprocess launched with variable arguments (go run, make)
+      - path: internal/archtest/
+        linters:
+          - gosec
+        text: 'G301: ' # fixture directories are created with 0o755 in a temp dir
+      - path: internal/archtest/
+        linters:
+          - gosec
+        text: 'G304: ' # fixture and config files are read by computed path
+      - path: internal/archtest/
+        linters:
+          - gosec
+        text: 'G306: ' # fixture files are written with 0o644 in a temp dir
 formatters:
   enable:
     - gofumpt
