@@ -797,3 +797,42 @@ func TestUpstreamSetRequireHeaderChangesTheCheckAndSurvivesReset(t *testing.T) {
 		t.Fatal("an empty name lifts the requirement")
 	}
 }
+
+func TestOAuthProviderHandsOutRecordsEveryTokenAndDropClosesTheConnection(t *testing.T) {
+	p := fakes.StartOAuthProvider(t)
+	r0 := issueRefresh(t, p)
+	issued := p.Issued()[0]
+	p.Script(fakes.Ok{AccessToken: "acc-1", RefreshToken: "ref-1"}, fakes.Drop{}, fakes.Error{Status: 503, Code: "x"})
+	if status, _ := refresh(t, p, r0); status != 200 {
+		t.Fatalf("scripted refresh: %d", status)
+	}
+	// Drop: the client gets no HTTP answer at all.
+	basic := base64.StdEncoding.EncodeToString([]byte(url.QueryEscape(p.ClientID) + ":" + url.QueryEscape(p.ClientSecret)))
+	req, err := http.NewRequestWithContext(context.Background(), "POST", p.TokenURL, strings.NewReader("grant_type=refresh_token&refresh_token=ref-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Basic "+basic)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if resp, err := localClient().Do(req); err == nil {
+		_ = resp.Body.Close()
+		t.Fatalf("a dropped connection must not answer, got %d", resp.StatusCode)
+	}
+	// The dropped request was recorded, and the next step is still queued.
+	if reqs := p.Requests(); len(reqs) != 3 {
+		t.Fatalf("requests: %d, want 3 (code, refresh, dropped refresh)", len(reqs))
+	}
+	if status, _ := refresh(t, p, "ref-1"); status != 503 {
+		t.Fatalf("the step after Drop: %d", status)
+	}
+	got := p.HandedOut()
+	want := []string{issued.AccessToken, issued.RefreshToken, "acc-1", "ref-1"}
+	if len(got) != len(want) {
+		t.Fatalf("handed out %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("handed out %v, want %v", got, want)
+		}
+	}
+}

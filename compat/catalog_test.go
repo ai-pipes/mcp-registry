@@ -40,7 +40,6 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -1256,7 +1255,7 @@ func catalogGoldenCase(t *testing.T, name string, r harness.Response, wantStatus
 	}
 	g := golden{Status: r.Status, Code: e.Error.Code, Message: &e.Error.Message}
 	if e.Error.Code == "invalid_request" && e.Error.Message != "body is not valid JSON" {
-		if m := catalogZodPath.FindStringSubmatch(e.Error.Message); m != nil {
+		if m := zodBodyPath.FindStringSubmatch(e.Error.Message); m != nil {
 			g.Path = m[1]
 		}
 		g.Message = nil
@@ -1267,9 +1266,6 @@ func catalogGoldenCase(t *testing.T, name string, r harness.Response, wantStatus
 	}
 	harness.Golden(t, "validation/"+name+".json", append(doc, '\n'))
 }
-
-// catalogZodPath is the "path: " prefix of a zod body error (the dotted path of the first issue).
-var catalogZodPath = regexp.MustCompile(`^([\w.]+): `)
 
 // TestCatalogValidation records every refusal the server-administration forms can provoke under
 // compat/golden/validation. The comparison rule (zod wording not compared, domain messages exact)

@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -192,6 +193,28 @@ func auditWhere(entries []auditEntry, action string, keep func(auditEntry) bool)
 		}
 	}
 	return out
+}
+
+// zodBodyPath is the "path: " prefix of a zod body error (the dotted path of the first issue).
+var zodBodyPath = regexp.MustCompile(`^([\w.]+): `)
+
+// expectZodBodyError checks a refusal that zod produces while parsing a request body: the status,
+// error.code "invalid_request" and the path the message starts with. The wording after the path
+// and the choice of the first issue are zod v4's and are not compared (see
+// compat/golden/validation/README.md); a domain error keeps its exact message instead.
+func expectZodBodyError(t *testing.T, what string, r harness.Response, status int, path string) {
+	t.Helper()
+	if r.Status != status {
+		t.Fatalf("%s: status %d, want %d (body %.300s)", what, r.Status, status, r.Body)
+	}
+	var e struct {
+		Error struct{ Code, Message string } `json:"error"`
+	}
+	r.JSON(t, "ErrorBody", &e)
+	m := zodBodyPath.FindStringSubmatch(e.Error.Message)
+	if e.Error.Code != "invalid_request" || m == nil || m[1] != path {
+		t.Fatalf("%s: error %q with message path %v, want invalid_request at %q", what, e.Error.Code, m, path)
+	}
 }
 
 func ptrIs(p *string, want string) bool { return p != nil && *p == want }

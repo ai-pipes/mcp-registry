@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// TokenStep is one scripted answer of the token endpoint: Ok, Error or Hang.
+// TokenStep is one scripted answer of the token endpoint: Ok, Error, Hang or Drop.
 type TokenStep interface{ tokenStep() }
 
 // Ok is a successful token response. Empty fields get defaults: a fresh access token, token type
@@ -33,6 +33,10 @@ type Error struct {
 // Hang never answers; the wait ends when the caller gives up or the test ends.
 type Hang struct{}
 
+// Drop closes the connection without any answer, as a network failure does.
+type Drop struct{}
+
+func (Drop) tokenStep()  {}
 func (Ok) tokenStep()    {}
 func (Error) tokenStep() {}
 func (Hang) tokenStep()  {}
@@ -89,6 +93,7 @@ type OAuthProvider struct {
 	attempts   []RevokeAttempt
 	authorizes []url.Values
 	issued     []IssuedTokens
+	handed     []string
 	refreshLag time.Duration
 	grants     map[string]oauthGrant
 	refreshes  map[string]bool
@@ -156,6 +161,15 @@ func (p *OAuthProvider) Issued() []IssuedTokens {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return append([]IssuedTokens(nil), p.issued...)
+}
+
+// HandedOut returns every access and refresh token the provider ever put into a successful token
+// response (code exchanges and refreshes, scripted or not), in order. A test uses it to look for
+// leaks of any token, including those of refreshes.
+func (p *OAuthProvider) HandedOut() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]string(nil), p.handed...)
 }
 
 // SetRefreshDelay holds the answer of every refresh_token request that passed the provider's own
@@ -252,6 +266,7 @@ func (p *OAuthProvider) codeGrant(w http.ResponseWriter, form url.Values) {
 	p.mu.Lock()
 	p.refreshes[refresh] = true
 	p.issued = append(p.issued, IssuedTokens{AccessToken: access, RefreshToken: refresh})
+	p.handed = append(p.handed, access, refresh)
 	p.mu.Unlock()
 	writeJSON(w, http.StatusOK, tokenBody(Ok{AccessToken: access, RefreshToken: refresh}))
 }
@@ -299,11 +314,35 @@ func (p *OAuthProvider) refreshGrant(w http.ResponseWriter, r *http.Request, for
 		case <-r.Context().Done():
 		case <-p.stopped:
 		}
+	case Drop:
+		conn, _, err := http.NewResponseController(w).Hijack()
+		if err == nil {
+			_ = conn.Close()
+		}
 	case Ok:
-		writeJSON(w, http.StatusOK, tokenBody(s))
+		p.hand(writeToken(w, s))
 	default:
-		writeJSON(w, http.StatusOK, tokenBody(Ok{}))
+		p.hand(writeToken(w, Ok{}))
 	}
+}
+
+// writeToken sends a successful token response and returns the tokens it carried.
+func writeToken(w http.ResponseWriter, o Ok) []string {
+	body := tokenBody(o)
+	writeJSON(w, http.StatusOK, body)
+	var out []string
+	for _, k := range []string{"access_token", "refresh_token"} {
+		if v, ok := body[k].(string); ok {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+func (p *OAuthProvider) hand(tokens []string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.handed = append(p.handed, tokens...)
 }
 
 func tokenBody(o Ok) map[string]any {
