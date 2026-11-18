@@ -59,14 +59,15 @@ type FakeIdP struct { //nolint:revive // the name is fixed by the suite interfac
 	ClientID     string
 	ClientSecret string
 
-	mu         sync.Mutex
-	key        *ecdsa.PrivateKey
-	claims     Claims
-	down       bool
-	tokenCalls int
-	grants     map[string]idpGrant
-	access     map[string]Claims
-	authorizes []url.Values
+	mu           sync.Mutex
+	key          *ecdsa.PrivateKey
+	claims       Claims
+	down         bool
+	userinfoDown bool
+	tokenCalls   int
+	grants       map[string]idpGrant
+	access       map[string]Claims
+	authorizes   []url.Values
 }
 
 type idpGrant struct {
@@ -119,6 +120,14 @@ func (p *FakeIdP) Down(down bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.down = down
+}
+
+// UserInfoDown makes the UserInfo endpoint answer 503 (and ends it with false); the token
+// endpoint and discovery keep working.
+func (p *FakeIdP) UserInfoDown(down bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.userinfoDown = down
 }
 
 // TokenRequests returns how many requests the token endpoint received, including refused ones.
@@ -251,6 +260,13 @@ func (p *FakeIdP) token(w http.ResponseWriter, r *http.Request) {
 }
 
 func (p *FakeIdP) userinfo(w http.ResponseWriter, r *http.Request) {
+	p.mu.Lock()
+	failing := p.userinfoDown
+	p.mu.Unlock()
+	if failing {
+		http.Error(w, "unavailable", http.StatusServiceUnavailable)
+		return
+	}
 	token, _ := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 	p.mu.Lock()
 	c, ok := p.access[token]

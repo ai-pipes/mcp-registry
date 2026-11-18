@@ -469,6 +469,23 @@ func TestIdPDownAnswers503(t *testing.T) {
 	}
 }
 
+func TestIdPUserInfoDown(t *testing.T) {
+	idp := fakes.StartIdP(t)
+	idp.NextLogin(fakes.Claims{Sub: "u-3", Name: "Eve", Groups: []string{"mcp-users"}, Where: fakes.InUserInfo})
+	_, access := login(t, idp, "verifier-verifier-verifier-verifier-1234", "n-3")
+	idp.UserInfoDown(true)
+	if status, _, _ := send(t, "GET", idp.Issuer+"/userinfo", "", "Authorization: Bearer "+access); status != 503 {
+		t.Fatalf("userinfo while down: %d", status)
+	}
+	if status, _, _ := send(t, "GET", idp.Issuer+"/.well-known/openid-configuration", ""); status != 200 {
+		t.Fatalf("discovery must keep working: %d", status)
+	}
+	idp.UserInfoDown(false)
+	if status, _, _ := send(t, "GET", idp.Issuer+"/userinfo", "", "Authorization: Bearer "+access); status != 200 {
+		t.Fatalf("userinfo after recovery: %d", status)
+	}
+}
+
 // --- OAuth provider ---
 
 func tokenCall(t *testing.T, p *fakes.OAuthProvider, form url.Values) (int, string) {
