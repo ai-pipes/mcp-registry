@@ -1,9 +1,6 @@
 {
   "status": 422,
-  "body": {
-    "error": {
-      "code": "invalid_request",
-      "message": "timeoutMs: Invalid input: expected int, received number"
-    }
-  }
+  "code": "invalid_request",
+  "path": "timeoutMs",
+  "message": null
 }

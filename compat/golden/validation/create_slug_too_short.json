@@ -1,9 +1,6 @@
 {
   "status": 422,
-  "body": {
-    "error": {
-      "code": "invalid_slug",
-      "message": "server slug must be 2-32 characters: lowercase letters, digits and dashes, starting with a letter"
-    }
-  }
+  "code": "invalid_slug",
+  "path": "",
+  "message": "server slug must be 2-32 characters: lowercase letters, digits and dashes, starting with a letter"
 }

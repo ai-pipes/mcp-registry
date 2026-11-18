@@ -1,9 +1,6 @@
 {
   "status": 422,
-  "body": {
-    "error": {
-      "code": "invalid_auth",
-      "message": "the openid scope is not supported for upstream OAuth"
-    }
-  }
+  "code": "invalid_auth",
+  "path": "",
+  "message": "the openid scope is not supported for upstream OAuth"
 }

@@ -47,14 +47,7 @@ export default defineConfig({
     },
   },
   lint: {
-    ignorePatterns: [
-      'dist/**',
-      'coverage/**',
-      'apps/server/test/architecture/fixtures/**',
-      // The reference-embedding generator embeds one text per call on purpose (the q8 model's
-      // dynamic activation scale depends on the batch) and measures each call.
-      'compat/golden/**',
-    ],
+    ignorePatterns: ['dist/**', 'coverage/**', 'apps/server/test/architecture/fixtures/**'],
     options: {
       typeAware: true,
       typeCheck: true,

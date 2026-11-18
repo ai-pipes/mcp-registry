@@ -1,6 +1,5 @@
 {
   "arch": "arm64",
-  "model": "Xenova/multilingual-e5-small",
   "queries": [
     {
       "query": "create an issue in the tracker",

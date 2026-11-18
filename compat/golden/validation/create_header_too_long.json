@@ -1,9 +1,6 @@
 {
   "status": 422,
-  "body": {
-    "error": {
-      "code": "invalid_request",
-      "message": "auth.header: Too big: expected string to have \u003c=100 characters"
-    }
-  }
+  "code": "invalid_request",
+  "path": "auth.header",
+  "message": null
 }

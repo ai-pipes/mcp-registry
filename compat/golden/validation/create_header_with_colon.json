@@ -1,9 +1,6 @@
 {
   "status": 422,
-  "body": {
-    "error": {
-      "code": "invalid_auth",
-      "message": "header name may contain letters, digits and dashes"
-    }
-  }
+  "code": "invalid_auth",
+  "path": "",
+  "message": "header name may contain letters, digits and dashes"
 }

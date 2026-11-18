@@ -1,9 +1,0 @@
-{
-  "status": 422,
-  "body": {
-    "error": {
-      "code": "invalid_request",
-      "message": "description: Invalid input: expected string, received undefined"
-    }
-  }
-}

@@ -1,9 +1,6 @@
 {
   "status": 422,
-  "body": {
-    "error": {
-      "code": "invalid_request",
-      "message": "auth.oauth.tokenUrl: Invalid URL"
-    }
-  }
+  "code": "invalid_request",
+  "path": "auth.oauth.tokenUrl",
+  "message": null
 }

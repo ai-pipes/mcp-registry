@@ -1,9 +1,6 @@
 {
   "status": 422,
-  "body": {
-    "error": {
-      "code": "invalid_request",
-      "message": "access.kind: Invalid discriminator value. Expected 'all' | 'groups'"
-    }
-  }
+  "code": "invalid_request",
+  "path": "access.kind",
+  "message": null
 }

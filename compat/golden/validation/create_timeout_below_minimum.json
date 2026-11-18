@@ -1,9 +1,6 @@
 {
   "status": 422,
-  "body": {
-    "error": {
-      "code": "invalid_request",
-      "message": "timeoutMs: Too small: expected number to be \u003e=1000"
-    }
-  }
+  "code": "invalid_request",
+  "path": "timeoutMs",
+  "message": null
 }

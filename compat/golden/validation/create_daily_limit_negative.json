@@ -1,9 +1,6 @@
 {
   "status": 422,
-  "body": {
-    "error": {
-      "code": "invalid_request",
-      "message": "dailyLimit: Too small: expected number to be \u003e=1"
-    }
-  }
+  "code": "invalid_request",
+  "path": "dailyLimit",
+  "message": null
 }

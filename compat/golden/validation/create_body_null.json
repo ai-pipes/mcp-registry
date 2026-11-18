@@ -1,9 +1,6 @@
 {
   "status": 422,
-  "body": {
-    "error": {
-      "code": "invalid_request",
-      "message": "Invalid input: expected object, received null"
-    }
-  }
+  "code": "invalid_request",
+  "path": "",
+  "message": null
 }

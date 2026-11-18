@@ -1,9 +1,6 @@
 {
   "status": 422,
-  "body": {
-    "error": {
-      "code": "invalid_request",
-      "message": "status: Invalid option: expected one of \"active\"|\"disabled\""
-    }
-  }
+  "code": "invalid_request",
+  "path": "status",
+  "message": null
 }

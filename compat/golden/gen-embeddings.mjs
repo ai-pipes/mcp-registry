@@ -32,14 +32,17 @@ texts.push('passage: ' + 'The quick brown fox jumps over the lazy dog. Быст�
 texts.push('query: ' + 'длинный запрос про репозиторий и задачи '.repeat(200));
 const rows = [];
 const lat = [];
-for (const text of texts) {
+// One text per call, strictly in order: the q8 model uses one dynamic activation scale per batch,
+// so batching would shift the vectors. A sequential reduce over promises, as migrate.ts does.
+await texts.reduce(async (prev, text) => {
+  await prev;
   const enc = ex.tokenizer([text], { padding: true, truncation: true });
   const ids = Array.from(enc.input_ids.data, (x) => Number(x));
   const t0 = performance.now();
   const o = await ex([text], { pooling: 'mean', normalize: true });
   lat.push(performance.now() - t0);
   rows.push({ text, ids, vec: o.tolist()[0] });
-}
+}, Promise.resolve());
 writeFileSync(out, JSON.stringify(rows));
 lat.sort((a, b) => a - b);
 console.log(`texts=${rows.length} p50=${lat[Math.floor(lat.length / 2)].toFixed(1)}ms p95=${lat[Math.floor(lat.length * 0.95)].toFixed(1)}ms rss=${(process.memoryUsage().rss / 1e6).toFixed(0)}MB maxTokens=${Math.max(...rows.map((r) => r.ids.length))}`);

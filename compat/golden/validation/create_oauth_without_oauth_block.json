@@ -1,9 +1,6 @@
 {
   "status": 422,
-  "body": {
-    "error": {
-      "code": "invalid_request",
-      "message": "auth.oauth: Invalid input: expected object, received undefined"
-    }
-  }
+  "code": "invalid_request",
+  "path": "auth.oauth",
+  "message": null
 }

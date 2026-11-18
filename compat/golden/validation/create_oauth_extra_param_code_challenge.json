@@ -1,9 +1,6 @@
 {
   "status": 422,
-  "body": {
-    "error": {
-      "code": "invalid_auth",
-      "message": "extra authorize parameter \"code_challenge\" is not allowed"
-    }
-  }
+  "code": "invalid_auth",
+  "path": "",
+  "message": "extra authorize parameter \"code_challenge\" is not allowed"
 }

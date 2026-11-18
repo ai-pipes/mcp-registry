@@ -1,9 +1,6 @@
 {
   "status": 422,
-  "body": {
-    "error": {
-      "code": "invalid_request",
-      "message": "auth.oauth.authorizeUrl: must be an http(s) URL"
-    }
-  }
+  "code": "invalid_request",
+  "path": "auth.oauth.authorizeUrl",
+  "message": null
 }

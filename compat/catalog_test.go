@@ -2,13 +2,15 @@
 
 package compat_test
 
-// Catalog, sync, upstream-client and search scenarios. The catalog is driven through REST
-// (/api/servers*, /api/catalog), search and the gateway through MCP (search_tools, describe_tool,
-// list_servers, call_tool), the index through SQL (search.documents) and the CLI (reindex).
+// Catalog scenarios: server administration over REST, sync, the upstream client as seen from the
+// outside, optimistic concurrency and the validation goldens. Search is in search_test.go; the
+// helpers prefixed catalog here are shared by both files.
 //
-// Two stacks: TestCatalogServers and TestCatalogUpstreamCalls share one with a small
-// UPSTREAM_MAX_RESPONSE_BYTES (the size limit is tested with 80 KB bodies instead of 20 MiB);
-// TestCatalogSearch has its own with the default limit, because the Gitea fixture is ~80 KB.
+// One stack with a small UPSTREAM_MAX_RESPONSE_BYTES (the size limit is tested with 80 KB bodies
+// instead of 20 MiB) serves TestCatalogServers, whose last subtest group ("upstream calls") is the
+// upstream client seen through call_tool; TestCatalogOptimisticConcurrency and
+// TestCatalogValidation use the shared stack. search_test.go starts one more stack (default limit,
+// the Gitea fixture is 80 KB). Three stacks in all.
 //
 // Source cases that are not ported (they need the app's internals, not its outside):
 //   - pg-catalog.int.test.ts "round-trips a server, including the sealed secret bytes" and
@@ -29,28 +31,16 @@ package compat_test
 //     equivalents (404) are ported.
 //   - mcp-upstream-client.int.test.ts "returns an image block byte for byte": the fake upstream
 //     has no image mode and the pass-through of results is a gateway scenario.
-//   - "a JSON-RPC internal error ... listTools is rejected too": the fake can only reject
-//     tools/call.
-//   - search.int.test.ts "embedder outages" (keeps text search working, the sweep fills the
-//     embeddings in later, skips a document marked as failed): the embedder cannot be made to
-//     fail from outside. Search over text-only documents is covered by the Go unit tests of
-//     milestone 4. "reindexAll rebuilds the index" is ported through the reindex command.
-//   - search.int.test.ts uses a bag-of-tokens fake embedder at similarity 0.2; the scenarios
-//     here use the real model and the default threshold, so their queries and expected values
-//     differ (stated at each case).
-//   - embedder.int.test.ts: the embedder itself; judged by compat/golden/embeddings-*.json in
-//     milestone 4.
+//   - "a JSON-RPC internal error ... is rejected too": its tools/call half is ported (-32603 in
+//     TestCatalogUpstreamCalls); the listTools half is not, the fake can only reject tools/call.
 
 import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
-	"math"
-	"os"
-	"path/filepath"
 	"reflect"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -305,15 +295,44 @@ func catalogSyncUser(t *testing.T, s *harness.Stack, slug string) string {
 	return *id
 }
 
-// catalogWaitDocs waits until search.documents holds exactly want rows for the server and every
-// one of them has an embedding, so a search assertion never races the indexer or the embedder.
+// catalogWaitDelivered waits until every event of the outbox has been delivered to its
+// subscribers (platform.outbox.processed_at is set). A search assertion that follows a change
+// which does not alter the number of documents (a changed description, a hide that is followed by
+// a sync, an access change) cannot use the row count as its signal: without this wait it could
+// run against the index as it was before the change, and a negative assertion would pass for the
+// wrong reason. The events of the change are already written when its API call returns.
+func catalogWaitDelivered(t *testing.T, s *harness.Stack) {
+	t.Helper()
+	harness.Eventually(t, "every outbox event to be delivered (platform.outbox.processed_at set)", func() bool {
+		var n int
+		err := s.DB.QueryRow(t.Context(), "select count(*) from platform.outbox where processed_at is null").Scan(&n)
+		return err == nil && n == 0
+	})
+}
+
+// catalogWaitDocs waits until the outbox is drained and search.documents holds exactly want rows
+// for the server, every one of them with an embedding, so a search assertion never races the
+// indexer or the embedder.
 func catalogWaitDocs(t *testing.T, s *harness.Stack, server string, want int) {
 	t.Helper()
-	var total, embedded int
+	catalogWaitDelivered(t, s)
 	harness.Eventually(t, fmt.Sprintf("%d embedded documents of %s in search.documents", want, server), func() bool {
+		var total, embedded int
 		err := s.DB.QueryRow(t.Context(), "select count(*), count(embedding) from search.documents where server = $1", server).Scan(&total, &embedded)
 		return err == nil && total == want && embedded == want
 	})
+}
+
+// catalogDescribed is the structured result of describe_tool.
+type catalogDescribed struct {
+	Tool         string          `json:"tool"`
+	Title        *string         `json:"title"`
+	Description  string          `json:"description"`
+	InputSchema  map[string]any  `json:"inputSchema"`
+	OutputSchema map[string]any  `json:"outputSchema"`
+	Annotations  map[string]bool `json:"annotations"`
+	Server       string          `json:"server"`
+	Connection   string          `json:"connection"`
 }
 
 // ---- MCP helpers ----
@@ -419,8 +438,11 @@ func catalogNotAvailable(ref string) string {
 }
 
 // catalogRaceWrite sends a write that reads the server first and writes it later while another
-// admin's change commits in between: a row lock holds the request's UPDATE until the other
-// change is in. It returns the request's answer.
+// admin's change commits in between. A transaction of the test holds the row lock; the request
+// is held at its write, recognised by the fact that some backend is blocked by the test's
+// transaction (pg_blocking_pids), not by any SQL text. Then the other change commits, bumping
+// the version column the optimistic check compares (catalog.servers.version, see CLAUDE.md
+// "Catalog and admin REST"), and the lock is released. It returns the request's answer.
 func catalogRaceWrite(t *testing.T, s *harness.Stack, slug string, send func() harness.Response) harness.Response {
 	t.Helper()
 	ctx := t.Context()
@@ -429,31 +451,50 @@ func catalogRaceWrite(t *testing.T, s *harness.Stack, slug string, send func() h
 		t.Fatal(err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }() // a no-op after Commit
+	var pid int
+	if err := tx.QueryRow(ctx, "select pg_backend_pid()").Scan(&pid); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := tx.Exec(ctx, "select 1 from catalog.servers where slug = $1 for update", slug); err != nil {
 		t.Fatal(err)
 	}
-	answer := make(chan harness.Response, 1)
-	go func() { answer <- send() }()
-	harness.Eventually(t, "the request to wait for the row lock of its UPDATE", func() bool {
-		var n int
-		err := s.DB.QueryRow(ctx, `select count(*) from pg_stat_activity
-			where wait_event_type = 'Lock' and query ilike 'update catalog.servers%'`).Scan(&n)
-		return err == nil && n > 0
-	})
-	// The other admin's change commits first: it bumps the version the request read.
-	if _, err := tx.Exec(ctx, "update catalog.servers set version = version + 1, description = 'theirs' where slug = $1", slug); err != nil {
-		t.Fatal(err)
+	// The request runs in this goroutine (Client.Do may fail the test); the other admin's change
+	// runs in a helper that only talks to the database and reports an error through the channel.
+	done := make(chan error, 1)
+	go func() {
+		tick := time.NewTicker(100 * time.Millisecond)
+		defer tick.Stop()
+		deadline := time.After(15 * time.Second)
+		for {
+			var n int
+			if err := s.DB.QueryRow(ctx, "select count(*) from pg_stat_activity where $1 = any(pg_blocking_pids(pid))", pid).Scan(&n); err != nil {
+				_ = tx.Rollback(ctx)
+				done <- err
+				return
+			}
+			if n > 0 {
+				break
+			}
+			select {
+			case <-tick.C:
+			case <-deadline:
+				_ = tx.Rollback(ctx) // let the request finish so that the test can fail with a message
+				done <- errors.New("no backend was ever blocked by the row lock: the request did not wait for it")
+				return
+			}
+		}
+		if _, err := tx.Exec(ctx, "update catalog.servers set version = version + 1, description = 'theirs' where slug = $1", slug); err != nil {
+			_ = tx.Rollback(ctx)
+			done <- err
+			return
+		}
+		done <- tx.Commit(ctx)
+	}()
+	r := send()
+	if err := <-done; err != nil {
+		t.Fatalf("the competing change: %v", err)
 	}
-	if err := tx.Commit(ctx); err != nil {
-		t.Fatal(err)
-	}
-	select {
-	case r := <-answer:
-		return r
-	case <-time.After(20 * time.Second):
-		t.Fatal("the request did not finish after the row lock was released")
-		return harness.Response{}
-	}
+	return r
 }
 
 // ---- TestCatalogServers ----
@@ -672,7 +713,7 @@ func TestCatalogServers(t *testing.T) {
 			t.Fatalf("PUT secret: %d %s", r.Status, r.Body)
 		}
 		up.Reset() // forget the requests made with the old secret
-		if res := catalogSyncOK(t, admin, slug); res.Added != 2 {
+		if res := catalogSyncOK(t, admin, slug); res != (catalogSyncResult{Added: 2}) {
 			t.Fatalf("sync with the right secret: %+v", res)
 		}
 		reqs := up.Requests()
@@ -786,7 +827,7 @@ func TestCatalogServers(t *testing.T) {
 		}
 
 		up.SetTools(fakes.Tools("a"))
-		if res := catalogSyncOK(t, admin, slug); res.Removed != 1 {
+		if res := catalogSyncOK(t, admin, slug); res != (catalogSyncResult{Changed: 1, Removed: 1}) { // a also reverts to its first description
 			t.Fatalf("a vanished tool: %+v", res)
 		}
 		_, tools := catalogTools(t, admin, slug)
@@ -794,7 +835,7 @@ func TestCatalogServers(t *testing.T) {
 			t.Fatalf("tools after the removal: %v", got)
 		}
 		up.SetTools(fakes.Tools("a", "drop"))
-		if res := catalogSyncOK(t, admin, slug); res.Added != 1 {
+		if res := catalogSyncOK(t, admin, slug); res != (catalogSyncResult{Added: 1}) {
 			t.Fatalf("the tool returns: %+v", res)
 		}
 		_, tools = catalogTools(t, admin, slug)
@@ -808,7 +849,7 @@ func TestCatalogServers(t *testing.T) {
 
 		// An upstream with no tools leaves the other server's tools alone.
 		up.SetTools(nil)
-		if res := catalogSyncOK(t, admin, slug); res.Removed != 2 {
+		if res := catalogSyncOK(t, admin, slug); res != (catalogSyncResult{Removed: 2}) {
 			t.Fatalf("empty snapshot: %+v", res)
 		}
 		if v := catalogGet(t, admin, nslug); v.ToolCount != 1 {
@@ -1106,31 +1147,21 @@ func TestCatalogServers(t *testing.T) {
 		catalogExpectError(t, "POST with a foreign Origin", admin.Do(t, "POST", "/api/servers", fakes.ServerInput(up, harness.Unique("csrf"), "none"), "Origin: http://evil.test"), 403, catalogCSRF)
 		catalogExpectError(t, "POST without Origin", admin.Do(t, "POST", "/api/servers", fakes.ServerInput(up, harness.Unique("csrf"), "none"), "Origin:"), 403, catalogCSRF)
 	})
+
+	t.Run("upstream calls", func(t *testing.T) { catalogUpstreamCalls(t, s, admin) })
 }
 
 // ---- optimistic concurrency ----
 
+// TestCatalogOptimisticConcurrency enforces optimistic concurrency as CLAUDE.md prescribes: a
+// write that was prepared from an older state of the server is refused with 409 server_conflict
+// and nothing of it is stored, never merged over the other change. Only the observable outcome
+// is asserted (the loser's status and error, the winner's data kept, no lost update).
 func TestCatalogOptimisticConcurrency(t *testing.T) {
 	s := harness.Shared(t)
 	admin := s.Admin(t)
 	up := fakes.StartUpstream(t, fakes.UpstreamOptions{Tools: fakes.Tools("a")})
 
-	version := func(t *testing.T, slug string) int {
-		t.Helper()
-		var v int
-		if err := s.DB.QueryRow(t.Context(), "select version from catalog.servers where slug = $1", slug).Scan(&v); err != nil {
-			t.Fatal(err)
-		}
-		return v
-	}
-	description := func(t *testing.T, slug string) string {
-		t.Helper()
-		var d string
-		if err := s.DB.QueryRow(t.Context(), "select description from catalog.servers where slug = $1", slug).Scan(&d); err != nil {
-			t.Fatal(err)
-		}
-		return d
-	}
 	secretBytes := func(t *testing.T, slug string) []byte {
 		t.Helper()
 		var b []byte
@@ -1159,16 +1190,12 @@ func TestCatalogOptimisticConcurrency(t *testing.T) {
 			slug := harness.Unique("race")
 			v := catalogRegister(t, admin, fakes.ServerInput(up, slug, "shared_secret", fakes.WithSecret("orig"), catalogWithDescription("original")))
 			secretBefore := secretBytes(t, slug)
-			versionBefore := version(t, slug)
 
 			r := catalogRaceWrite(t, s, slug, func() harness.Response { return w.send(slug, v) })
 			catalogExpectError(t, w.name+" racing a change", r, 409, fmt.Sprintf("server_conflict|server %q was changed meanwhile; reload it and try again", slug))
 			// Nothing of the losing request was written; the other admin's change stands.
-			if got := description(t, slug); got != "theirs" {
-				t.Fatalf("description %q: the refused request wrote, or the other change was lost", got)
-			}
-			if got := version(t, slug); got != versionBefore+1 {
-				t.Fatalf("version %d, want %d (only the other change counts)", got, versionBefore+1)
+			if got := catalogGet(t, admin, slug); got.Description != "theirs" || got.Name != slug {
+				t.Fatalf("description %q name %q: the refused request wrote, or the other change was lost", got.Description, got.Name)
 			}
 			if !bytes.Equal(secretBytes(t, slug), secretBefore) {
 				t.Fatal("the secret changed although the request was refused")
@@ -1177,35 +1204,41 @@ func TestCatalogOptimisticConcurrency(t *testing.T) {
 				t.Fatalf("status %q after a refused change", got.Status)
 			}
 
-			// Control: with no change in between the same request goes through and bumps the version.
+			// Control: from the current state the same request goes through (nothing in between).
 			fresh := catalogGet(t, admin, slug)
 			if r := w.send(slug, fresh); r.Status != 200 && r.Status != 204 {
 				t.Fatalf("the same request without a race: %d %s", r.Status, r.Body)
-			}
-			if got := version(t, slug); got != versionBefore+2 {
-				t.Fatalf("version %d after a clean write, want %d", got, versionBefore+2)
 			}
 		})
 	}
 
 	t.Run("the version is not part of the API", func(t *testing.T) {
 		slug := harness.Unique("ver")
-		v := catalogRegister(t, admin, fakes.ServerInput(up, slug, "none"))
-		// ServerView is validated against a strict schema: a `version` field would have failed it.
-		body := catalogPutBody(v, func(b map[string]any) { b["version"] = 7 })
-		if r := admin.Do(t, "PUT", "/api/servers/"+slug, body); r.Status != 200 {
-			t.Fatalf("PUT with an unknown version field: %d %s", r.Status, r.Body)
-		}
-		if got := version(t, slug); got == 7 {
-			t.Fatal("a version sent by the client was stored")
+		catalogRegister(t, admin, fakes.ServerInput(up, slug, "none"))
+		// A read-modify-write cycle carries no version: the view has none (the strict ServerView
+		// schema would reject one) and a PUT built from it is all the server needs.
+		r := admin.Do(t, "GET", "/api/servers/"+slug, nil)
+		var raw map[string]any
+		r.JSON(t, "ServerView", &raw)
+		if _, ok := raw["version"]; ok {
+			t.Fatalf("ServerView carries a version: %v", raw)
 		}
 	})
 }
 
 // ---- validation goldens ----
 
-// catalogGoldenCase records the status and body of a refused request under
-// compat/golden/validation/<name>.json.
+// catalogGoldenCase records a refused request under compat/golden/validation/<name>.json as
+// {"status", "code", "path", "message"}. The rule (see also compat/golden/validation/README.md):
+//
+//   - A 422 invalid_request whose body comes from zod parsing of the request body is recorded
+//     with its status, code and the field path the message starts with ("auth.oauth.clientId: ..."
+//     gives "auth.oauth.clientId", none gives ""), and "message": null, which the comparison
+//     treats as "not compared". The wording and the choice of the first issue are zod v4's and
+//     concern inputs the web form already prevents client-side; a new server need not copy them.
+//   - Every other refusal keeps its exact message: the domain errors the web form maps to fields
+//     or shows verbatim (invalid_slug, invalid_auth, server_exists, server_conflict, ...) and the
+//     one invalid_request that is not zod's, "body is not valid JSON".
 func catalogGoldenCase(t *testing.T, name string, r harness.Response, wantStatus int) {
 	t.Helper()
 	if r.Status != wantStatus {
@@ -1215,16 +1248,32 @@ func catalogGoldenCase(t *testing.T, name string, r harness.Response, wantStatus
 		Error struct{ Code, Message string } `json:"error"`
 	}
 	r.JSON(t, "ErrorBody", &e)
-	doc, err := json.MarshalIndent(struct {
-		Status int             `json:"status"`
-		Body   json.RawMessage `json:"body"`
-	}{r.Status, r.Body}, "", "  ")
+	type golden struct {
+		Status  int     `json:"status"`
+		Code    string  `json:"code"`
+		Path    string  `json:"path"`
+		Message *string `json:"message"`
+	}
+	g := golden{Status: r.Status, Code: e.Error.Code, Message: &e.Error.Message}
+	if e.Error.Code == "invalid_request" && e.Error.Message != "body is not valid JSON" {
+		if m := catalogZodPath.FindStringSubmatch(e.Error.Message); m != nil {
+			g.Path = m[1]
+		}
+		g.Message = nil
+	}
+	doc, err := json.MarshalIndent(g, "", "  ")
 	if err != nil {
 		t.Fatal(err)
 	}
 	harness.Golden(t, "validation/"+name+".json", append(doc, '\n'))
 }
 
+// catalogZodPath is the "path: " prefix of a zod body error (the dotted path of the first issue).
+var catalogZodPath = regexp.MustCompile(`^([\w.]+): `)
+
+// TestCatalogValidation records every refusal the server-administration forms can provoke under
+// compat/golden/validation. The comparison rule (zod wording not compared, domain messages exact)
+// is documented at catalogGoldenCase.
 func TestCatalogValidation(t *testing.T) {
 	s := harness.Shared(t)
 	admin := s.Admin(t)
@@ -1319,14 +1368,14 @@ func TestCatalogValidation(t *testing.T) {
 	}
 	// Bodies that are not a server at all.
 	for name, body := range map[string]string{
-		"body_not_json":        "{bad",
-		"body_empty_object":    `{}`,
-		"body_missing_name":    `{"slug":"abc"}`,
-		"body_array":           `[]`,
-		"body_null":            `null`,
-		"body_unknown_auth":    `{"slug":"abc","name":"x","description":"","url":"http://x.example","auth":{"kind":"none"},"access":{"kind":"all"},"timeoutMs":"x"}`,
-		"body_access_missing":  `{"slug":"abc","name":"x","description":"","url":"http://x.example","auth":{"kind":"none"}}`,
-		"body_description_nil": `{"slug":"abc","name":"x","url":"http://x.example","auth":{"kind":"none"},"access":{"kind":"all"}}`,
+		"body_not_json":             "{bad",
+		"body_empty_object":         `{}`,
+		"body_missing_name":         `{"slug":"abc"}`,
+		"body_array":                `[]`,
+		"body_null":                 `null`,
+		"body_timeout_not_a_number": `{"slug":"abc","name":"x","description":"","url":"http://x.example","auth":{"kind":"none"},"access":{"kind":"all"},"timeoutMs":"x"}`,
+		"body_access_missing":       `{"slug":"abc","name":"x","description":"","url":"http://x.example","auth":{"kind":"none"}}`,
+		"body_description_missing":  `{"slug":"abc","name":"x","url":"http://x.example","auth":{"kind":"none"},"access":{"kind":"all"}}`,
 	} {
 		t.Run("create_"+name, func(t *testing.T) {
 			catalogGoldenCase(t, "create_"+name, admin.Do(t, "POST", "/api/servers", body), 422)
@@ -1410,10 +1459,10 @@ func TestCatalogValidation(t *testing.T) {
 
 // ---- the upstream client seen through call_tool ----
 
-func TestCatalogUpstreamCalls(t *testing.T) {
+// catalogUpstreamCalls is the "upstream client" group of TestCatalogServers: the same stack
+// (small UPSTREAM_MAX_RESPONSE_BYTES) and admin, call_tool as the way to reach tools/call.
+func catalogUpstreamCalls(t *testing.T, s *harness.Stack, admin *harness.Client) {
 	const secret = "k-live-7f3a9c" //nolint:gosec // G101: a made-up secret that the test hunts for
-	s := catalogStackSmallLimit(t)
-	admin := s.Admin(t)
 	c := s.MCP(t, admin.Token(t, "catalog-calls"))
 	other := fakes.StartUpstream(t, fakes.UpstreamOptions{Tools: fakes.Tools("z")})
 	up := fakes.StartUpstream(t, fakes.UpstreamOptions{Tools: fakes.Tools("echo")})
@@ -1492,8 +1541,10 @@ func TestCatalogUpstreamCalls(t *testing.T) {
 		{"HTTP 500", func() { up.FailWith(500) }, slug + " is unavailable.", "transport_error", 0},
 		{"slower than timeoutMs", func() { up.Delay(5 * time.Second) }, slug + " did not respond in 1 s.", "timeout", 4 * time.Second},
 		{"a Content-Length above the limit", func() { up.RespondBytes(100_000) }, slug + " returned a response larger than 0.06 MiB.", "transport_error", 0},
-		{"a streamed answer above the limit", func() { up.RespondChunked(100_000) }, slug + " returned a response larger than 0.06 MiB.", "transport_error", 0},
-		{"a JSON-RPC error", func() { up.RejectCalls(-32602, "Invalid params: owner is required") }, slug + " rejected the call (JSON-RPC -32602): Invalid params: owner is required", "upstream_error", 0},
+		// The limit is hit while the answer streams, long before the 1 s timeout: half of it is a generous ceiling.
+		{"a streamed answer above the limit", func() { up.RespondChunked(100_000) }, slug + " returned a response larger than 0.06 MiB.", "transport_error", 500 * time.Millisecond},
+		{"a JSON-RPC invalid params error", func() { up.RejectCalls(-32602, "Invalid params: owner is required") }, slug + " rejected the call (JSON-RPC -32602): Invalid params: owner is required", "upstream_error", 0},
+		{"a JSON-RPC internal error", func() { up.RejectCalls(-32603, "repository not found") }, slug + " rejected the call (JSON-RPC -32603): repository not found", "upstream_error", 0},
 		{"a redirect is not followed", func() { up.RedirectTo(other.URL) }, slug + " is unavailable.", "transport_error", 0},
 	}
 	for _, f := range failures {
@@ -1507,10 +1558,11 @@ func TestCatalogUpstreamCalls(t *testing.T) {
 				t.Fatalf("isError %v, text %q, want an error with %q", res.IsError, catalogText(res), f.text)
 			}
 			if f.within > 0 && time.Since(started) > f.within {
-				t.Fatalf("the call took %s, timeoutMs is 1000", time.Since(started))
+				t.Fatalf("the call took %s, more than the allowed %s (timeoutMs is 1000)", time.Since(started), f.within)
 			}
-			if got := outcomes(); got[len(got)-1] != f.outcome {
-				t.Fatalf("call log outcome %q, want %q (all: %v)", got[len(got)-1], f.outcome, got)
+			got := outcomes()
+			if len(got) == 0 || got[len(got)-1] != f.outcome {
+				t.Fatalf("call log outcomes %v: the newest must be %q", got, f.outcome)
 			}
 			if n := len(other.Requests()); n != 0 {
 				t.Fatalf("the redirect target received %d request(s)", n)
@@ -1543,609 +1595,4 @@ func TestCatalogUpstreamCalls(t *testing.T) {
 			t.Fatal("a secret leaked into an error text or the app log")
 		}
 	})
-}
-
-// ---- search ----
-
-// catalogGoldenQuery is one recorded search.
-type catalogGoldenQuery struct {
-	Query   string    `json:"query"`
-	Servers []string  `json:"servers"`
-	Limit   int       `json:"limit"`
-	Refs    []string  `json:"refs"`
-	Scores  []float64 `json:"scores"`
-}
-
-type catalogGoldenFile struct {
-	Arch    string               `json:"arch"`
-	Model   string               `json:"model"`
-	Queries []catalogGoldenQuery `json:"queries"`
-}
-
-func catalogUpdating() bool {
-	f := flag.Lookup("update")
-	return f != nil && f.Value.String() == "true"
-}
-
-// catalogSearchQueries is the fixed list recorded in compat/golden/search-<arch>.json.
-var catalogSearchQueries = []struct {
-	query    string
-	relevant string // the ref that must rank first, "" for none
-	nothing  bool   // must return no tool at all
-}{
-	{"create an issue in the tracker", "youtrack.create_issue", false},
-	{"list pull requests in a repository", "gitea.list_pull_requests", false},
-	{"add a comment to an issue", "", false},
-	{"find issues by a search query", "", false},
-	{"create a new branch", "", false},
-	{"get the contents of a file in a repository", "", false},
-	{"создать задачу в трекере", "", false},
-	{"найти задачу по номеру", "", false},
-	{"показать список pull request", "", false},
-	{"создать ветку в репозитории", "", false},
-	{"issue", "", false},
-	{"comment", "", false},
-	{"search", "", false},
-	{"weather in Berlin", "", true},
-	{"book a flight to Tokyo", "", true},
-	{"dollar exchange rate", "", true},
-	{"borscht recipe", "", true},
-	{"прогноз погоды на завтра", "", true},
-}
-
-func catalogGoldenPath(arch string) string { return filepath.Join("golden", "search-"+arch+".json") }
-
-func TestCatalogSearch(t *testing.T) {
-	s := harness.Start(t, harness.Options{})
-	admin := s.Admin(t)
-	c := s.MCP(t, admin.Token(t, "catalog-search"))
-
-	gitea := fakes.StartUpstream(t, fakes.UpstreamOptions{Tools: fakes.FixtureTools("gitea")})
-	youtrack := fakes.StartUpstream(t, fakes.UpstreamOptions{Tools: fakes.FixtureTools("youtrack")})
-	catalogRegister(t, admin, fakes.ServerInput(gitea, "gitea", "none", fakes.WithName("Gitea"), catalogWithDescription("Git hosting: repositories, pull requests")))
-	catalogRegister(t, admin, fakes.ServerInput(youtrack, "youtrack", "none", fakes.WithName("YouTrack"), catalogWithDescription("Issue tracker")))
-	catalogWaitDocs(t, s, "gitea", 61)
-	catalogWaitDocs(t, s, "youtrack", 23)
-	both := []string{"gitea", "youtrack"}
-
-	t.Run("the index follows the catalog", func(t *testing.T) {
-		var total, embedded int
-		if err := s.DB.QueryRow(t.Context(), "select count(*), count(embedding) from search.documents").Scan(&total, &embedded); err != nil {
-			t.Fatal(err)
-		}
-		if total != 84 || embedded != 84 {
-			t.Fatalf("search.documents: %d rows, %d embedded, want 84 one per visible tool", total, embedded)
-		}
-	})
-
-	t.Run("the recorded queries", func(t *testing.T) {
-		got := catalogGoldenFile{Arch: s.Arch, Model: "Xenova/multilingual-e5-small"}
-		for _, q := range catalogSearchQueries {
-			hits := catalogSearch(t, c, q.query, 10, both)
-			rec := catalogGoldenQuery{Query: q.query, Servers: both, Limit: 10, Refs: catalogHitRefs(hits), Scores: make([]float64, 0, len(hits))}
-			for _, h := range hits {
-				rec.Scores = append(rec.Scores, h.Score)
-			}
-			got.Queries = append(got.Queries, rec)
-
-			// Properties that do not depend on the golden.
-			if len(hits) > 10 {
-				t.Errorf("%q: %d hits, limit 10", q.query, len(hits))
-			}
-			for i, h := range hits {
-				if h.Score <= 0 || h.Score > 1 {
-					t.Errorf("%q: score %v of %s is outside (0, 1]", q.query, h.Score, h.Tool)
-				}
-				if i > 0 && h.Score > hits[i-1].Score {
-					t.Errorf("%q: scores are not sorted descending at %d: %v", q.query, i, rec.Scores)
-				}
-				if h.Server != strings.SplitN(h.Tool, ".", 2)[0] || (h.Server != "gitea" && h.Server != "youtrack") {
-					t.Errorf("%q: hit %s from server %q", q.query, h.Tool, h.Server)
-				}
-			}
-			if q.nothing && len(hits) != 0 {
-				t.Errorf("%q must find nothing, got %v", q.query, rec.Refs)
-			}
-			if q.relevant != "" && (len(hits) == 0 || hits[0].Tool != q.relevant) {
-				t.Errorf("%q: first hit %v, want %s", q.query, rec.Refs, q.relevant)
-			}
-		}
-		if t.Failed() {
-			return
-		}
-		if len(got.Queries) < 12 {
-			t.Fatalf("only %d queries", len(got.Queries))
-		}
-		doc, err := json.MarshalIndent(got, "", "  ")
-		if err != nil {
-			t.Fatal(err)
-		}
-		name := filepath.Base(catalogGoldenPath(s.Arch))
-		if catalogUpdating() {
-			harness.Golden(t, name, append(doc, '\n')) // writes, and refuses without COMPAT_REFERENCE=1
-			return
-		}
-		raw, err := os.ReadFile(catalogGoldenPath(s.Arch))
-		if errors.Is(err, os.ErrNotExist) {
-			t.Fatalf("there is no golden %s for the architecture %s of the image under test: record it with COMPAT_REFERENCE=1 and -update on a %s runner against the reference image", name, s.Arch, s.Arch)
-		}
-		if err != nil {
-			t.Fatal(err)
-		}
-		var want catalogGoldenFile
-		if err := json.Unmarshal(raw, &want); err != nil {
-			t.Fatalf("golden %s: %v", name, err)
-		}
-		if want.Arch != got.Arch || want.Model != got.Model || len(want.Queries) != len(got.Queries) {
-			t.Fatalf("golden %s is for %s/%s with %d queries; this run has %s/%s with %d", name, want.Arch, want.Model, len(want.Queries), got.Arch, got.Model, len(got.Queries))
-		}
-		for i, w := range want.Queries {
-			g := got.Queries[i]
-			if w.Query != g.Query || w.Limit != g.Limit || !slices.Equal(w.Servers, g.Servers) {
-				t.Fatalf("golden query %d is %q, the test asks %q", i, w.Query, g.Query)
-			}
-			if !slices.Equal(w.Refs, g.Refs) {
-				t.Errorf("%q: refs\n got  %v\n want %v", w.Query, g.Refs, w.Refs)
-				continue
-			}
-			for j := range w.Scores {
-				if math.Abs(w.Scores[j]-g.Scores[j]) > 1e-6 {
-					t.Errorf("%q: score of %s is %.9f, golden %.9f (tolerance 1e-6)", w.Query, w.Refs[j], g.Scores[j], w.Scores[j])
-				}
-			}
-		}
-	})
-
-	t.Run("searching every usable server equals searching both explicitly", func(t *testing.T) {
-		for _, q := range []string{"create an issue in the tracker", "list pull requests in a repository", "weather in Berlin"} {
-			all := catalogSearch(t, c, q, 10, nil)
-			explicit := catalogSearch(t, c, q, 10, both)
-			if !reflect.DeepEqual(all, explicit) {
-				t.Errorf("%q: without servers %v, with both %v", q, catalogHitRefs(all), catalogHitRefs(explicit))
-			}
-		}
-	})
-
-	t.Run("limit is respected", func(t *testing.T) {
-		full := catalogSearch(t, c, "issue", 25, both)
-		if len(full) < 5 {
-			t.Fatalf("only %d hits for \"issue\"", len(full))
-		}
-		for _, limit := range []int{1, 3, 5, len(full) - 1} {
-			part := catalogSearch(t, c, "issue", limit, both)
-			if len(part) != limit {
-				t.Fatalf("limit %d returned %d hits", limit, len(part))
-			}
-			for i, h := range part {
-				if math.Abs(h.Score-full[i].Score) > 1e-9 {
-					t.Fatalf("limit %d: score %d is %v, with limit 25 it is %v", limit, i, h.Score, full[i].Score)
-				}
-			}
-		}
-		if len(catalogSearch(t, c, "issue", 0, both)) > 10 {
-			t.Fatal("the default limit is 10")
-		}
-		for _, bad := range []int{0, 26, -1} {
-			res := catalogCallMCP(t, c, "search_tools", map[string]any{"query": "issue", "limit": bad})
-			if !res.IsError || !strings.HasPrefix(catalogText(res), "Input validation error: Invalid arguments for tool search_tools: limit: ") {
-				t.Errorf("limit %d: isError %v %q", bad, res.IsError, catalogText(res))
-			}
-		}
-	})
-
-	t.Run("the servers filter applies before the limit", func(t *testing.T) {
-		unfiltered := catalogSearch(t, c, "create an issue in the tracker", 1, both)
-		if len(unfiltered) != 1 || unfiltered[0].Server != "youtrack" {
-			t.Fatalf("unfiltered top hit: %v", catalogHitRefs(unfiltered))
-		}
-		onlyGitea := catalogSearch(t, c, "create an issue in the tracker", 1, []string{"gitea"})
-		if len(onlyGitea) != 1 || onlyGitea[0].Server != "gitea" || onlyGitea[0].Score <= 0 || onlyGitea[0].Score > 1 {
-			t.Fatalf("limit 1 on gitea: %+v: the better youtrack hits must not eat the limit", onlyGitea)
-		}
-		for _, h := range catalogSearch(t, c, "create an issue in the tracker", 10, []string{"gitea"}) {
-			if h.Server != "gitea" {
-				t.Fatalf("a hit of %s with the filter [gitea]", h.Server)
-			}
-		}
-		dup := catalogSearch(t, c, "create an issue in the tracker", 10, []string{"gitea", "gitea"})
-		single := catalogSearch(t, c, "create an issue in the tracker", 10, []string{"gitea"})
-		if !reflect.DeepEqual(dup, single) {
-			t.Fatalf("a repeated slug changes the result: %v vs %v", catalogHitRefs(dup), catalogHitRefs(single))
-		}
-	})
-
-	t.Run("an unknown server and an empty filter are refused", func(t *testing.T) {
-		res := catalogCallMCP(t, c, "search_tools", catalogSearchArgs("issue", 0, []string{"nope"}))
-		if !res.IsError || catalogText(res) != `Unknown server "nope". Call list_servers.` {
-			t.Fatalf("unknown slug: isError %v %q", res.IsError, catalogText(res))
-		}
-		res = catalogCallMCP(t, c, "search_tools", catalogSearchArgs("issue", 0, []string{"gitea", "nope"}))
-		if !res.IsError || catalogText(res) != `Unknown server "nope". Call list_servers.` {
-			t.Fatalf("one unknown among known: isError %v %q", res.IsError, catalogText(res))
-		}
-		res = catalogCallMCP(t, c, "search_tools", catalogSearchArgs("issue", 0, []string{}))
-		if !res.IsError || catalogText(res) != "Input validation error: Invalid arguments for tool search_tools: servers: Too small: expected array to have >=1 items" {
-			t.Fatalf("empty filter: isError %v %q (the tool never returns [] for an empty list: its schema refuses it)", res.IsError, catalogText(res))
-		}
-		// Control: the same query without a filter works.
-		if hits := catalogSearch(t, c, "create an issue in the tracker", 3, nil); len(hits) == 0 {
-			t.Fatal("no hits for a relevant query without a filter")
-		}
-	})
-
-	t.Run("list_servers and describe_tool", func(t *testing.T) {
-		list := catalogListServers(t, c)
-		if len(list) != 2 || list[0].Slug != "gitea" || list[0].Tools != 61 || list[0].Name != "Gitea" || list[0].Connection != "not_required" ||
-			list[1].Slug != "youtrack" || list[1].Tools != 23 || list[0].ConnectURL != "" {
-			t.Fatalf("list_servers: %+v", list)
-		}
-		var d struct {
-			Tool        string          `json:"tool"`
-			Title       *string         `json:"title"`
-			Description string          `json:"description"`
-			InputSchema map[string]any  `json:"inputSchema"`
-			Output      map[string]any  `json:"outputSchema"`
-			Annotations map[string]bool `json:"annotations"`
-			Server      string          `json:"server"`
-			Connection  string          `json:"connection"`
-		}
-		catalogStructured(t, catalogCallMCP(t, c, "describe_tool", map[string]any{"tool": "youtrack.create_issue"}), &d)
-		if d.Tool != "youtrack.create_issue" || d.Server != "youtrack" || d.Connection != "not_required" || d.InputSchema["type"] != "object" || d.Description == "" {
-			t.Fatalf("describe_tool: %+v", d)
-		}
-		res := catalogCallMCP(t, c, "describe_tool", map[string]any{"tool": "youtrack.no_such_tool"})
-		if !res.IsError || catalogText(res) != catalogNotAvailable("youtrack.no_such_tool") {
-			t.Fatalf("unknown tool: %q", catalogText(res))
-		}
-	})
-
-	t.Run("hiding, removing and changing a tool reach the search results", func(t *testing.T) {
-		upstreamTools := []fakes.Tool{
-			{Name: "frobnicate_quuxwidget", Description: "Frobnicates the quuxwidget of a repository.", InputSchema: map[string]any{"type": "object"}},
-			{Name: "static_item", Description: "Neutralizes the blargle.", InputSchema: map[string]any{"type": "object"}},
-			{Name: "dropped_plumbus", Description: "Drops the plumbus.", InputSchema: map[string]any{"type": "object"}},
-		}
-		up := fakes.StartUpstream(t, fakes.UpstreamOptions{Tools: upstreamTools})
-		slug := harness.Unique("idx")
-		catalogRegister(t, admin, fakes.ServerInput(up, slug, "none"))
-		catalogWaitDocs(t, s, slug, 3)
-		find := func(query string) []string {
-			return catalogHitRefs(catalogSearch(t, c, query, 10, []string{slug}))
-		}
-		hidden := slug + ".frobnicate_quuxwidget"
-		if got := find("frobnicate quuxwidget"); !slices.Contains(got, hidden) {
-			t.Fatalf("the tool is not found before it is hidden: %v", got)
-		}
-
-		// Hidden: neither searched, nor described, nor callable; still hidden after a sync.
-		catalogHide(t, admin, slug, "frobnicate_quuxwidget", true)
-		catalogWaitDocs(t, s, slug, 2)
-		if got := find("frobnicate quuxwidget"); slices.Contains(got, hidden) {
-			t.Fatalf("a hidden tool is found: %v", got)
-		}
-		for _, name := range []string{"describe_tool", "call_tool"} {
-			res := catalogCallMCP(t, c, name, map[string]any{"tool": hidden})
-			if !res.IsError || catalogText(res) != catalogNotAvailable(hidden) {
-				t.Fatalf("%s of a hidden tool: isError %v %q", name, res.IsError, catalogText(res))
-			}
-		}
-		if n := len(up.Calls()); n != 0 {
-			t.Fatalf("the upstream was called %d time(s) for a hidden tool", n)
-		}
-		if res := catalogSyncOK(t, admin, slug); res != (catalogSyncResult{}) {
-			t.Fatalf("sync with a hidden tool: %+v", res)
-		}
-		catalogWaitDocs(t, s, slug, 2)
-		if got := find("frobnicate quuxwidget"); slices.Contains(got, hidden) {
-			t.Fatalf("the tool is found again after a sync: %v", got)
-		}
-		// Unhide: found again.
-		catalogHide(t, admin, slug, "frobnicate_quuxwidget", false)
-		catalogWaitDocs(t, s, slug, 3)
-		if got := find("frobnicate quuxwidget"); !slices.Contains(got, hidden) {
-			t.Fatalf("an unhidden tool is not found: %v", got)
-		}
-
-		// Removed upstream: gone from the catalog and the search.
-		gone := slug + ".dropped_plumbus"
-		if got := find("drops the plumbus"); !slices.Contains(got, gone) {
-			t.Fatalf("control: %s is not found before it is removed: %v", gone, got)
-		}
-		upstreamTools = slices.DeleteFunc(upstreamTools, func(tl fakes.Tool) bool { return tl.Name == "dropped_plumbus" })
-		up.SetTools(upstreamTools)
-		if res := catalogSyncOK(t, admin, slug); res.Removed != 1 {
-			t.Fatalf("sync after the removal: %+v", res)
-		}
-		catalogWaitDocs(t, s, slug, 2)
-		if got := find("drops the plumbus"); slices.Contains(got, gone) {
-			t.Fatalf("a removed tool is found: %v", got)
-		}
-		if res := catalogCallMCP(t, c, "describe_tool", map[string]any{"tool": gone}); !res.IsError {
-			t.Fatal("a removed tool can still be described")
-		}
-		if catalogHas(catalogCatalog(t, admin), slug) && slices.Contains(catalogRefs(catalogCatalog(t, admin), slug), gone) {
-			t.Fatal("a removed tool is still in the catalog")
-		}
-
-		// Changed description: the new words are found, the old ones are not.
-		for i := range upstreamTools {
-			if upstreamTools[i].Name == "static_item" {
-				upstreamTools[i].Description = "Reticulates the splines of a gizmo."
-			}
-		}
-		up.SetTools(upstreamTools)
-		if res := catalogSyncOK(t, admin, slug); res.Changed != 1 {
-			t.Fatalf("sync after the change: %+v", res)
-		}
-		harness.Eventually(t, "the changed description in search.documents", func() bool {
-			var n int
-			err := s.DB.QueryRow(t.Context(), "select count(*) from search.documents where ref = $1 and description = $2 and embedding is not null", slug+".static_item", "Reticulates the splines of a gizmo.").Scan(&n)
-			return err == nil && n == 1
-		})
-		if got := find("reticulates splines gizmo"); !slices.Contains(got, slug+".static_item") {
-			t.Fatalf("the new description is not searchable: %v", got)
-		}
-		if got := find("neutralizes the blargle"); slices.Contains(got, slug+".static_item") {
-			t.Fatalf("the old description is still searchable: %v", got)
-		}
-	})
-
-	t.Run("a disabled server leaves the index; enabling brings it back", func(t *testing.T) {
-		up := fakes.StartUpstream(t, fakes.UpstreamOptions{Tools: fakes.Tools("alpha_gizmo", "beta_gizmo")})
-		slug := harness.Unique("dsb")
-		catalogRegister(t, admin, fakes.ServerInput(up, slug, "none"))
-		catalogWaitDocs(t, s, slug, 2)
-		ref := slug + ".alpha_gizmo"
-		if got := catalogHitRefs(catalogSearch(t, c, "alpha gizmo", 5, []string{slug})); !slices.Contains(got, ref) {
-			t.Fatalf("control: not found while active: %v", got)
-		}
-		if r := admin.Do(t, "POST", "/api/servers/"+slug+"/status", map[string]any{"status": "disabled"}); r.Status != 204 {
-			t.Fatalf("disable: %d", r.Status)
-		}
-		catalogWaitDocs(t, s, slug, 0)
-		if catalogListedHas(catalogListServers(t, c), slug) {
-			t.Fatal("list_servers lists a disabled server, even to an admin")
-		}
-		res := catalogCallMCP(t, c, "search_tools", catalogSearchArgs("alpha gizmo", 5, []string{slug}))
-		if !res.IsError || catalogText(res) != fmt.Sprintf("Unknown server %q. Call list_servers.", slug) {
-			t.Fatalf("search in a disabled server: isError %v %q", res.IsError, catalogText(res))
-		}
-		if res := catalogCallMCP(t, c, "describe_tool", map[string]any{"tool": ref}); !res.IsError || catalogText(res) != catalogNotAvailable(ref) {
-			t.Fatalf("describe_tool in a disabled server: %q", catalogText(res))
-		}
-		if res := catalogCallMCP(t, c, "call_tool", map[string]any{"tool": ref}); !res.IsError || catalogText(res) != catalogNotAvailable(ref) {
-			t.Fatalf("call_tool in a disabled server: %q", catalogText(res))
-		}
-		if n := len(up.Calls()); n != 0 {
-			t.Fatalf("the upstream was called %d time(s) for a disabled server", n)
-		}
-		if got := catalogHitRefs(catalogSearch(t, c, "alpha gizmo", 25, nil)); slices.Contains(got, ref) {
-			t.Fatalf("a disabled server's tool is found without a filter: %v", got)
-		}
-		if r := admin.Do(t, "POST", "/api/servers/"+slug+"/status", map[string]any{"status": "active"}); r.Status != 204 {
-			t.Fatalf("enable: %d", r.Status)
-		}
-		catalogWaitDocs(t, s, slug, 2)
-		if got := catalogHitRefs(catalogSearch(t, c, "alpha gizmo", 5, []string{slug})); !slices.Contains(got, ref) {
-			t.Fatalf("not found after enabling: %v", got)
-		}
-	})
-
-	t.Run("a change of the server is reindexed", func(t *testing.T) {
-		up := fakes.StartUpstream(t, fakes.UpstreamOptions{Tools: fakes.Tools("one", "two", "three")})
-		slug := harness.Unique("ren")
-		catalogRegister(t, admin, fakes.ServerInput(up, slug, "none", catalogWithDescription("Issue tracker")))
-		catalogWaitDocs(t, s, slug, 3)
-		vectors := func() map[string]string {
-			rows, err := s.DB.Query(t.Context(), "select ref, embedding::text from search.documents where server = $1", slug)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer rows.Close()
-			out := map[string]string{}
-			for rows.Next() {
-				var ref, v string
-				if err := rows.Scan(&ref, &v); err != nil {
-					t.Fatal(err)
-				}
-				out[ref] = v
-			}
-			return out
-		}
-		before := vectors()
-		v := catalogGet(t, admin, slug)
-		r := admin.Do(t, "PUT", "/api/servers/"+slug, catalogPutBody(v, func(b map[string]any) { b["description"] = "Bug tracker" }))
-		if r.Status != 200 {
-			t.Fatalf("PUT: %d %s", r.Status, r.Body)
-		}
-		// The server's name and description are part of every passage, so every vector changes.
-		harness.Eventually(t, "every document of the server to be re-embedded after a description change", func() bool {
-			now := vectors()
-			if len(now) != 3 {
-				return false
-			}
-			for ref, vec := range now {
-				if vec == "" || vec == before[ref] {
-					return false
-				}
-			}
-			return true
-		})
-	})
-
-	t.Run("names with dots and dashes are found by their words", func(t *testing.T) {
-		up := fakes.StartUpstream(t, fakes.UpstreamOptions{Tools: []fakes.Tool{
-			{Name: "issues.create", Description: "x", InputSchema: map[string]any{"type": "object"}},
-			{Name: "get-file_contents", Description: "y", InputSchema: map[string]any{"type": "object"}},
-		}})
-		slug := harness.Unique("dot")
-		catalogRegister(t, admin, fakes.ServerInput(up, slug, "none"))
-		catalogWaitDocs(t, s, slug, 2)
-		if got := catalogHitRefs(catalogSearch(t, c, "issues create", 5, []string{slug})); len(got) == 0 || got[0] != slug+".issues.create" {
-			t.Fatalf("issues create: %v", got)
-		}
-		if got := catalogHitRefs(catalogSearch(t, c, "file contents", 5, []string{slug})); len(got) == 0 || got[0] != slug+".get-file_contents" {
-			t.Fatalf("file contents: %v", got)
-		}
-		// The ref is split at the first dot: a dotted tool name works with describe_tool.
-		var d struct{ Tool, Server string }
-		res := catalogCallMCP(t, c, "describe_tool", map[string]any{"tool": slug + ".issues.create"})
-		if res.IsError {
-			t.Fatalf("describe_tool of a dotted name: %s", catalogText(res))
-		}
-		raw, _ := json.Marshal(res.StructuredContent)
-		_ = json.Unmarshal(raw, &d)
-		if d.Tool != slug+".issues.create" || d.Server != slug {
-			t.Fatalf("describe_tool: %s", raw)
-		}
-	})
-
-	t.Run("the reindex command rebuilds the index and drops documents of vanished servers", func(t *testing.T) {
-		up := fakes.StartUpstream(t, fakes.UpstreamOptions{Tools: fakes.Tools("ri_one", "ri_two")})
-		slug := harness.Unique("ri")
-		catalogRegister(t, admin, fakes.ServerInput(up, slug, "none"))
-		catalogWaitDocs(t, s, slug, 2)
-		var total int
-		if err := s.DB.QueryRow(t.Context(), "select count(*) from search.documents").Scan(&total); err != nil {
-			t.Fatal(err)
-		}
-		execSQL(t, s, `insert into search.documents (ref, server, description, tsv) values ('ghost.x', 'ghost', 'd', to_tsvector('simple', 'x'))`)
-		execSQL(t, s, "delete from search.documents where server = $1", slug)
-		r := s.CLI(t, "", "reindex")
-		if r.Code != 0 || r.Stderr != "" {
-			t.Fatalf("reindex: code %d stderr %q", r.Code, r.Stderr)
-		}
-		// The count in the message is the number of documents written (the wording says servers).
-		if want := fmt.Sprintf("reindexed %d server(s)\n", total); r.Stdout != want {
-			t.Fatalf("reindex stdout %q, want %q", r.Stdout, want)
-		}
-		catalogWaitDocs(t, s, slug, 2)
-		if n := countSQL(t, s, "select count(*) from search.documents where server = 'ghost'"); n != 0 {
-			t.Fatalf("%d document(s) of a vanished server survived the reindex", n)
-		}
-		if n := countSQL(t, s, "select count(*) from search.documents"); n != total {
-			t.Fatalf("search.documents has %d rows after the reindex, want %d", n, total)
-		}
-	})
-}
-
-// ---- access to search results ----
-
-func TestCatalogSearchAccess(t *testing.T) {
-	s := harness.Start(t, harness.Options{})
-	admin := s.Admin(t)
-	adminMCP := s.MCP(t, admin.Token(t, "access-admin"))
-	member := s.Member(t, harness.Unique("m"))
-	memberMCP := s.MCP(t, member.Token(t, "access-member"))
-
-	type srv struct {
-		slug, tool, text string
-		up               *fakes.Upstream
-	}
-	mk := func(prefix, tool, text string, opts ...fakes.ServerOpt) srv {
-		up := fakes.StartUpstream(t, fakes.UpstreamOptions{Tools: []fakes.Tool{{Name: tool, Description: text, InputSchema: map[string]any{"type": "object"}}}})
-		slug := harness.Unique(prefix)
-		catalogRegister(t, admin, fakes.ServerInput(up, slug, "none", opts...))
-		catalogWaitDocs(t, s, slug, 1)
-		return srv{slug: slug, tool: slug + "." + tool, text: text, up: up}
-	}
-	open := mk("acco", "open_flux", "Calibrates the open flux capacitor.")
-	grp := mk("accg", "group_flux", "Calibrates the group flux capacitor.", fakes.WithGroups("mcp-users"))
-	closed := mk("accx", "closed_flux", "Calibrates the closed flux capacitor.", fakes.WithGroups("ops"))
-
-	refsFor := func(c *mcp.ClientSession, query string) []string {
-		return catalogHitRefs(catalogSearch(t, c, query, 25, nil))
-	}
-
-	t.Run("a member finds what their groups open and an admin finds everything", func(t *testing.T) {
-		for _, q := range []string{"flux capacitor", "closed flux", "Calibrates the closed flux capacitor.", "closed_flux"} {
-			for _, name := range []string{"admin", "member"} {
-				c := adminMCP
-				if name == "member" {
-					c = memberMCP
-				}
-				got := refsFor(c, q)
-				if name == "member" && slices.Contains(got, closed.tool) {
-					t.Errorf("the member finds %s with %q: %v", closed.tool, q, got)
-				}
-			}
-		}
-		adminGot := refsFor(adminMCP, "Calibrates the closed flux capacitor.")
-		if !slices.Contains(adminGot, closed.tool) {
-			t.Fatalf("control: the admin does not find the closed tool: %v", adminGot)
-		}
-		memberGot := refsFor(memberMCP, "flux capacitor")
-		if !slices.Contains(memberGot, open.tool) || !slices.Contains(memberGot, grp.tool) {
-			t.Fatalf("the member does not find tools open to them: %v", memberGot)
-		}
-	})
-
-	t.Run("list_servers, filters, describe and call treat a closed server as unknown", func(t *testing.T) {
-		list := catalogListServers(t, memberMCP)
-		if !catalogListedHas(list, open.slug) || !catalogListedHas(list, grp.slug) || catalogListedHas(list, closed.slug) {
-			t.Fatalf("the member's list_servers: %+v", list)
-		}
-		if !catalogListedHas(catalogListServers(t, adminMCP), closed.slug) {
-			t.Fatal("the admin's list_servers misses the closed server")
-		}
-		res := catalogCallMCP(t, memberMCP, "search_tools", catalogSearchArgs("flux", 0, []string{closed.slug}))
-		if !res.IsError || catalogText(res) != fmt.Sprintf("Unknown server %q. Call list_servers.", closed.slug) {
-			t.Fatalf("search in a closed server: %q", catalogText(res))
-		}
-		nope := catalogCallMCP(t, memberMCP, "search_tools", catalogSearchArgs("flux", 0, []string{"no-such-server"}))
-		if catalogText(nope) != fmt.Sprintf("Unknown server %q. Call list_servers.", "no-such-server") {
-			t.Fatalf("search in an unknown server: %q", catalogText(nope))
-		}
-		for _, name := range []string{"describe_tool", "call_tool"} {
-			res := catalogCallMCP(t, memberMCP, name, map[string]any{"tool": closed.tool})
-			if !res.IsError || catalogText(res) != catalogNotAvailable(closed.tool) {
-				t.Fatalf("%s of a closed tool: isError %v %q", name, res.IsError, catalogText(res))
-			}
-			if want := catalogNotAvailable(slugOf(closed.tool) + ".nope"); catalogText(catalogCallMCP(t, memberMCP, name, map[string]any{"tool": slugOf(closed.tool) + ".nope"})) != want {
-				t.Fatalf("%s tells a closed server's missing tool apart from its existing one", name)
-			}
-		}
-		if n := len(closed.up.Calls()); n != 0 {
-			t.Fatalf("the upstream of a closed server was called %d time(s) by a member", n)
-		}
-		// Control: the admin may describe and call it.
-		if res := catalogCallMCP(t, adminMCP, "call_tool", map[string]any{"tool": closed.tool}); res.IsError {
-			t.Fatalf("the admin cannot call the closed tool: %s", catalogText(res))
-		}
-		if n := len(closed.up.Calls()); n != 1 {
-			t.Fatalf("the upstream received %d call(s) from the admin, want 1", n)
-		}
-	})
-
-	t.Run("changing the access takes effect at once", func(t *testing.T) {
-		v := catalogGet(t, admin, closed.slug)
-		setGroups := func(groups ...string) {
-			t.Helper()
-			r := admin.Do(t, "PUT", "/api/servers/"+closed.slug, catalogPutBody(v, func(b map[string]any) {
-				b["access"] = map[string]any{"kind": "groups", "groups": groups}
-			}))
-			if r.Status != 200 {
-				t.Fatalf("PUT access %v: %d %s", groups, r.Status, r.Body)
-			}
-		}
-		setGroups("mcp-users")
-		if got := refsFor(memberMCP, "Calibrates the closed flux capacitor."); !slices.Contains(got, closed.tool) {
-			t.Fatalf("the member does not find the tool after the access was opened: %v", got)
-		}
-		if !catalogHas(catalogCatalog(t, member), closed.slug) {
-			t.Fatal("the member's catalog misses the server after the access was opened")
-		}
-		setGroups("ops")
-		if got := refsFor(memberMCP, "Calibrates the closed flux capacitor."); slices.Contains(got, closed.tool) {
-			t.Fatalf("the member still finds the tool after the access was closed: %v", got)
-		}
-		if catalogHas(catalogCatalog(t, member), closed.slug) {
-			t.Fatal("the member's catalog still has the server after the access was closed")
-		}
-	})
-}
-
-func slugOf(ref string) string {
-	slug, _, _ := strings.Cut(ref, ".")
-	return slug
 }

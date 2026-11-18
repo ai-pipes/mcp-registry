@@ -1,9 +1,6 @@
 {
   "status": 422,
-  "body": {
-    "error": {
-      "code": "invalid_request",
-      "message": "url: Invalid URL"
-    }
-  }
+  "code": "invalid_request",
+  "path": "url",
+  "message": null
 }
