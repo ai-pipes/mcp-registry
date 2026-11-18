@@ -746,3 +746,54 @@ func TestUpstreamRecordsEveryRequestWithItsMethod(t *testing.T) {
 		t.Fatal("Reset must clear Requests")
 	}
 }
+
+func TestOAuthProviderIssuedAndRefreshDelay(t *testing.T) {
+	p := fakes.StartOAuthProvider(t)
+	if len(p.Issued()) != 0 {
+		t.Fatal("nothing is issued before an exchange")
+	}
+	r0 := issueRefresh(t, p)
+	issued := p.Issued()
+	if len(issued) != 1 || issued[0].RefreshToken != r0 || !strings.HasPrefix(issued[0].AccessToken, "access-") {
+		t.Fatalf("issued: %+v (refresh token handed out was %q)", issued, r0)
+	}
+	// The delay holds a refresh that passed the checks, and only that one.
+	p.SetRefreshDelay(400 * time.Millisecond)
+	started := time.Now()
+	if status, _ := refresh(t, p, r0); status != 200 || time.Since(started) < 400*time.Millisecond {
+		t.Fatalf("a delayed refresh answered %d after %s", status, time.Since(started))
+	}
+	started = time.Now()
+	if status, _ := refresh(t, p, "made-up"); status != 400 || time.Since(started) > 300*time.Millisecond {
+		t.Fatalf("a refused refresh must not wait: %d after %s", status, time.Since(started))
+	}
+	p.SetRefreshDelay(0)
+	started = time.Now()
+	if status, _ := refresh(t, p, r0); status != 200 || time.Since(started) > 300*time.Millisecond {
+		t.Fatalf("without the delay: %d after %s", status, time.Since(started))
+	}
+}
+
+func TestUpstreamSetRequireHeaderChangesTheCheckAndSurvivesReset(t *testing.T) {
+	u := fakes.StartUpstream(t, fakes.UpstreamOptions{Tools: fakes.Tools("echo")})
+	post := func(token string) int {
+		status, _, _ := send(t, "POST", u.URL, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`,
+			"Content-Type: application/json", "Accept: application/json, text/event-stream", "Authorization: Bearer "+token)
+		return status
+	}
+	if status := post("anything"); status == 401 {
+		t.Fatalf("no requirement yet, got %d", status)
+	}
+	u.SetRequireHeader("Authorization", "Bearer right")
+	if post("wrong") != 401 || post("right") == 401 {
+		t.Fatal("the requirement must apply from now on")
+	}
+	u.Reset()
+	if post("wrong") != 401 {
+		t.Fatal("Reset must keep the requirement")
+	}
+	u.SetRequireHeader("", "")
+	if post("wrong") == 401 {
+		t.Fatal("an empty name lifts the requirement")
+	}
+}

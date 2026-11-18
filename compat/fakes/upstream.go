@@ -84,6 +84,12 @@ func (u *Upstream) SetTools(tools []Tool) {
 	u.tools = append([]Tool(nil), tools...)
 }
 
+// SetRequireHeader replaces the required header (name and exact value) from now on; an empty name
+// lifts the requirement. Reset does not touch it, so a scenario can set it once for a server.
+func (u *Upstream) SetRequireHeader(name, value string) {
+	u.set(func() { u.require = [2]string{name, value} })
+}
+
 // FailWith answers every request with status 401 (with WWW-Authenticate) or 500.
 func (u *Upstream) FailWith(status int) { u.set(func() { u.failStatus = status }) }
 

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // TokenStep is one scripted answer of the token endpoint: Ok, Error or Hang.
@@ -61,6 +62,13 @@ func (r TokenRequest) BasicAuth() (id, secret string, ok bool) {
 	return decodeBasic(h)
 }
 
+// IssuedTokens are the tokens an authorization_code exchange handed out, in the order of the
+// exchanges, so a test knows which token belongs to which connect.
+type IssuedTokens struct {
+	AccessToken  string
+	RefreshToken string
+}
+
 // OAuthProvider is an OAuth 2.0 provider of the Gitea / YouTrack Hub kind: authorize (redirects
 // back with a code at once), a token endpoint (authorization_code with PKCE S256, refresh_token)
 // with HTTP Basic client authentication, and RFC 7009 revocation. Without a script it answers
@@ -80,6 +88,8 @@ type OAuthProvider struct {
 	revoked    []string
 	attempts   []RevokeAttempt
 	authorizes []url.Values
+	issued     []IssuedTokens
+	refreshLag time.Duration
 	grants     map[string]oauthGrant
 	refreshes  map[string]bool
 	stopped    chan struct{}
@@ -139,6 +149,22 @@ func (p *OAuthProvider) RevokeAttempts() []RevokeAttempt {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return append([]RevokeAttempt(nil), p.attempts...)
+}
+
+// Issued returns the tokens of every successful authorization_code exchange, in order.
+func (p *OAuthProvider) Issued() []IssuedTokens {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]IssuedTokens(nil), p.issued...)
+}
+
+// SetRefreshDelay holds the answer of every refresh_token request that passed the provider's own
+// checks (client authentication, a current refresh token) for d before it is sent, so concurrent
+// callers overlap. A caller that gives up ends the wait. Zero removes the delay.
+func (p *OAuthProvider) SetRefreshDelay(d time.Duration) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.refreshLag = d
 }
 
 // AuthorizeRequests returns the query of every authorize request, in order.
@@ -222,11 +248,12 @@ func (p *OAuthProvider) codeGrant(w http.ResponseWriter, form url.Values) {
 		invalidGrant(w)
 		return
 	}
-	refresh := randomToken("refresh-")
+	refresh, access := randomToken("refresh-"), randomToken("access-")
 	p.mu.Lock()
 	p.refreshes[refresh] = true
+	p.issued = append(p.issued, IssuedTokens{AccessToken: access, RefreshToken: refresh})
 	p.mu.Unlock()
-	writeJSON(w, http.StatusOK, tokenBody(Ok{RefreshToken: refresh}))
+	writeJSON(w, http.StatusOK, tokenBody(Ok{AccessToken: access, RefreshToken: refresh}))
 }
 
 // refreshGrant checks that the presented refresh token is one this provider issued and that is
@@ -247,7 +274,19 @@ func (p *OAuthProvider) refreshGrant(w http.ResponseWriter, r *http.Request, for
 		delete(p.refreshes, presented) // rotated: the old one is no longer current
 		p.refreshes[ok.RefreshToken] = true
 	}
+	lag := p.refreshLag
 	p.mu.Unlock()
+	if lag > 0 {
+		timer := time.NewTimer(lag)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+		case <-r.Context().Done():
+			return
+		case <-p.stopped:
+			return
+		}
+	}
 	switch s := step.(type) {
 	case Error:
 		status := s.Status
