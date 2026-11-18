@@ -44,6 +44,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -84,6 +85,30 @@ func loadSchema(name string) (*jsonschema.Schema, error) {
 	return s, err
 }
 
+// httpURLFormat replaces the library's "uri" format: every "format": "uri" in compat/schemas comes
+// from the contracts' HttpUrl (z.url() refined to http(s) only), so an absolute http or https URL
+// with a host is the rule.
+var httpURLFormat = &jsonschema.Format{
+	Name: "uri",
+	Validate: func(v any) error {
+		str, ok := v.(string)
+		if !ok {
+			return nil
+		}
+		u, err := url.Parse(str)
+		if err != nil {
+			return err
+		}
+		if u.Scheme != "http" && u.Scheme != "https" {
+			return fmt.Errorf("%q is not an http(s) URL", str)
+		}
+		if u.Host == "" {
+			return fmt.Errorf("%q has no host", str)
+		}
+		return nil
+	},
+}
+
 func compileSchema(name string) (*jsonschema.Schema, error) {
 	if name == "" || strings.ContainsAny(name, `/\.`) {
 		return nil, fmt.Errorf("invalid schema name %q", name)
@@ -100,12 +125,14 @@ func compileSchema(name string) (*jsonschema.Schema, error) {
 	if err != nil {
 		return nil, fmt.Errorf("schema %s: %w", name, err)
 	}
-	url := "https://compat.invalid/" + name + ".json"
+	id := "https://compat.invalid/" + name + ".json"
 	c := jsonschema.NewCompiler()
-	if err := c.AddResource(url, doc); err != nil {
+	c.AssertFormat()
+	c.RegisterFormat(httpURLFormat)
+	if err := c.AddResource(id, doc); err != nil {
 		return nil, fmt.Errorf("schema %s: %w", name, err)
 	}
-	s, err := c.Compile(url)
+	s, err := c.Compile(id)
 	if err != nil {
 		return nil, fmt.Errorf("schema %s: %w", name, err)
 	}
@@ -116,11 +143,20 @@ func compileSchema(name string) (*jsonschema.Schema, error) {
 // contracts by make compat-schemas). A name ending in "[]" means a JSON array of that contract.
 // An unknown name, invalid JSON or any mismatch is an error naming the schema and the JSON path.
 //
-// Strictness: zod emits "additionalProperties": false for every plain z.object when exporting the
-// output side, so a response carrying a field the contract does not declare (a "secret" in a
-// server view, say) is rejected as is. Schemas that are open on purpose (z.looseObject,
-// z.record) are emitted without it and keep accepting extra members. The files are used
-// unmodified; TestServerViewWithSecretFieldIsRejected pins this behaviour.
+// What is enforced:
+//   - Structure: types, required, enums, min/max, array items.
+//   - Extra members: zod emits "additionalProperties": false for every plain z.object (output
+//     side), so a field the contract does not declare (a "secret" in a server view) is rejected.
+//     z.looseObject and z.record schemas are emitted without it and stay open. The files are used
+//     unmodified.
+//   - Formats are asserted (the library ignores them otherwise): date-time and uuid with the
+//     library's checkers; "uri" with the http(s)-only rule above, which reproduces the contracts'
+//     HttpUrl refinement (all 24 "uri" occurrences come from it, so ftp://x is rejected).
+//
+// What is not enforced: zod .refine/.superRefine/.transform rules are lost in the JSON Schema
+// conversion. The only one reproduced is the http(s) URL rule above; other refinements (for
+// example anything custom on a request body) are not checked, and neither are zod's stricter WHATWG
+// URL parsing or string trimming.
 func ValidateSchema(name string, body []byte) error {
 	base, isList := strings.CutSuffix(name, "[]")
 	s, err := loadSchema(base)

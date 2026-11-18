@@ -3,7 +3,7 @@
 // responses with these files. Usage:
 //   node --experimental-strip-types packages/contracts/scripts/export-json-schema.mjs compat/schemas
 import { mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { basename, resolve } from 'node:path';
 import { z } from 'zod';
 import * as contracts from '../src/index.ts';
 
@@ -29,6 +29,11 @@ function sortKeys(v) {
 }
 
 const dir = resolve(outDir);
+// The directory is emptied of *.json files below: refuse anything but a schemas directory.
+if (basename(dir) !== 'schemas') {
+  console.error(`refusing to write into ${dir}: the directory must be named "schemas"`);
+  process.exit(2);
+}
 mkdirSync(dir, { recursive: true });
 for (const f of readdirSync(dir)) if (f.endsWith('.json')) rmSync(resolve(dir, f));
 
