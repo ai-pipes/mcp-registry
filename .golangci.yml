@@ -10,7 +10,44 @@ linters:
     - depguard
   settings:
     depguard:
-      rules: {}
+      # deps-only-in-infra: infrastructure packages are imported only by infra and platform
+      # (platform is outside every glob below); the MCP SDK is also allowed in http. The
+      # vendor part is mirrored in .go-arch-lint.yml; crypto/* (standard library) is only here.
+      rules:
+        core-no-infra-deps:
+          list-mode: lax
+          files:
+            - '**/internal/kernel/**'
+            - '**/internal/modules/*/domain/**'
+            - '**/internal/modules/*/app/**'
+            - '**/internal/modules/*/http/**'
+          deny:
+            - pkg: github.com/jackc/pgx
+              desc: deps-only-in-infra, use a port implemented in infra
+            - pkg: github.com/coreos/go-oidc
+              desc: deps-only-in-infra, use a port implemented in infra
+            - pkg: golang.org/x/oauth2
+              desc: deps-only-in-infra, use a port implemented in infra
+            - pkg: github.com/yalue/onnxruntime_go
+              desc: deps-only-in-infra, use a port implemented in infra
+            - pkg: crypto
+              desc: deps-only-in-infra, use a port (SecretBox, Pkce...) implemented in infra
+        no-mcp-sdk-outside-transport:
+          list-mode: lax
+          files:
+            - '**/internal/kernel/**'
+            - '**/internal/modules/*/domain/**'
+            - '**/internal/modules/*/app/**'
+          deny:
+            - pkg: github.com/modelcontextprotocol
+              desc: deps-only-in-infra, the MCP SDK is allowed in infra and http only
+  exclusions:
+    rules:
+      # Tests run pinned tools and write fixtures into temp directories; the paths and
+      # commands are constants of the repository, not input.
+      - path: _test\.go
+        linters:
+          - gosec
 formatters:
   enable:
     - gofumpt
