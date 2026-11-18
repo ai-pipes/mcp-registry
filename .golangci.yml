@@ -1,4 +1,7 @@
 version: '2'
+run:
+  build-tags:
+    - compat
 linters:
   default: none
   enable:
@@ -62,6 +65,16 @@ linters:
         linters:
           - gosec
         text: 'G306: ' # fixture files are written with 0o644 in a temp dir
+      # compat/ drives the application image through docker and writes golden files; commands,
+      # paths and modes are constants of the suite. Only these rules, only this directory.
+      - path: compat/
+        linters:
+          - gosec
+        text: 'G204: ' # docker is launched with variable arguments
+      - path: compat/
+        linters:
+          - gosec
+        text: 'G304: ' # golden files are read by computed path
 formatters:
   enable:
     - gofumpt

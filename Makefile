@@ -3,7 +3,7 @@ GO_ARCH_LINT := github.com/fe3dback/go-arch-lint@v1.14.0
 GOFUMPT := mvdan.cc/gofumpt@v0.12.0
 VERSION := $(shell node -p "require('./apps/server/package.json').version")
 
-.PHONY: go-lint go-lint-new go-fmt-check go-arch-lint go-verify go-build print-go-arch-lint print-golangci-lint
+.PHONY: compat compat-image-ts go-lint go-lint-new go-fmt-check go-arch-lint go-verify go-build print-go-arch-lint print-golangci-lint
 
 go-lint:
 	go run $(GOLANGCI_LINT) run
@@ -26,9 +26,18 @@ print-go-arch-lint:
 print-golangci-lint:
 	@echo $(GOLANGCI_LINT)
 
+# The compat suite is built with -tags compat so that lint and vet see it; its tests need Docker
+# and minutes, so go-verify does not run them (make compat does).
 go-verify: go-lint go-arch-lint
 	go vet ./...
+	go vet -tags compat ./...
 	go test ./...
+
+compat-image-ts:
+	docker build -t mcp-registry:compat-ts .
+
+compat:
+	COMPAT_REFERENCE=1 go test -tags compat -count=1 -timeout 30m ./compat/...
 
 go-build:
 	go build -ldflags "-X main.version=$(VERSION)" -o bin/mcp-registry ./cmd/mcp-registry
