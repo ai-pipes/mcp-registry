@@ -27,6 +27,12 @@ type UpstreamOptions struct {
 	PageSize      int       // tools per tools/list page; 0 = one page
 }
 
+// Request is an HTTP request the upstream received.
+type Request struct {
+	Method string      // the JSON-RPC method (initialize, tools/list, tools/call...); empty for GET and DELETE
+	Header http.Header // the HTTP request headers
+}
+
 // Call is a tools/call request the upstream received, whatever it answered.
 type Call struct {
 	Tool      string
@@ -52,6 +58,7 @@ type Upstream struct {
 	rejectMsg   string
 	rejecting   bool
 	calls       []Call
+	requests    []Request
 	listReqs    int
 	sdk         http.Handler
 }
@@ -111,12 +118,22 @@ func (u *Upstream) ListRequests() int {
 	return u.listReqs
 }
 
+// Requests returns every request received since the start or the last Reset, including refused
+// ones, with its JSON-RPC method and headers.
+func (u *Upstream) Requests() []Request {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	out := make([]Request, len(u.requests))
+	copy(out, u.requests)
+	return out
+}
+
 // Reset clears every failure mode and the recorded requests; the tools stay.
 func (u *Upstream) Reset() {
 	u.set(func() {
 		u.failStatus, u.redirectTo, u.delay, u.respondSize = 0, "", 0, 0
 		u.rejecting, u.rejectCode, u.rejectMsg = false, 0, ""
-		u.calls, u.listReqs = nil, 0
+		u.calls, u.requests, u.listReqs = nil, nil, 0
 	})
 }
 
@@ -146,6 +163,7 @@ func (u *Upstream) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_ = json.Unmarshal(raw, &rpc) // a GET or DELETE has no JSON body: Method stays empty
 
 	u.mu.Lock()
+	u.requests = append(u.requests, Request{Method: rpc.Method, Header: r.Header.Clone()})
 	switch rpc.Method {
 	case "tools/list":
 		u.listReqs++

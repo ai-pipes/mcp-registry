@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -84,13 +85,10 @@ func pathOf(t *testing.T, s *harness.Stack, target string) string {
 	return rest
 }
 
-func TestFakeIdPSignsAPersonInThroughTheApp(t *testing.T) {
-	idp := fakes.StartIdP(t)
-	s := harness.Start(t, harness.Options{OIDC: idp})
-	idp.NextLogin(fakes.Claims{
-		Sub: harness.Unique("oidc"), Name: "Olga Admin", Email: "olga@example.test",
-		Groups: []string{"mcp-admins"},
-	})
+// oidcLogin drives the whole sign-in chain through the fake provider and returns the signed-in
+// client.
+func oidcLogin(t *testing.T, s *harness.Stack, idp *fakes.FakeIdP) *harness.Client {
+	t.Helper()
 	c := s.Anonymous()
 	login := c.Do(t, "GET", "/api/auth/login", nil)
 	if login.Status != 302 || !strings.HasPrefix(login.Header.Get("Location"), idp.Issuer+"/authorize?") {
@@ -101,20 +99,40 @@ func TestFakeIdPSignsAPersonInThroughTheApp(t *testing.T) {
 	if cb.Status != 302 {
 		t.Fatalf("callback: %d %s (app log: %s)", cb.Status, cb.Body, tail(s.Logs(t)))
 	}
-	var me struct {
+	return c
+}
+
+func TestFakeIdPSignsAPersonInThroughTheApp(t *testing.T) {
+	idp := fakes.StartIdP(t)
+	s := harness.Start(t, harness.Options{OIDC: idp})
+	// GET /api/auth/me exposes userId, name, role and groups (not the e-mail).
+	type me struct {
+		UserID string   `json:"userId"`
 		Name   string   `json:"name"`
 		Role   string   `json:"role"`
 		Groups []string `json:"groups"`
 	}
-	r := c.Do(t, "GET", "/api/auth/me", nil)
-	if r.Status != 200 {
-		t.Fatalf("me: %d %s; callback redirected to %q", r.Status, r.Body, cb.Header.Get("Location"))
+	for _, c := range []struct {
+		name   string
+		groups []string
+		role   string
+	}{
+		{"Olga Admin", []string{"mcp-admins", "devs"}, "admin"},
+		{"Mark Member", []string{"mcp-users"}, "member"},
+	} {
+		idp.NextLogin(fakes.Claims{Sub: harness.Unique("oidc"), Name: c.name, Email: "who@example.test", Groups: c.groups})
+		client := oidcLogin(t, s, idp)
+		r := client.Do(t, "GET", "/api/auth/me", nil)
+		if r.Status != 200 {
+			t.Fatalf("%s: me: %d %s", c.name, r.Status, r.Body)
+		}
+		var got me
+		r.Decode(t, &got)
+		if got.UserID == "" || got.Name != c.name || got.Role != c.role || !slices.Equal(got.Groups, c.groups) {
+			t.Fatalf("%s: me %+v, want name %q role %q groups %v", c.name, got, c.name, c.role, c.groups)
+		}
 	}
-	r.Decode(t, &me)
-	if me.Name != "Olga Admin" || me.Role != "admin" {
-		t.Fatalf("me: %+v", me)
-	}
-	if idp.TokenRequests() != 1 {
+	if idp.TokenRequests() != 2 {
 		t.Fatalf("token requests: %d", idp.TokenRequests())
 	}
 }

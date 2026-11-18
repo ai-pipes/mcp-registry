@@ -36,6 +36,13 @@ func (Ok) tokenStep()    {}
 func (Error) tokenStep() {}
 func (Hang) tokenStep()  {}
 
+// RevokeAttempt is a request to the revocation endpoint, accepted or not.
+type RevokeAttempt struct {
+	Token         string
+	Authorization string // the Authorization header as sent
+	Accepted      bool   // the client authentication was valid
+}
+
 // TokenRequest is a request the token endpoint received.
 type TokenRequest struct {
 	GrantType     string
@@ -71,6 +78,7 @@ type OAuthProvider struct {
 	script     []TokenStep
 	requests   []TokenRequest
 	revoked    []string
+	attempts   []RevokeAttempt
 	authorizes []url.Values
 	grants     map[string]oauthGrant
 	refreshes  map[string]bool
@@ -99,8 +107,12 @@ func StartOAuthProvider(t *testing.T) *OAuthProvider {
 	return p
 }
 
-// Script queues answers of the token endpoint, used one per request that passes client
-// authentication; once the queue is empty the provider answers by its own rules again.
+// Script queues answers for refresh_token requests. A step is used only by a request that has
+// valid client authentication and presents a refresh token this provider issued and that is still
+// current; every other request is judged by the provider's own rules and leaves the queue alone,
+// and authorization_code exchanges are never scripted. Ok only shapes the success body (a
+// RefreshToken in it rotates the presented one); Error and Hang replace the success. Once the
+// queue is empty the provider answers by its own rules again.
 func (p *OAuthProvider) Script(steps ...TokenStep) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -114,11 +126,19 @@ func (p *OAuthProvider) Requests() []TokenRequest {
 	return append([]TokenRequest(nil), p.requests...)
 }
 
-// Revoked returns the tokens sent to the revocation endpoint, in order.
+// Revoked returns the tokens of revocation requests with valid client authentication, in order.
 func (p *OAuthProvider) Revoked() []string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return append([]string(nil), p.revoked...)
+}
+
+// RevokeAttempts returns every request to the revocation endpoint, including those refused for
+// bad client authentication.
+func (p *OAuthProvider) RevokeAttempts() []RevokeAttempt {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]RevokeAttempt(nil), p.attempts...)
 }
 
 // AuthorizeRequests returns the query of every authorize request, in order.
@@ -177,15 +197,58 @@ func (p *OAuthProvider) token(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid_client"})
 		return
 	}
+	switch form.Get("grant_type") {
+	case "authorization_code":
+		p.codeGrant(w, form)
+	case "refresh_token":
+		p.refreshGrant(w, r, form)
+	default:
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported_grant_type"})
+	}
+}
+
+func invalidGrant(w http.ResponseWriter) {
+	writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_grant"})
+}
+
+// codeGrant exchanges a code once; the script never applies to it.
+func (p *OAuthProvider) codeGrant(w http.ResponseWriter, form url.Values) {
+	code := form.Get("code")
 	p.mu.Lock()
+	grant, ok := p.grants[code]
+	delete(p.grants, code)
+	p.mu.Unlock()
+	if !ok || pkceChallenge(form.Get("code_verifier")) != grant.challenge || form.Get("redirect_uri") != grant.redirectURI {
+		invalidGrant(w)
+		return
+	}
+	refresh := randomToken("refresh-")
+	p.mu.Lock()
+	p.refreshes[refresh] = true
+	p.mu.Unlock()
+	writeJSON(w, http.StatusOK, tokenBody(Ok{RefreshToken: refresh}))
+}
+
+// refreshGrant checks that the presented refresh token is one this provider issued and that is
+// still current; only then a scripted step (if any) decides the answer.
+func (p *OAuthProvider) refreshGrant(w http.ResponseWriter, r *http.Request, form url.Values) {
+	presented := form.Get("refresh_token")
+	p.mu.Lock()
+	if !p.refreshes[presented] {
+		p.mu.Unlock()
+		invalidGrant(w)
+		return
+	}
 	var step TokenStep
 	if len(p.script) > 0 {
 		step, p.script = p.script[0], p.script[1:]
 	}
+	if ok, isOk := step.(Ok); isOk && ok.RefreshToken != "" {
+		delete(p.refreshes, presented) // rotated: the old one is no longer current
+		p.refreshes[ok.RefreshToken] = true
+	}
 	p.mu.Unlock()
 	switch s := step.(type) {
-	case Ok:
-		writeJSON(w, http.StatusOK, tokenBody(s))
 	case Error:
 		status := s.Status
 		if status == 0 {
@@ -197,39 +260,11 @@ func (p *OAuthProvider) token(w http.ResponseWriter, r *http.Request) {
 		case <-r.Context().Done():
 		case <-p.stopped:
 		}
+	case Ok:
+		writeJSON(w, http.StatusOK, tokenBody(s))
 	default:
-		p.defaultToken(w, form)
-	}
-}
-
-func (p *OAuthProvider) defaultToken(w http.ResponseWriter, form url.Values) {
-	invalid := func() { writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_grant"}) }
-	if form.Get("grant_type") == "refresh_token" {
-		p.mu.Lock()
-		known := p.refreshes[form.Get("refresh_token")]
-		p.mu.Unlock()
-		if !known {
-			invalid()
-			return
-		}
 		writeJSON(w, http.StatusOK, tokenBody(Ok{}))
-		return
 	}
-	code := form.Get("code")
-	p.mu.Lock()
-	grant, ok := p.grants[code]
-	delete(p.grants, code)
-	p.mu.Unlock()
-	if form.Get("grant_type") != "authorization_code" || !ok ||
-		pkceChallenge(form.Get("code_verifier")) != grant.challenge || form.Get("redirect_uri") != grant.redirectURI {
-		invalid()
-		return
-	}
-	refresh := randomToken("refresh-")
-	p.mu.Lock()
-	p.refreshes[refresh] = true
-	p.mu.Unlock()
-	writeJSON(w, http.StatusOK, tokenBody(Ok{RefreshToken: refresh}))
 }
 
 func tokenBody(o Ok) map[string]any {
@@ -254,12 +289,16 @@ func tokenBody(o Ok) map[string]any {
 
 func (p *OAuthProvider) revoke(w http.ResponseWriter, r *http.Request) {
 	form, _ := url.ParseQuery(readBody(r))
-	if !p.clientOK(r) {
+	ok := p.clientOK(r)
+	p.mu.Lock()
+	p.attempts = append(p.attempts, RevokeAttempt{Token: form.Get("token"), Authorization: r.Header.Get("Authorization"), Accepted: ok})
+	if ok {
+		p.revoked = append(p.revoked, form.Get("token"))
+	}
+	p.mu.Unlock()
+	if !ok {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid_client"})
 		return
 	}
-	p.mu.Lock()
-	p.revoked = append(p.revoked, form.Get("token"))
-	p.mu.Unlock()
 	w.WriteHeader(http.StatusOK)
 }

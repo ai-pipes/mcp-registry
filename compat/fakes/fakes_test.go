@@ -103,14 +103,6 @@ func (h *headerTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	return h.base.RoundTrip(r)
 }
 
-func names(tools []fakes.Tool) []string {
-	out := make([]string, 0, len(tools))
-	for _, tl := range tools {
-		out = append(out, tl.Name)
-	}
-	return out
-}
-
 func TestFixtureTools(t *testing.T) {
 	if n := len(fakes.FixtureTools("gitea")); n != 61 {
 		t.Fatalf("gitea tools: %d", n)
@@ -390,17 +382,49 @@ func TestIdPPassesDiscoveryAndTokenVerification(t *testing.T) {
 	}
 }
 
-func TestIdPRejectsAWrongVerifierOrSecret(t *testing.T) {
-	idp := fakes.StartIdP(t)
-	_, hdr, _ := send(t, "GET", authorizeURL(idp, "right-right-right-right-right-right-1", "n"), "")
-	loc, _ := url.Parse(hdr.Get("Location"))
-	form := url.Values{
-		"grant_type": {"authorization_code"}, "code": {loc.Query().Get("code")},
-		"code_verifier": {"wrong"}, "client_id": {idp.ClientID}, "client_secret": {idp.ClientSecret},
+// idpCode runs the authorize step and returns the code.
+func idpCode(t *testing.T, idp *fakes.FakeIdP, verifier string) string {
+	t.Helper()
+	_, hdr, _ := send(t, "GET", authorizeURL(idp, verifier, "n"), "")
+	loc, err := url.Parse(hdr.Get("Location"))
+	if err != nil || loc.Query().Get("code") == "" {
+		t.Fatalf("authorize: %v %v", hdr, err)
 	}
+	return loc.Query().Get("code")
+}
+
+func idpToken(t *testing.T, idp *fakes.FakeIdP, mutate func(url.Values)) (int, string) {
+	t.Helper()
+	const verifier = "right-right-right-right-right-right-1"
+	form := url.Values{
+		"grant_type": {"authorization_code"}, "code": {idpCode(t, idp, verifier)},
+		"redirect_uri":  {"http://localhost:3000/api/auth/callback"},
+		"code_verifier": {verifier}, "client_id": {idp.ClientID}, "client_secret": {idp.ClientSecret},
+	}
+	mutate(form)
 	status, _, body := send(t, "POST", idp.Issuer+"/token", form.Encode(), "Content-Type: application/x-www-form-urlencoded")
-	if status != 400 || !strings.Contains(body, "invalid_grant") {
-		t.Fatalf("wrong verifier: %d %s", status, body)
+	return status, body
+}
+
+func TestIdPTokenEndpointIsNotLenient(t *testing.T) {
+	idp := fakes.StartIdP(t)
+	if status, body := idpToken(t, idp, func(url.Values) {}); status != 200 {
+		t.Fatalf("the valid request must pass: %d %s", status, body)
+	}
+	cases := map[string]struct {
+		mutate func(url.Values)
+		status int
+		code   string
+	}{
+		"wrong verifier":         {func(f url.Values) { f.Set("code_verifier", "wrong") }, 400, "invalid_grant"},
+		"wrong secret":           {func(f url.Values) { f.Set("client_secret", "nope") }, 401, "invalid_client"},
+		"missing redirect_uri":   {func(f url.Values) { f.Del("redirect_uri") }, 400, "invalid_grant"},
+		"different redirect_uri": {func(f url.Values) { f.Set("redirect_uri", "http://localhost:3000/other") }, 400, "invalid_grant"},
+	}
+	for name, c := range cases {
+		if status, body := idpToken(t, idp, c.mutate); status != c.status || !strings.Contains(body, c.code) {
+			t.Errorf("%s: %d %s, want %d %s", name, status, body, c.status, c.code)
+		}
 	}
 }
 
@@ -455,13 +479,54 @@ func tokenCall(t *testing.T, p *fakes.OAuthProvider, form url.Values) (int, stri
 	return status, body
 }
 
+const oauthRedirect = "http://localhost:3000/api/connections/callback"
+
+func oauthAuthorize(t *testing.T, p *fakes.OAuthProvider, verifier string) string {
+	t.Helper()
+	sum := sha256.Sum256([]byte(verifier))
+	q := url.Values{
+		"client_id": {p.ClientID}, "response_type": {"code"}, "state": {"s-9"}, "redirect_uri": {oauthRedirect},
+		"code_challenge": {base64.RawURLEncoding.EncodeToString(sum[:])}, "code_challenge_method": {"S256"},
+	}
+	status, hdr, _ := send(t, "GET", p.AuthorizeURL+"?"+q.Encode(), "")
+	loc, err := url.Parse(hdr.Get("Location"))
+	if status != 302 || err != nil || loc.Query().Get("state") != "s-9" || loc.Query().Get("code") == "" {
+		t.Fatalf("authorize: %d %v", status, hdr)
+	}
+	return loc.Query().Get("code")
+}
+
+const oauthVerifier = "verifier-verifier-verifier-verifier-1234"
+
+// issueRefresh runs the code flow and returns the refresh token the provider issued.
+func issueRefresh(t *testing.T, p *fakes.OAuthProvider) string {
+	t.Helper()
+	status, body := tokenCall(t, p, url.Values{
+		"grant_type": {"authorization_code"}, "code": {oauthAuthorize(t, p, oauthVerifier)},
+		"redirect_uri": {oauthRedirect}, "code_verifier": {oauthVerifier},
+	})
+	var tok struct {
+		RefreshToken string `json:"refresh_token"`
+	}
+	if err := json.Unmarshal([]byte(body), &tok); status != 200 || err != nil || tok.RefreshToken == "" {
+		t.Fatalf("code exchange: %d %s", status, body)
+	}
+	return tok.RefreshToken
+}
+
+func refresh(t *testing.T, p *fakes.OAuthProvider, token string) (int, string) {
+	t.Helper()
+	return tokenCall(t, p, url.Values{"grant_type": {"refresh_token"}, "refresh_token": {token}})
+}
+
 func TestOAuthProviderAnswersTheScriptInOrder(t *testing.T) {
 	p := fakes.StartOAuthProvider(t)
+	r0 := issueRefresh(t, p)
 	p.Script(
 		fakes.Ok{AccessToken: "acc-1", RefreshToken: "ref-1", ExpiresIn: 120},
 		fakes.Error{Status: 400, Code: "invalid_grant"},
 	)
-	status, body := tokenCall(t, p, url.Values{"grant_type": {"refresh_token"}, "refresh_token": {"r0"}})
+	status, body := refresh(t, p, r0)
 	var tok struct {
 		AccessToken  string `json:"access_token"`
 		RefreshToken string `json:"refresh_token"`
@@ -470,11 +535,15 @@ func TestOAuthProviderAnswersTheScriptInOrder(t *testing.T) {
 	if err := json.Unmarshal([]byte(body), &tok); status != 200 || err != nil || tok.AccessToken != "acc-1" || tok.RefreshToken != "ref-1" || tok.ExpiresIn != 120 {
 		t.Fatalf("first step: %d %s", status, body)
 	}
-	if status, body = tokenCall(t, p, url.Values{"grant_type": {"refresh_token"}, "refresh_token": {"r1"}}); status != 400 || !strings.Contains(body, `"invalid_grant"`) {
+	// ref-1 replaced r0 (rotation), so it is the valid one now.
+	if status, body = refresh(t, p, "ref-1"); status != 400 || !strings.Contains(body, `"invalid_grant"`) {
 		t.Fatalf("second step: %d %s", status, body)
 	}
+	if status, _ = refresh(t, p, r0); status != 400 {
+		t.Fatalf("a rotated-away refresh token must be rejected: %d", status)
+	}
 	reqs := p.Requests()
-	if len(reqs) != 2 || reqs[0].GrantType != "refresh_token" || reqs[1].Form.Get("refresh_token") != "r1" {
+	if len(reqs) != 4 || reqs[1].GrantType != "refresh_token" || reqs[2].Form.Get("refresh_token") != "ref-1" {
 		t.Fatalf("requests: %+v", reqs)
 	}
 	id, secret, ok := reqs[0].BasicAuth()
@@ -483,25 +552,64 @@ func TestOAuthProviderAnswersTheScriptInOrder(t *testing.T) {
 	}
 }
 
+func TestOAuthProviderScriptTwoValidRefreshesInOrder(t *testing.T) {
+	p := fakes.StartOAuthProvider(t)
+	r0 := issueRefresh(t, p)
+	p.Script(fakes.Ok{AccessToken: "acc-1"}, fakes.Error{Status: 400, Code: "invalid_grant"})
+	if status, body := refresh(t, p, r0); status != 200 || !strings.Contains(body, "acc-1") {
+		t.Fatalf("first refresh: %d %s", status, body)
+	}
+	if status, body := refresh(t, p, r0); status != 400 || !strings.Contains(body, "invalid_grant") {
+		t.Fatalf("second refresh: %d %s", status, body)
+	}
+}
+
+func TestOAuthProviderScriptDoesNotBypassGrantValidation(t *testing.T) {
+	p := fakes.StartOAuthProvider(t)
+	r0 := issueRefresh(t, p)
+	p.Script(fakes.Ok{AccessToken: "acc-scripted"})
+	// (a) a refresh token the provider never issued is refused and the step stays.
+	if status, body := refresh(t, p, "made-up"); status != 400 || !strings.Contains(body, "invalid_grant") {
+		t.Fatalf("unknown refresh token: %d %s", status, body)
+	}
+	// (b) a code exchange with a wrong verifier is refused and the step stays.
+	status, body := tokenCall(t, p, url.Values{
+		"grant_type": {"authorization_code"}, "code": {oauthAuthorize(t, p, oauthVerifier)},
+		"redirect_uri": {oauthRedirect}, "code_verifier": {"wrong"},
+	})
+	if status != 400 || !strings.Contains(body, "invalid_grant") {
+		t.Fatalf("wrong verifier: %d %s", status, body)
+	}
+	// A valid code exchange is not scripted either, and leaves the step alone.
+	if r1 := issueRefresh(t, p); r1 == "" {
+		t.Fatal("no refresh token")
+	}
+	if status, body = refresh(t, p, r0); status != 200 || !strings.Contains(body, "acc-scripted") {
+		t.Fatalf("the step must still be queued for a valid refresh: %d %s", status, body)
+	}
+}
+
 func TestOAuthProviderRejectsBadClientAuthWithoutConsumingTheScript(t *testing.T) {
 	p := fakes.StartOAuthProvider(t)
+	r0 := issueRefresh(t, p)
 	p.Script(fakes.Ok{AccessToken: "acc"})
 	status, _, body := send(t, "POST", p.TokenURL, "grant_type=refresh_token&refresh_token=x",
 		"Content-Type: application/x-www-form-urlencoded", "Authorization: Basic "+base64.StdEncoding.EncodeToString([]byte("a:b")))
 	if status != 401 || !strings.Contains(body, "invalid_client") {
 		t.Fatalf("bad client auth: %d %s", status, body)
 	}
-	if status, _ = tokenCall(t, p, url.Values{"grant_type": {"refresh_token"}, "refresh_token": {"x"}}); status != 200 {
+	if status, _ = refresh(t, p, r0); status != 200 {
 		t.Fatalf("the script step must still be there: %d", status)
 	}
 }
 
 func TestOAuthProviderHangEndsWithTheCallersDeadline(t *testing.T) {
 	p := fakes.StartOAuthProvider(t)
+	r0 := issueRefresh(t, p)
 	p.Script(fakes.Hang{})
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, "POST", p.TokenURL, strings.NewReader("grant_type=refresh_token"))
+	req, err := http.NewRequestWithContext(ctx, "POST", p.TokenURL, strings.NewReader("grant_type=refresh_token&refresh_token="+r0))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -552,8 +660,49 @@ func TestOAuthProviderCodeFlowAndRevoke(t *testing.T) {
 	}
 }
 
-func TestNamesHelper(t *testing.T) {
-	if got := strings.Join(names(fakes.Tools("p", "q")), ","); got != "p,q" {
-		t.Fatalf("Tools names: %s", got)
+func TestOAuthProviderRecordsRevokeAttemptsWithBadCredentials(t *testing.T) {
+	p := fakes.StartOAuthProvider(t)
+	bad := "Basic " + base64.StdEncoding.EncodeToString([]byte("a:b"))
+	status, _, _ := send(t, "POST", p.RevokeURL, "token=t-bad", "Content-Type: application/x-www-form-urlencoded", "Authorization: "+bad)
+	if status != 401 {
+		t.Fatalf("revoke with bad credentials: %d", status)
+	}
+	good := "Basic " + base64.StdEncoding.EncodeToString([]byte(url.QueryEscape(p.ClientID)+":"+url.QueryEscape(p.ClientSecret)))
+	if status, _, _ = send(t, "POST", p.RevokeURL, "token=t-good", "Content-Type: application/x-www-form-urlencoded", "Authorization: "+good); status != 200 {
+		t.Fatalf("revoke: %d", status)
+	}
+	att := p.RevokeAttempts()
+	if len(att) != 2 || att[0].Token != "t-bad" || att[0].Accepted || att[0].Authorization != bad || att[1].Token != "t-good" || !att[1].Accepted {
+		t.Fatalf("attempts: %+v", att)
+	}
+	if r := p.Revoked(); len(r) != 1 || r[0] != "t-good" {
+		t.Fatalf("Revoked must hold accepted ones only: %v", r)
+	}
+}
+
+func TestUpstreamRecordsEveryRequestWithItsMethod(t *testing.T) {
+	u := fakes.StartUpstream(t, fakes.UpstreamOptions{Tools: fakes.Tools("echo")})
+	s := connect(t, u, "X-Probe: 1")
+	if _, err := s.ListTools(context.Background(), nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CallTool(context.Background(), &mcp.CallToolParams{Name: "echo"}); err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	for _, r := range u.Requests() {
+		if r.Header.Get("X-Probe") != "1" && r.Method != "" {
+			t.Fatalf("request %q lost its headers: %v", r.Method, r.Header)
+		}
+		seen[r.Method] = true
+	}
+	for _, m := range []string{"tools/list", "tools/call"} {
+		if !seen[m] {
+			t.Fatalf("no %s among %v", m, seen)
+		}
+	}
+	u.Reset()
+	if len(u.Requests()) != 0 {
+		t.Fatal("Reset must clear Requests")
 	}
 }

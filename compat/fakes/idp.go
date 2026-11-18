@@ -229,7 +229,10 @@ func (p *FakeIdP) token(w http.ResponseWriter, r *http.Request) {
 	grant, ok := p.grants[code]
 	delete(p.grants, code)
 	p.mu.Unlock()
-	if r.PostForm.Get("grant_type") != "authorization_code" || !ok || pkceChallenge(r.PostForm.Get("code_verifier")) != grant.challenge {
+	// RFC 6749 section 4.1.3: redirect_uri is required and must equal the one sent to authorize.
+	if r.PostForm.Get("grant_type") != "authorization_code" || !ok ||
+		pkceChallenge(r.PostForm.Get("code_verifier")) != grant.challenge ||
+		r.PostForm.Get("redirect_uri") == "" || r.PostForm.Get("redirect_uri") != grant.redirectURI {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_grant"})
 		return
 	}
