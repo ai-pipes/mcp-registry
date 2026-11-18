@@ -28,10 +28,9 @@ package compat_test
 // identity.tokens (hash char(64)), which is what the scenarios query.
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
+	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -48,45 +47,23 @@ import (
 )
 
 var (
-	sessionCookieValue = regexp.MustCompile(`^[A-Za-z0-9_-]{43}$`)
-	linkCodePattern    = regexp.MustCompile(`^ll_[A-Za-z0-9_-]{43}$`)
-	tokenPattern       = regexp.MustCompile(`^sk_[A-Za-z0-9_-]{43}$`)
+	identitySessionCookieValue = regexp.MustCompile(`^[A-Za-z0-9_-]{43}$`)
+	identityLinkCodePattern    = regexp.MustCompile(`^ll_[A-Za-z0-9_-]{43}$`)
+	identityTokenPattern       = regexp.MustCompile(`^sk_[A-Za-z0-9_-]{43}$`)
 )
 
-func sha256hex(s string) string {
-	sum := sha256.Sum256([]byte(s))
-	return hex.EncodeToString(sum[:])
-}
-
-// countSQL runs a "select count(*)" style query.
-func countSQL(t *testing.T, s *harness.Stack, query string, args ...any) int {
-	t.Helper()
-	var n int
-	if err := s.DB.QueryRow(t.Context(), query, args...).Scan(&n); err != nil {
-		t.Fatalf("%s: %v", query, err)
-	}
-	return n
-}
-
-func execSQL(t *testing.T, s *harness.Stack, query string, args ...any) {
-	t.Helper()
-	if _, err := s.DB.Exec(t.Context(), query, args...); err != nil {
-		t.Fatalf("%s: %v", query, err)
-	}
-}
-
-// assertSessionCookie checks the flags of the session cookie a sign-in sets, and that the value is
+// identityAssertSessionCookie checks the flags of the session cookie a sign-in sets, and that the value is
 // not the code that was spent (when given).
-func assertSessionCookie(t *testing.T, r harness.Response, secure bool, spent string) *http.Cookie {
+func identityAssertSessionCookie(t *testing.T, r harness.Response, secure bool, spent string) *http.Cookie {
 	t.Helper()
 	c := cookieNamed(r, "mcp_session")
 	if c == nil {
 		t.Fatalf("no mcp_session cookie (%d Set-Cookie headers)", len(r.Header.Values("Set-Cookie")))
 	}
-	if !sessionCookieValue.MatchString(c.Value) || !c.HttpOnly || c.SameSite != http.SameSiteStrictMode ||
+	if !identitySessionCookieValue.MatchString(c.Value) || !c.HttpOnly || c.SameSite != http.SameSiteStrictMode ||
 		c.Path != "/" || c.Secure != secure || c.MaxAge != 0 || !c.Expires.IsZero() {
 		t.Errorf("session cookie %q: value shape %v httpOnly %v sameSite %v path %q secure %v (want %v) maxAge %d expires %v",
-			c.Name, sessionCookieValue.MatchString(c.Value), c.HttpOnly, c.SameSite, c.Path, c.Secure, secure, c.MaxAge, c.Expires)
+			c.Name, identitySessionCookieValue.MatchString(c.Value), c.HttpOnly, c.SameSite, c.Path, c.Secure, secure, c.MaxAge, c.Expires)
 	}
 	if spent != "" && strings.Contains(strings.Join(r.Header.Values("Set-Cookie"), "\n"), spent) {
 		t.Error("the Set-Cookie header carries the sign-in code")
@@ -94,8 +71,8 @@ func assertSessionCookie(t *testing.T, r harness.Response, secure bool, spent st
 	return c
 }
 
-// loginPerson describes one signed-in person of the OIDC scenarios.
-func loginPerson(sub, name string, groups ...string) fakes.Claims {
+// identityLoginPerson describes one signed-in person of the OIDC scenarios.
+func identityLoginPerson(sub, name string, groups ...string) fakes.Claims {
 	return fakes.Claims{Sub: sub, Name: name, Email: strings.ToLower(name) + "@example.test", Groups: groups}
 }
 
@@ -137,7 +114,7 @@ func TestIdentityOIDC(t *testing.T) {
 
 	t.Run("a member signs in, lands on returnTo and /me shows the claims", func(t *testing.T) {
 		sub := harness.Unique("member")
-		a := beginIDPLogin(t, s, idp, loginPerson(sub, "Anna", "mcp-users"), "/servers")
+		a := beginIDPLogin(t, s, idp, identityLoginPerson(sub, "Anna", "mcp-users"), "/servers")
 		// The binding cookie of the attempt: Lax, HttpOnly, scoped to /api/auth, ten minutes.
 		b := cookieNamed(a.Start, "mcp_login")
 		if b == nil || !b.HttpOnly || b.SameSite != http.SameSiteLaxMode || b.Path != "/api/auth" || b.MaxAge != 600 || b.Secure {
@@ -148,7 +125,7 @@ func TestIdentityOIDC(t *testing.T) {
 			t.Fatalf("callback: %d Location %q", cb.Status, cb.Header.Get("Location"))
 		}
 		leaked = append(leaked, a.Code, cookieNamed(cb, "mcp_session").Value)
-		assertSessionCookie(t, cb, false, a.Code)
+		identityAssertSessionCookie(t, cb, false, a.Code)
 		// The binding is spent whatever the outcome: cleared with Max-Age=0 on the same path.
 		if cl := cookieNamed(cb, "mcp_login"); cl == nil || cl.Value != "" || cl.MaxAge >= 0 || cl.Path != "/api/auth" {
 			t.Fatalf("binding cookie after the callback: %s", cookieDesc(cl))
@@ -180,7 +157,7 @@ func TestIdentityOIDC(t *testing.T) {
 
 	t.Run("the authorize request carries PKCE, state, nonce, scopes and the registered redirect_uri", func(t *testing.T) {
 		before := len(idp.AuthorizeRequests())
-		beginIDPLogin(t, s, idp, loginPerson(harness.Unique("p"), "Pat", "mcp-users"), "")
+		beginIDPLogin(t, s, idp, identityLoginPerson(harness.Unique("p"), "Pat", "mcp-users"), "")
 		reqs := idp.AuthorizeRequests()
 		if len(reqs) != before+1 {
 			t.Fatalf("authorize requests: %d, want %d", len(reqs), before+1)
@@ -200,11 +177,11 @@ func TestIdentityOIDC(t *testing.T) {
 
 	t.Run("members of the admin group are admins; groups and role refresh on the next login", func(t *testing.T) {
 		sub := harness.Unique("promoted")
-		first := loginViaIDP(t, s, idp, loginPerson(sub, "Boris", "mcp-users"))
+		first := loginViaIDP(t, s, idp, identityLoginPerson(sub, "Boris", "mcp-users"))
 		if me := whoami(t, first); me.Role != "member" || !slices.Equal(me.Groups, []string{"mcp-users"}) {
 			t.Fatalf("first login: %+v", me)
 		}
-		second := loginViaIDP(t, s, idp, loginPerson(sub, "Boris", "mcp-users", "mcp-admins"))
+		second := loginViaIDP(t, s, idp, identityLoginPerson(sub, "Boris", "mcp-users", "mcp-admins"))
 		me := whoami(t, second)
 		if me.Role != "admin" || !slices.Equal(me.Groups, []string{"mcp-users", "mcp-admins"}) {
 			t.Fatalf("second login: %+v", me)
@@ -213,7 +190,7 @@ func TestIdentityOIDC(t *testing.T) {
 			t.Fatalf("%d people for one sub", n)
 		}
 		// The admin group alone is enough (no login group needed); the admin reaches admin routes.
-		only := loginViaIDP(t, s, idp, loginPerson(harness.Unique("ops"), "Olga", "mcp-admins"))
+		only := loginViaIDP(t, s, idp, identityLoginPerson(harness.Unique("ops"), "Olga", "mcp-admins"))
 		if me := whoami(t, only); me.Role != "admin" {
 			t.Fatalf("admin group only: %+v", me)
 		}
@@ -221,7 +198,7 @@ func TestIdentityOIDC(t *testing.T) {
 			t.Fatalf("admin GET /api/users: %d", r.Status)
 		}
 		// Demotion: the next login without the admin group is a member again.
-		third := loginViaIDP(t, s, idp, loginPerson(sub, "Boris", "mcp-users"))
+		third := loginViaIDP(t, s, idp, identityLoginPerson(sub, "Boris", "mcp-users"))
 		if me := whoami(t, third); me.Role != "member" {
 			t.Fatalf("after losing the admin group: %+v", me)
 		}
@@ -269,12 +246,12 @@ func TestIdentityOIDC(t *testing.T) {
 			}
 		}
 		// Control: the same flow with an allowed group signs in.
-		loginViaIDP(t, s, idp, loginPerson(harness.Unique("insider"), "Insider", "mcp-users"))
+		loginViaIDP(t, s, idp, identityLoginPerson(harness.Unique("insider"), "Insider", "mcp-users"))
 	})
 
 	t.Run("UserInfo failing denies the login and logs a warning without tokens or claims", func(t *testing.T) {
 		sub := harness.Unique("noinfo")
-		claims := loginPerson(sub, "Nina", "mcp-users")
+		claims := identityLoginPerson(sub, "Nina", "mcp-users")
 		claims.Where = fakes.InUserInfo
 		idp.UserInfoDown(true)
 		a := beginIDPLogin(t, s, idp, claims, "")
@@ -307,7 +284,7 @@ func TestIdentityOIDC(t *testing.T) {
 	t.Run("returnTo is a relative path of this site only", func(t *testing.T) {
 		for _, c := range []struct{ returnTo, want string }{
 			{"/servers", "/servers"},
-			{"/admin/servers/new?x=1#y", "/admin/servers/new?x=1"}, // the fragment never reaches the server
+			{"/admin/servers/new?x=1#y", "/admin/servers/new?x=1#y"}, // the fragment is part of the encoded returnTo value
 			{"https://evil.example/", "/"},
 			{"//evil.example/x", "/"},
 			{"/\\evil.example", "/"},
@@ -317,7 +294,7 @@ func TestIdentityOIDC(t *testing.T) {
 			{"", "/"},
 		} {
 			sub := harness.Unique("rt")
-			a := beginIDPLogin(t, s, idp, loginPerson(sub, "Ray", "mcp-users"), strings.SplitN(c.returnTo, "#", 2)[0])
+			a := beginIDPLogin(t, s, idp, identityLoginPerson(sub, "Ray", "mcp-users"), c.returnTo)
 			cb := a.callback(t)
 			if cb.Status != 302 || cb.Header.Get("Location") != c.want {
 				t.Errorf("returnTo %q: %d Location %q, want %q", c.returnTo, cb.Status, cb.Header.Get("Location"), c.want)
@@ -326,7 +303,7 @@ func TestIdentityOIDC(t *testing.T) {
 	})
 
 	t.Run("a state is accepted once and only in the browser that started it", func(t *testing.T) {
-		a := beginIDPLogin(t, s, idp, loginPerson(harness.Unique("once"), "Ola", "mcp-users"), "/servers")
+		a := beginIDPLogin(t, s, idp, identityLoginPerson(harness.Unique("once"), "Ola", "mcp-users"), "/servers")
 		first := a.callback(t)
 		if first.Status != 302 || first.Header.Get("Location") != "/servers" {
 			t.Fatalf("first callback: %d %q", first.Status, first.Header.Get("Location"))
@@ -336,10 +313,10 @@ func TestIdentityOIDC(t *testing.T) {
 		loginErr(t, replay, "/?loginError=invalid_state")
 
 		// Login CSRF: a callback that did not start in this browser has no binding cookie.
-		b := beginIDPLogin(t, s, idp, loginPerson(harness.Unique("csrf"), "Cal", "mcp-users"), "")
+		b := beginIDPLogin(t, s, idp, identityLoginPerson(harness.Unique("csrf"), "Cal", "mcp-users"), "")
 		loginErr(t, s.Anonymous().Do(t, "GET", b.Back, nil), "/?loginError=invalid_state")
 		// The binding cookie of another attempt does not match this state either.
-		other := beginIDPLogin(t, s, idp, loginPerson(harness.Unique("csrf"), "Cal", "mcp-users"), "")
+		other := beginIDPLogin(t, s, idp, identityLoginPerson(harness.Unique("csrf"), "Cal", "mcp-users"), "")
 		loginErr(t, s.Anonymous().Do(t, "GET", b.Back, nil, "Cookie: "+other.Binding), "/?loginError=invalid_state")
 		// None of it spent the attempt or created anybody: the right browser still gets in.
 		if cb := b.callback(t); cb.Status != 302 || cb.Header.Get("Location") != "/" || cookieNamed(cb, "mcp_session") == nil {
@@ -356,7 +333,7 @@ func TestIdentityOIDC(t *testing.T) {
 			{"no iss", func(q url.Values) { q.Del("iss") }},
 		} {
 			sub := harness.Unique("iss")
-			a := beginIDPLogin(t, s, idp, loginPerson(sub, "Ivo", "mcp-users"), "")
+			a := beginIDPLogin(t, s, idp, identityLoginPerson(sub, "Ivo", "mcp-users"), "")
 			u, err := url.Parse(a.Back)
 			if err != nil {
 				t.Fatal(err)
@@ -389,7 +366,7 @@ func TestIdentityOIDC(t *testing.T) {
 		before := countFailed()
 
 		// The provider answers the code exchange with an OAuth error (a code it never issued).
-		a := beginIDPLogin(t, s, idp, loginPerson(harness.Unique("badcode"), "Bea", "mcp-users"), "")
+		a := beginIDPLogin(t, s, idp, identityLoginPerson(harness.Unique("badcode"), "Bea", "mcp-users"), "")
 		u, _ := url.Parse(a.Back)
 		q := u.Query()
 		q.Set("code", "forged-code")
@@ -404,7 +381,7 @@ func TestIdentityOIDC(t *testing.T) {
 		}
 
 		// The provider's token endpoint is down (a 5xx): not the person's fault, not audited.
-		b := beginIDPLogin(t, s, idp, loginPerson(harness.Unique("outage"), "Ben", "mcp-users"), "")
+		b := beginIDPLogin(t, s, idp, identityLoginPerson(harness.Unique("outage"), "Ben", "mcp-users"), "")
 		idp.Down(true)
 		cb := b.callback(t)
 		idp.Down(false)
@@ -416,7 +393,7 @@ func TestIdentityOIDC(t *testing.T) {
 		if r := anon.Do(t, "GET", "/healthz", nil); r.Status != 200 {
 			t.Fatalf("healthz during the outage: %d", r.Status)
 		}
-		loginViaIDP(t, s, idp, loginPerson(harness.Unique("back"), "Ann", "mcp-users"))
+		loginViaIDP(t, s, idp, identityLoginPerson(harness.Unique("back"), "Ann", "mcp-users"))
 	})
 
 	t.Run("an unexpected failure redirects with loginError=internal, not a JSON 500", func(t *testing.T) {
@@ -434,7 +411,7 @@ func TestIdentityOIDC(t *testing.T) {
 		}
 		defer restore()
 		sub := harness.Unique("db")
-		a := beginIDPLogin(t, s, idp, loginPerson(sub, "Dan", "mcp-users"), "")
+		a := beginIDPLogin(t, s, idp, identityLoginPerson(sub, "Dan", "mcp-users"), "")
 		loginErr(t, a.callback(t), "/?loginError=internal")
 		restore()
 		if _, _, n := userRow(t, sub); n != 0 {
@@ -452,12 +429,12 @@ func TestIdentityOIDC(t *testing.T) {
 			t.Fatalf("the error record quotes the failure message: %v", logged)
 		}
 		// Control: once the database accepts writes the same person signs in.
-		loginViaIDP(t, s, idp, loginPerson(sub, "Dan", "mcp-users"))
+		loginViaIDP(t, s, idp, identityLoginPerson(sub, "Dan", "mcp-users"))
 	})
 
 	t.Run("a disabled person is refused with loginError=disabled and the refusal is audited", func(t *testing.T) {
 		sub := harness.Unique("off")
-		claims := loginPerson(sub, "Olaf", "mcp-users")
+		claims := identityLoginPerson(sub, "Olaf", "mcp-users")
 		victim := loginViaIDP(t, s, idp, claims)
 		id := whoami(t, victim).UserID
 		if r := admin.Do(t, "POST", "/api/users/"+id+"/disabled", map[string]bool{"disabled": true}); r.Status != 204 {
@@ -483,7 +460,7 @@ func TestIdentityOIDC(t *testing.T) {
 	})
 
 	t.Run("logout ends the session and is audited; without a session it is still 204", func(t *testing.T) {
-		c := loginViaIDP(t, s, idp, loginPerson(harness.Unique("bye"), "Bye", "mcp-users"))
+		c := loginViaIDP(t, s, idp, identityLoginPerson(harness.Unique("bye"), "Bye", "mcp-users"))
 		id := whoami(t, c).UserID
 		out := c.Do(t, "POST", "/api/auth/logout", nil)
 		if out.Status != 204 || len(out.Body) != 0 {
@@ -503,6 +480,26 @@ func TestIdentityOIDC(t *testing.T) {
 		}
 	})
 
+	t.Run("logout without the right Origin is refused with csrf and keeps the session", func(t *testing.T) {
+		c := loginViaIDP(t, s, idp, identityLoginPerson(harness.Unique("csrflo"), "Cs", "mcp-users"))
+		for _, h := range []string{"Origin:", "Origin: https://evil.example"} {
+			r := c.Do(t, "POST", "/api/auth/logout", nil, h)
+			if r.Status != 403 || string(r.Body) != `{"error":{"code":"csrf","message":"cross-origin request rejected"}}` || cookieNamed(r, "mcp_session") != nil {
+				t.Fatalf("logout with %q: %d %s", h, r.Status, r.Body)
+			}
+			if got := whoami(t, c); got.Name != "Cs" {
+				t.Fatalf("the session changed after the refused logout: %+v", got)
+			}
+		}
+		if r := c.Do(t, "POST", "/api/auth/logout", nil); r.Status != 204 {
+			t.Fatalf("the genuine logout: %d", r.Status)
+		}
+		if r := c.Do(t, "GET", "/api/auth/me", nil); r.Status != 401 {
+			t.Fatalf("me after the genuine logout: %d", r.Status)
+		}
+	})
+
+	// Reads data produced by the earlier subtests: it must run as part of this parent test.
 	t.Run("the audit log has the documented login records and no secret", func(t *testing.T) {
 		entries := auditAll(t, admin)
 		// OIDC logins carry the actor only; the admin of this test signed in with a link.
@@ -538,35 +535,15 @@ func TestIdentityOIDC(t *testing.T) {
 	})
 }
 
-func mustJSON(t *testing.T, v any) string {
-	t.Helper()
-	b, err := json.Marshal(v)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(b)
-}
-
-func mustString(v any) string {
-	s, _ := v.(string)
-	return s
-}
-
-// firstLine is the first line of a CLI output.
-func firstLine(s string) string {
-	line, _, _ := strings.Cut(s, "\n")
-	return strings.TrimSpace(line)
-}
-
-// cliToken creates a person (if needed) and an API token for them through the CLI.
-func cliToken(t *testing.T, s *harness.Stack, sub string) string {
+// identityCLIToken creates a person (if needed) and an API token for them through the CLI.
+func identityCLIToken(t *testing.T, s *harness.Stack, sub string) string {
 	t.Helper()
 	if r := s.CLI(t, "", "create-user", "--sub", sub, "--name", "Cli "+sub); r.Code != 0 {
 		t.Fatalf("create-user: %d %s", r.Code, r.Stderr)
 	}
 	r := s.CLI(t, "", "create-token", sub, "--name", "cli")
 	token := firstLine(r.Stdout)
-	if r.Code != 0 || !tokenPattern.MatchString(token) {
+	if r.Code != 0 || !identityTokenPattern.MatchString(token) {
 		t.Fatalf("create-token: %d stdout %q stderr %q", r.Code, harness.Redact(r.Stdout), r.Stderr)
 	}
 	return token
@@ -591,7 +568,7 @@ func TestIdentityOIDCProviderDownAtStart(t *testing.T) {
 		if r := anon.Do(t, "GET", "/healthz", nil); r.Status != 200 {
 			t.Fatalf("healthz: %d", r.Status)
 		}
-		token := cliToken(t, s, harness.Unique("ops"))
+		token := identityCLIToken(t, s, harness.Unique("ops"))
 		tools, err := s.MCP(t, token).ListTools(t.Context(), nil)
 		if err != nil || len(tools.Tools) != 4 {
 			t.Fatalf("tools/list: %v %v", tools, err)
@@ -629,7 +606,7 @@ func TestIdentityOIDCProviderDownAtStart(t *testing.T) {
 		if cb.Status != 302 || cb.Header.Get("Location") != "/servers" {
 			t.Fatalf("callback: %d %q", cb.Status, cb.Header.Get("Location"))
 		}
-		sess := assertSessionCookie(t, cb, true, a.Code)
+		sess := identityAssertSessionCookie(t, cb, true, a.Code)
 		var me meBody
 		a.Client.Do(t, "GET", "/api/auth/me", nil, "Cookie: mcp_session="+sess.Value).JSON(t, "MeResponse", &me)
 		if me.Role != "member" || !slices.Equal(me.Groups, []string{"staff"}) {
@@ -669,29 +646,27 @@ func TestIdentityOIDCProviderDownAtStart(t *testing.T) {
 	})
 
 	t.Run("a link sign-in sets a Secure session cookie", func(t *testing.T) {
-		sub := harness.Unique("link")
-		s.CLI(t, "", "create-user", "--sub", sub, "--name", "Lin")
-		r := s.CLI(t, "", "login-link", sub)
-		_, code, _ := strings.Cut(strings.TrimSpace(r.Stdout), "#link=")
+		sub := identityPerson(t, s, "link")
+		code := identityLinkFor(t, s, sub)
 		resp := anon.Do(t, "POST", "/api/auth/link", map[string]string{"code": code})
 		if resp.Status != 204 {
 			t.Fatalf("link: %d %s", resp.Status, resp.Body)
 		}
-		assertSessionCookie(t, resp, true, code)
+		identityAssertSessionCookie(t, resp, true, code)
 	})
 }
 
-var ipSeq atomic.Int32
+var identityIPSeq atomic.Int32
 
-// nextIP is a client address no other scenario uses; the stack trusts X-Forwarded-For, so each
+// identityNextIP is a client address no other scenario uses; the stack trusts X-Forwarded-For, so each
 // scenario gets its own failure budget.
-func nextIP() string { return fmt.Sprintf("203.0.113.%d", ipSeq.Add(1)) }
+func identityNextIP() string { return fmt.Sprintf("203.0.113.%d", identityIPSeq.Add(1)) }
 
-func forwarded(ip string) string { return "X-Forwarded-For: " + ip }
+func identityForwarded(ip string) string { return "X-Forwarded-For: " + ip }
 
-// linkFor issues a sign-in link for an existing person through the CLI and returns the code. The
+// identityLinkFor issues a sign-in link for an existing person through the CLI and returns the code. The
 // link's exact form is asserted in its own scenario.
-func linkFor(t *testing.T, s *harness.Stack, sub string) string {
+func identityLinkFor(t *testing.T, s *harness.Stack, sub string) string {
 	t.Helper()
 	r := s.CLI(t, "", "login-link", sub)
 	if r.Code != 0 {
@@ -704,8 +679,8 @@ func linkFor(t *testing.T, s *harness.Stack, sub string) string {
 	return code
 }
 
-// person creates a member and returns the sub.
-func person(t *testing.T, s *harness.Stack, prefix string) string {
+// identityPerson creates a member and returns the sub.
+func identityPerson(t *testing.T, s *harness.Stack, prefix string) string {
 	t.Helper()
 	sub := harness.Unique(prefix)
 	if r := s.CLI(t, "", "create-user", "--sub", sub, "--name", "P "+sub); r.Code != 0 {
@@ -714,7 +689,7 @@ func person(t *testing.T, s *harness.Stack, prefix string) string {
 	return sub
 }
 
-func userID(t *testing.T, s *harness.Stack, sub string) string {
+func identityUserID(t *testing.T, s *harness.Stack, sub string) string {
 	t.Helper()
 	var id string
 	if err := s.DB.QueryRow(t.Context(), `select id::text from identity.users where oidc_sub = $1`, sub).Scan(&id); err != nil {
@@ -723,24 +698,24 @@ func userID(t *testing.T, s *harness.Stack, sub string) string {
 	return id
 }
 
-func postLink(t *testing.T, c *harness.Client, code string, hdr ...string) harness.Response {
+func identityPostLink(t *testing.T, c *harness.Client, code string, hdr ...string) harness.Response {
 	t.Helper()
 	return c.Do(t, "POST", "/api/auth/link", map[string]string{"code": code}, hdr...)
 }
 
-// mcpInitialize sends a raw initialize request with a Bearer token.
-func mcpInitialize(t *testing.T, c *harness.Client, token string, hdr ...string) harness.Response {
+// identityMCPInitialize sends a raw initialize request with a Bearer token.
+func identityMCPInitialize(t *testing.T, c *harness.Client, token string, hdr ...string) harness.Response {
 	t.Helper()
 	body := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"compat","version":"1"}}}`
 	hdr = append([]string{"Authorization: Bearer " + token, "Content-Type: application/json", "Accept: application/json, text/event-stream"}, hdr...)
 	return c.Do(t, "POST", "/mcp", body, hdr...)
 }
 
-func randomLinkCode() string { return "ll_" + strings.Repeat("A", 11) + harness.Unique("")[1:] }
+func identityRandomLinkCode() string { return "ll_" + strings.Repeat("A", 11) + harness.Unique("")[1:] }
 
 const (
-	unauthenticatedSession = "unauthenticated|sign in required"
-	invalidLink            = "invalid_link|the link is invalid or has expired"
+	identityUnauthenticated = "unauthenticated|sign in required"
+	identityInvalidLink     = "invalid_link|the link is invalid or has expired"
 )
 
 // TestIdentityNoOIDC runs the scenarios of a server without OIDC on one stack that trusts
@@ -769,15 +744,15 @@ func TestIdentityNoOIDC(t *testing.T) {
 	})
 
 	t.Run("the CLI link has the documented form, is stored only as its SHA-256 and lives 15 minutes", func(t *testing.T) {
-		sub := person(t, s, "form")
+		sub := identityPerson(t, s, "form")
 		r := s.CLI(t, "", "login-link", sub)
 		line := strings.TrimSuffix(r.Stdout, "\n")
 		code, ok := strings.CutPrefix(line, s.BaseURL+"/login#link=")
-		if r.Code != 0 || !ok || !linkCodePattern.MatchString(code) || r.Stderr != "" || strings.Count(r.Stdout, "\n") != 1 {
+		if r.Code != 0 || !ok || !identityLinkCodePattern.MatchString(code) || r.Stderr != "" || strings.Count(r.Stdout, "\n") != 1 {
 			t.Fatalf("login-link: code %d stdout %q stderr %q", r.Code, harness.Redact(r.Stdout), r.Stderr)
 		}
 		leaked = append(leaked, code)
-		id := userID(t, s, sub)
+		id := identityUserID(t, s, sub)
 		var hash string
 		var ttl bool
 		if err := s.DB.QueryRow(t.Context(), `select code_hash, expires_at - created_at = interval '15 minutes'
@@ -800,31 +775,36 @@ func TestIdentityNoOIDC(t *testing.T) {
 	})
 
 	t.Run("a valid code signs in: 204, cookie flags, /me; last_login_at moves, role and groups stay", func(t *testing.T) {
-		sub := person(t, s, "valid")
-		id := userID(t, s, sub)
+		sub := identityPerson(t, s, "valid")
+		id := identityUserID(t, s, sub)
 		var groupsBefore []string
-		var roleBefore string
+		var roleBefore, nameBefore string
+		var emailBefore *string
 		var loginBefore time.Time
-		q := `select groups, role, last_login_at from identity.users where id = $1::uuid`
-		if err := s.DB.QueryRow(t.Context(), q, id).Scan(&groupsBefore, &roleBefore, &loginBefore); err != nil {
+		q := `select groups, role, last_login_at, name, email from identity.users where id = $1::uuid`
+		if err := s.DB.QueryRow(t.Context(), q, id).Scan(&groupsBefore, &roleBefore, &loginBefore, &nameBefore, &emailBefore); err != nil {
 			t.Fatal(err)
 		}
-		code := linkFor(t, s, sub)
+		code := identityLinkFor(t, s, sub)
 		c := s.Anonymous()
-		r := postLink(t, c, code, forwarded(nextIP()))
+		r := identityPostLink(t, c, code, identityForwarded(identityNextIP()))
 		if r.Status != 204 || len(r.Body) != 0 {
 			t.Fatalf("link: %d %q", r.Status, r.Body)
 		}
-		leaked = append(leaked, code, assertSessionCookie(t, r, false, code).Value)
+		leaked = append(leaked, code, identityAssertSessionCookie(t, r, false, code).Value)
 		me := whoami(t, c)
 		if me.UserID != id || me.Role != "member" || !slices.Equal(me.Groups, []string{"mcp-users"}) {
 			t.Fatalf("me: %+v", me)
 		}
 		var groupsAfter []string
-		var roleAfter string
+		var roleAfter, nameAfter string
+		var emailAfter *string
 		var loginAfter time.Time
-		if err := s.DB.QueryRow(t.Context(), q, id).Scan(&groupsAfter, &roleAfter, &loginAfter); err != nil {
+		if err := s.DB.QueryRow(t.Context(), q, id).Scan(&groupsAfter, &roleAfter, &loginAfter, &nameAfter, &emailAfter); err != nil {
 			t.Fatal(err)
+		}
+		if nameAfter != nameBefore || (emailAfter == nil) != (emailBefore == nil) || (emailAfter != nil && *emailAfter != *emailBefore) {
+			t.Fatalf("name or e-mail changed: %q/%v -> %q/%v", nameBefore, emailBefore, nameAfter, emailAfter)
 		}
 		if !loginAfter.After(loginBefore) || !slices.Equal(groupsAfter, groupsBefore) || roleAfter != roleBefore {
 			t.Fatalf("last_login_at %v -> %v, groups %v -> %v, role %q -> %q", loginBefore, loginAfter, groupsBefore, groupsAfter, roleBefore, roleAfter)
@@ -839,15 +819,15 @@ func TestIdentityNoOIDC(t *testing.T) {
 	})
 
 	t.Run("a used, an expired, an unknown and a malformed code are indistinguishable", func(t *testing.T) {
-		sub := person(t, s, "indist")
-		id := userID(t, s, sub)
+		sub := identityPerson(t, s, "indist")
+		id := identityUserID(t, s, sub)
 		failedBefore := len(auditWhere(auditAll(t, admin), "auth.login_failed", nil))
 
-		used := linkFor(t, s, sub)
-		if r := postLink(t, s.Anonymous(), used, forwarded(nextIP())); r.Status != 204 {
+		used := identityLinkFor(t, s, sub)
+		if r := identityPostLink(t, s.Anonymous(), used, identityForwarded(identityNextIP())); r.Status != 204 {
 			t.Fatalf("first use: %d", r.Status)
 		}
-		expired := linkFor(t, s, sub)
+		expired := identityLinkFor(t, s, sub)
 		execSQL(t, s, `update identity.login_links set expires_at = now() - interval '1 second' where user_id = $1::uuid`, id)
 		leaked = append(leaked, used, expired)
 
@@ -863,8 +843,8 @@ func TestIdentityNoOIDC(t *testing.T) {
 		}
 		var ref harness.Response
 		for i, p := range probes {
-			r := postLink(t, s.Anonymous(), p.code, forwarded(nextIP()))
-			if r.Status != 401 || errorCode(t, r) != invalidLink || r.Header.Get("Retry-After") != "" || len(r.Header.Values("Set-Cookie")) != 0 {
+			r := identityPostLink(t, s.Anonymous(), p.code, identityForwarded(identityNextIP()))
+			if r.Status != 401 || errorCode(t, r) != identityInvalidLink || r.Header.Get("Retry-After") != "" || len(r.Header.Values("Set-Cookie")) != 0 {
 				t.Errorf("%s: %d %s, %d Set-Cookie headers", p.name, r.Status, r.Body, len(r.Header.Values("Set-Cookie")))
 			}
 			if i == 0 {
@@ -875,8 +855,8 @@ func TestIdentityNoOIDC(t *testing.T) {
 		}
 		// Only a link that was consumed and then refused (the expired one) is audited, with the person.
 		got := auditWhere(auditAll(t, admin), "auth.login_failed", nil)
-		if len(got) != failedBefore+1 || got[0].Meta["reason"] != "invalid_link" || !ptrIs(got[0].ActorID, id) || got[0].Target != nil || len(got[0].Meta) != 1 {
-			t.Fatalf("audit of the refused links: %d records (before %d), newest %+v", len(got), failedBefore, got[0])
+		if len(got) != failedBefore+1 || len(got) == 0 || got[0].Meta["reason"] != "invalid_link" || !ptrIs(got[0].ActorID, id) || got[0].Target != nil || len(got[0].Meta) != 1 {
+			t.Fatalf("audit of the refused links: %d records (before %d): %+v", len(got), failedBefore, got)
 		}
 		if n := countSQL(t, s, `select count(*) from identity.login_links where user_id = $1::uuid`, id); n != 0 {
 			t.Fatal("the expired link was not consumed")
@@ -884,40 +864,40 @@ func TestIdentityNoOIDC(t *testing.T) {
 	})
 
 	t.Run("expiry is the stored expires_at: just inside works, just past does not", func(t *testing.T) {
-		sub := person(t, s, "expiry")
-		id := userID(t, s, sub)
-		inside := linkFor(t, s, sub)
+		sub := identityPerson(t, s, "expiry")
+		id := identityUserID(t, s, sub)
+		inside := identityLinkFor(t, s, sub)
 		execSQL(t, s, `update identity.login_links set expires_at = now() + interval '1 minute' where user_id = $1::uuid`, id)
-		if r := postLink(t, s.Anonymous(), inside, forwarded(nextIP())); r.Status != 204 {
+		if r := identityPostLink(t, s.Anonymous(), inside, identityForwarded(identityNextIP())); r.Status != 204 {
 			t.Fatalf("a link with a minute left: %d %s", r.Status, r.Body)
 		}
-		past := linkFor(t, s, sub)
+		past := identityLinkFor(t, s, sub)
 		execSQL(t, s, `update identity.login_links set expires_at = now() - interval '1 second' where user_id = $1::uuid`, id)
-		if r := postLink(t, s.Anonymous(), past, forwarded(nextIP())); r.Status != 401 || errorCode(t, r) != invalidLink {
+		if r := identityPostLink(t, s.Anonymous(), past, identityForwarded(identityNextIP())); r.Status != 401 || errorCode(t, r) != identityInvalidLink {
 			t.Fatalf("an expired link: %d %s", r.Status, r.Body)
 		}
 		leaked = append(leaked, inside, past)
 	})
 
 	t.Run("a person has one live link: a new one replaces the earlier one", func(t *testing.T) {
-		sub := person(t, s, "one")
-		id := userID(t, s, sub)
-		first, second := linkFor(t, s, sub), linkFor(t, s, sub)
+		sub := identityPerson(t, s, "one")
+		id := identityUserID(t, s, sub)
+		first, second := identityLinkFor(t, s, sub), identityLinkFor(t, s, sub)
 		leaked = append(leaked, first, second)
 		if n := countSQL(t, s, `select count(*) from identity.login_links where user_id = $1::uuid`, id); n != 1 {
 			t.Fatalf("%d links stored for one person", n)
 		}
-		if r := postLink(t, s.Anonymous(), first, forwarded(nextIP())); r.Status != 401 || errorCode(t, r) != invalidLink {
+		if r := identityPostLink(t, s.Anonymous(), first, identityForwarded(identityNextIP())); r.Status != 401 || errorCode(t, r) != identityInvalidLink {
 			t.Fatalf("the replaced link: %d %s", r.Status, r.Body)
 		}
-		if r := postLink(t, s.Anonymous(), second, forwarded(nextIP())); r.Status != 204 {
+		if r := identityPostLink(t, s.Anonymous(), second, identityForwarded(identityNextIP())); r.Status != 204 {
 			t.Fatalf("the new link: %d %s", r.Status, r.Body)
 		}
 		// Another person's link is untouched by it.
-		other := person(t, s, "other")
-		otherCode := linkFor(t, s, other)
-		linkFor(t, s, sub)
-		if r := postLink(t, s.Anonymous(), otherCode, forwarded(nextIP())); r.Status != 204 {
+		other := identityPerson(t, s, "other")
+		otherCode := identityLinkFor(t, s, other)
+		identityLinkFor(t, s, sub)
+		if r := identityPostLink(t, s.Anonymous(), otherCode, identityForwarded(identityNextIP())); r.Status != 204 {
 			t.Fatalf("another person's link: %d", r.Status)
 		}
 		leaked = append(leaked, otherCode)
@@ -927,12 +907,12 @@ func TestIdentityNoOIDC(t *testing.T) {
 	})
 
 	t.Run("a disabled person's link is refused with 403 disabled and audited", func(t *testing.T) {
-		sub := person(t, s, "dis")
-		id := userID(t, s, sub)
-		code := linkFor(t, s, sub)
+		sub := identityPerson(t, s, "dis")
+		id := identityUserID(t, s, sub)
+		code := identityLinkFor(t, s, sub)
 		leaked = append(leaked, code)
 		execSQL(t, s, `update identity.users set disabled = true where id = $1::uuid`, id)
-		r := postLink(t, s.Anonymous(), code, forwarded(nextIP()))
+		r := identityPostLink(t, s.Anonymous(), code, identityForwarded(identityNextIP()))
 		if r.Status != 403 || errorCode(t, r) != "disabled|account is disabled" || len(r.Header.Values("Set-Cookie")) != 0 {
 			t.Fatalf("disabled: %d %s", r.Status, r.Body)
 		}
@@ -949,14 +929,14 @@ func TestIdentityNoOIDC(t *testing.T) {
 		}
 		// Control: enabled again, a new link works.
 		execSQL(t, s, `update identity.users set disabled = false where id = $1::uuid`, id)
-		if r := postLink(t, s.Anonymous(), linkFor(t, s, sub), forwarded(nextIP())); r.Status != 204 {
+		if r := identityPostLink(t, s.Anonymous(), identityLinkFor(t, s, sub), identityForwarded(identityNextIP())); r.Status != 204 {
 			t.Fatalf("after enabling: %d", r.Status)
 		}
 	})
 
 	t.Run("a malformed body is 422 and does not spend the code", func(t *testing.T) {
-		sub := person(t, s, "body")
-		code := linkFor(t, s, sub)
+		sub := identityPerson(t, s, "body")
+		code := identityLinkFor(t, s, sub)
 		leaked = append(leaked, code)
 		for name, body := range map[string]any{
 			"no code":           map[string]string{},
@@ -967,52 +947,52 @@ func TestIdentityNoOIDC(t *testing.T) {
 			"null":              nil,
 			"a string for json": "nope",
 		} {
-			r := s.Anonymous().Do(t, "POST", "/api/auth/link", body, forwarded(nextIP()))
+			r := s.Anonymous().Do(t, "POST", "/api/auth/link", body, identityForwarded(identityNextIP()))
 			if r.Status != 422 {
 				t.Errorf("%s: %d %s", name, r.Status, r.Body)
 			}
 		}
 		// Unknown fields are ignored (the zod object is not strict), so this still signs in.
-		r := s.Anonymous().Do(t, "POST", "/api/auth/link", map[string]string{"code": code, "extra": "x"}, forwarded(nextIP()))
+		r := s.Anonymous().Do(t, "POST", "/api/auth/link", map[string]string{"code": code, "extra": "x"}, identityForwarded(identityNextIP()))
 		if r.Status != 204 {
 			t.Fatalf("the code was spent by refused bodies (or extra fields are refused): %d %s", r.Status, r.Body)
 		}
 	})
 
 	t.Run("a cross-origin or originless link request is refused and does not spend the code", func(t *testing.T) {
-		sub := person(t, s, "csrf")
-		code := linkFor(t, s, sub)
+		sub := identityPerson(t, s, "csrf")
+		code := identityLinkFor(t, s, sub)
 		leaked = append(leaked, code)
 		for _, h := range []string{"Origin:", "Origin: https://evil.example"} {
-			r := postLink(t, s.Anonymous(), code, h)
+			r := identityPostLink(t, s.Anonymous(), code, h)
 			if r.Status != 403 || errorCode(t, r) != "csrf|cross-origin request rejected" {
 				t.Errorf("%q: %d %s", h, r.Status, r.Body)
 			}
 		}
-		if r := postLink(t, s.Anonymous(), code, forwarded(nextIP())); r.Status != 204 {
+		if r := identityPostLink(t, s.Anonymous(), code, identityForwarded(identityNextIP())); r.Status != 204 {
 			t.Fatalf("the code was spent: %d", r.Status)
 		}
 	})
 
 	t.Run("a successful link sign-in ends the session it replaces; a rejected link leaves it alone", func(t *testing.T) {
-		ann, bob := person(t, s, "ann"), person(t, s, "bob")
+		ann, bob := identityPerson(t, s, "ann"), identityPerson(t, s, "bob")
 		annClient := s.Anonymous()
-		annCode := linkFor(t, s, ann)
-		old := postLink(t, annClient, annCode, forwarded(nextIP()))
-		oldCookie := assertSessionCookie(t, old, false, annCode)
+		annCode := identityLinkFor(t, s, ann)
+		old := identityPostLink(t, annClient, annCode, identityForwarded(identityNextIP()))
+		oldCookie := identityAssertSessionCookie(t, old, false, annCode)
 		leaked = append(leaked, annCode, oldCookie.Value)
 
-		rejected := postLink(t, annClient, randomLinkCode(), forwarded(nextIP()))
+		rejected := identityPostLink(t, annClient, identityRandomLinkCode(), identityForwarded(identityNextIP()))
 		if rejected.Status != 401 || len(rejected.Header.Values("Set-Cookie")) != 0 {
 			t.Fatalf("rejected link: %d, %d Set-Cookie headers", rejected.Status, len(rejected.Header.Values("Set-Cookie")))
 		}
-		if me := whoami(t, annClient); me.UserID != userID(t, s, ann) {
+		if me := whoami(t, annClient); me.UserID != identityUserID(t, s, ann) {
 			t.Fatalf("a rejected link changed the session: %+v", me)
 		}
 
-		bobCode := linkFor(t, s, bob)
-		replaced := postLink(t, annClient, bobCode, forwarded(nextIP()))
-		newCookie := assertSessionCookie(t, replaced, false, bobCode)
+		bobCode := identityLinkFor(t, s, bob)
+		replaced := identityPostLink(t, annClient, bobCode, identityForwarded(identityNextIP()))
+		newCookie := identityAssertSessionCookie(t, replaced, false, bobCode)
 		leaked = append(leaked, bobCode, newCookie.Value)
 		if oldCookie.Value == newCookie.Value {
 			t.Fatal("the session id did not change")
@@ -1021,30 +1001,36 @@ func TestIdentityNoOIDC(t *testing.T) {
 		if r := s.Anonymous().Do(t, "GET", "/api/auth/me", nil, "Cookie: mcp_session="+oldCookie.Value); r.Status != 401 {
 			t.Fatalf("the replaced session still works: %d", r.Status)
 		}
-		if me := whoami(t, annClient); me.UserID != userID(t, s, bob) {
+		if me := whoami(t, annClient); me.UserID != identityUserID(t, s, bob) {
 			t.Fatalf("the new session is not bob's: %+v", me)
 		}
 		// The replaced session's end is a logout in the audit log.
-		if got := auditWhere(auditAll(t, admin), "auth.logout", func(e auditEntry) bool { return ptrIs(e.ActorID, userID(t, s, ann)) }); len(got) != 1 {
+		if got := auditWhere(auditAll(t, admin), "auth.logout", func(e auditEntry) bool { return ptrIs(e.ActorID, identityUserID(t, s, ann)) }); len(got) != 1 {
 			t.Fatalf("auth.logout records of the replaced session: %+v", got)
 		}
 	})
 
 	t.Run("two concurrent redemptions of one code create exactly one session", func(t *testing.T) {
-		sub := person(t, s, "race")
-		id := userID(t, s, sub)
-		code := linkFor(t, s, sub)
+		sub := identityPerson(t, s, "race")
+		id := identityUserID(t, s, sub)
+		code := identityLinkFor(t, s, sub)
 		leaked = append(leaked, code)
 		statuses := make([]int, 2)
+		errs := make([]error, 2)
 		var wg sync.WaitGroup
 		for i := range statuses {
 			wg.Add(1)
-			go func() {
+			go func() { // plain net/http: Client.Do may call t.Fatalf, which must not run off the test goroutine
 				defer wg.Done()
-				statuses[i] = postLink(t, s.Anonymous(), code, forwarded(nextIP())).Status
+				statuses[i], errs[i] = rawPostLink(s.BaseURL, code, identityNextIP())
 			}()
 		}
 		wg.Wait()
+		for _, err := range errs {
+			if err != nil {
+				t.Fatalf("concurrent redemption: %v", err)
+			}
+		}
 		slices.Sort(statuses)
 		if statuses[0] != 204 || statuses[1] != 401 {
 			t.Fatalf("statuses %v, want one 204 and one 401", statuses)
@@ -1056,11 +1042,11 @@ func TestIdentityNoOIDC(t *testing.T) {
 
 	t.Run("a session ends after 12 hours idle and at its absolute 30 days", func(t *testing.T) {
 		newSession := func() (*harness.Client, string) {
-			sub := person(t, s, "sess")
-			code := linkFor(t, s, sub)
+			sub := identityPerson(t, s, "sess")
+			code := identityLinkFor(t, s, sub)
 			c := s.Anonymous()
-			leaked = append(leaked, assertSessionCookie(t, postLink(t, c, code, forwarded(nextIP())), false, code).Value, code)
-			return c, userID(t, s, sub)
+			leaked = append(leaked, identityAssertSessionCookie(t, identityPostLink(t, c, code, identityForwarded(identityNextIP())), false, code).Value, code)
+			return c, identityUserID(t, s, sub)
 		}
 		status := func(c *harness.Client) int { return c.Do(t, "GET", "/api/auth/me", nil).Status }
 
@@ -1109,11 +1095,11 @@ func TestIdentityNoOIDC(t *testing.T) {
 	// A token works on /mcp only; the refusal of a token on /api/** (six endpoints, also next to a
 	// valid cookie) is TestPlatformBearerNeverOpensTheWebAPI.
 	t.Run("an sk_ token: shape, stored only as SHA-256, listed without its value, works on /mcp", func(t *testing.T) {
-		owner := s.Member(t, person(t, s, "tok"))
+		owner := s.Member(t, identityPerson(t, s, "tok"))
 		made := owner.Do(t, "POST", "/api/tokens", map[string]string{"name": "laptop"})
 		var created struct{ ID, Prefix, Token string }
 		made.JSON(t, "CreateTokenResponse", &created)
-		if made.Status != 201 || !tokenPattern.MatchString(created.Token) || created.Prefix != created.Token[:10] {
+		if made.Status != 201 || !identityTokenPattern.MatchString(created.Token) || created.Prefix != created.Token[:10] {
 			t.Fatalf("create: %d id %q prefix %q token %q", made.Status, created.ID, created.Prefix, harness.Redact(created.Token))
 		}
 		leaked = append(leaked, created.Token)
@@ -1155,10 +1141,10 @@ func TestIdentityNoOIDC(t *testing.T) {
 		if err != nil || len(tools.Tools) != 4 {
 			t.Fatalf("tools/list with the token: %v %v", tools, err)
 		}
-		if after := list(); after[0].LastUsedAt == nil {
+		if after := list(); len(after) != 1 || after[0].LastUsedAt == nil {
 			t.Fatalf("lastUsedAt stays null after use: %+v", after)
 		}
-		if r := mcpInitialize(t, anon, created.Token, forwarded(nextIP())); r.Status != 200 || !strings.Contains(string(r.Body), `"serverInfo"`) {
+		if r := identityMCPInitialize(t, anon, created.Token, identityForwarded(identityNextIP())); r.Status != 200 || !strings.Contains(string(r.Body), `"serverInfo"`) {
 			t.Fatalf("raw initialize: %d %.200s", r.Status, r.Body)
 		}
 		// Names: 1..100 characters.
@@ -1171,18 +1157,21 @@ func TestIdentityNoOIDC(t *testing.T) {
 			t.Errorf("name of 100 characters: %d", r.Status)
 		}
 		// Without a session there is no list and no creation.
-		if r := anon.Do(t, "GET", "/api/tokens", nil); r.Status != 401 || errorCode(t, r) != unauthenticatedSession {
+		if r := anon.Do(t, "GET", "/api/tokens", nil); r.Status != 401 || errorCode(t, r) != identityUnauthenticated {
 			t.Errorf("anonymous list: %d %s", r.Status, r.Body)
 		}
 	})
 
 	t.Run("a revoked token is refused; revoking is idempotent, audited once, and limited to the owner (or an admin)", func(t *testing.T) {
-		ownerSub := person(t, s, "rev")
-		owner, other := s.Member(t, ownerSub), s.Member(t, person(t, s, "rev2"))
+		ownerSub := identityPerson(t, s, "rev")
+		owner, other := s.Member(t, ownerSub), s.Member(t, identityPerson(t, s, "rev2"))
 		token := owner.Token(t, "laptop")
 		leaked = append(leaked, token)
 		var list []struct{ ID string }
 		owner.Do(t, "GET", "/api/tokens", nil).JSON(t, "TokenSummary[]", &list)
+		if len(list) != 1 {
+			t.Fatalf("token list: %+v", list)
+		}
 		id := list[0].ID
 		if _, err := s.MCP(t, token).ListTools(t.Context(), nil); err != nil {
 			t.Fatalf("the token before revoking: %v", err)
@@ -1197,15 +1186,15 @@ func TestIdentityNoOIDC(t *testing.T) {
 				t.Errorf("DELETE %s: %d %s", path, r.Status, r.Body)
 			}
 		}
-		if r := mcpInitialize(t, anon, token, forwarded(nextIP())); r.Status != 200 {
+		if r := identityMCPInitialize(t, anon, token, identityForwarded(identityNextIP())); r.Status != 200 {
 			t.Fatalf("the token after the refused revocations: %d", r.Status)
 		}
 
 		if r := owner.Do(t, "DELETE", "/api/tokens/"+id, nil); r.Status != 204 || len(r.Body) != 0 {
 			t.Fatalf("revoke: %d %q", r.Status, r.Body)
 		}
-		ip := nextIP()
-		bad := mcpInitialize(t, anon, token, forwarded(ip))
+		ip := identityNextIP()
+		bad := identityMCPInitialize(t, anon, token, identityForwarded(ip))
 		if bad.Status != 401 || errorCode(t, bad) != "invalid_token|invalid token" || bad.Header.Get("Www-Authenticate") != "Bearer" {
 			t.Fatalf("revoked token: %d %v %s", bad.Status, bad.Header, bad.Body)
 		}
@@ -1220,7 +1209,7 @@ func TestIdentityNoOIDC(t *testing.T) {
 		if r := owner.Do(t, "DELETE", "/api/tokens/"+id, nil); r.Status != 204 {
 			t.Fatalf("revoking twice: %d", r.Status)
 		}
-		ownerID := userID(t, s, ownerSub)
+		ownerID := identityUserID(t, s, ownerSub)
 		got := auditWhere(auditAll(t, admin), "token.revoke", func(e auditEntry) bool { return ptrIs(e.Target, id) })
 		if len(got) != 1 || !ptrIs(got[0].ActorID, ownerID) || len(got[0].Meta) != 0 {
 			t.Fatalf("token.revoke audit: %+v", got)
@@ -1235,10 +1224,13 @@ func TestIdentityNoOIDC(t *testing.T) {
 		leaked = append(leaked, second)
 		var otherList []struct{ ID string }
 		other.Do(t, "GET", "/api/tokens", nil).JSON(t, "TokenSummary[]", &otherList)
+		if len(otherList) != 1 {
+			t.Fatalf("the other member's token list: %+v", otherList)
+		}
 		if r := admin.Do(t, "DELETE", "/api/tokens/"+otherList[0].ID, nil); r.Status != 204 {
 			t.Fatalf("admin revokes a member's token: %d", r.Status)
 		}
-		if r := mcpInitialize(t, anon, second, forwarded(nextIP())); r.Status != 401 {
+		if r := identityMCPInitialize(t, anon, second, identityForwarded(identityNextIP())); r.Status != 401 {
 			t.Fatalf("the token an admin revoked: %d", r.Status)
 		}
 	})
@@ -1246,13 +1238,13 @@ func TestIdentityNoOIDC(t *testing.T) {
 	// --- People ---
 
 	t.Run("disabling a person ends their sessions, tokens and links at once; enabling brings back no token", func(t *testing.T) {
-		sub := person(t, s, "victim")
+		sub := identityPerson(t, s, "victim")
 		victim := s.Member(t, sub)
 		id := whoami(t, victim).UserID
 		token := victim.Token(t, "laptop")
-		pending := linkFor(t, s, sub)
+		pending := identityLinkFor(t, s, sub)
 		leaked = append(leaked, token, pending)
-		if r := mcpInitialize(t, anon, token, forwarded(nextIP())); r.Status != 200 {
+		if r := identityMCPInitialize(t, anon, token, identityForwarded(identityNextIP())); r.Status != 200 {
 			t.Fatalf("the token before: %d", r.Status)
 		}
 
@@ -1260,10 +1252,10 @@ func TestIdentityNoOIDC(t *testing.T) {
 		if off.Status != 204 || len(off.Body) != 0 {
 			t.Fatalf("disable: %d %q", off.Status, off.Body)
 		}
-		if r := victim.Do(t, "GET", "/api/auth/me", nil); r.Status != 401 || errorCode(t, r) != unauthenticatedSession {
+		if r := victim.Do(t, "GET", "/api/auth/me", nil); r.Status != 401 || errorCode(t, r) != identityUnauthenticated {
 			t.Fatalf("session after disabling: %d %s", r.Status, r.Body)
 		}
-		if r := mcpInitialize(t, anon, token, forwarded(nextIP())); r.Status != 401 || errorCode(t, r) != "invalid_token|invalid token" {
+		if r := identityMCPInitialize(t, anon, token, identityForwarded(identityNextIP())); r.Status != 401 || errorCode(t, r) != "invalid_token|invalid token" {
 			t.Fatalf("token after disabling: %d %s", r.Status, r.Body)
 		}
 		if n := countSQL(t, s, `select count(*) from identity.sessions where user_id = $1::uuid`, id); n != 0 {
@@ -1275,7 +1267,7 @@ func TestIdentityNoOIDC(t *testing.T) {
 		if n := countSQL(t, s, `select count(*) from identity.tokens where user_id = $1::uuid and revoked_at is null`, id); n != 0 {
 			t.Fatalf("%d tokens are not revoked", n)
 		}
-		if r := postLink(t, s.Anonymous(), pending, forwarded(nextIP())); r.Status != 401 || errorCode(t, r) != invalidLink {
+		if r := identityPostLink(t, s.Anonymous(), pending, identityForwarded(identityNextIP())); r.Status != 401 || errorCode(t, r) != identityInvalidLink {
 			t.Fatalf("the pending link after disabling: %d %s", r.Status, r.Body)
 		}
 		var users []struct {
@@ -1301,14 +1293,14 @@ func TestIdentityNoOIDC(t *testing.T) {
 		if r := admin.Do(t, "POST", "/api/users/"+id+"/disabled", map[string]bool{"disabled": false}); r.Status != 204 {
 			t.Fatalf("enable: %d", r.Status)
 		}
-		if r := mcpInitialize(t, anon, token, forwarded(nextIP())); r.Status != 401 {
+		if r := identityMCPInitialize(t, anon, token, identityForwarded(identityNextIP())); r.Status != 401 {
 			t.Fatalf("the revoked token after enabling: %d", r.Status)
 		}
 		if r := victim.Do(t, "GET", "/api/auth/me", nil); r.Status != 401 {
 			t.Fatalf("the ended session after enabling: %d", r.Status)
 		}
 		fresh := s.Anonymous()
-		if r := postLink(t, fresh, linkFor(t, s, sub), forwarded(nextIP())); r.Status != 204 {
+		if r := identityPostLink(t, fresh, identityLinkFor(t, s, sub), identityForwarded(identityNextIP())); r.Status != 204 {
 			t.Fatalf("sign-in after enabling: %d", r.Status)
 		}
 		if me := whoami(t, fresh); me.UserID != id {
@@ -1339,11 +1331,11 @@ func TestIdentityNoOIDC(t *testing.T) {
 		if r := s.CLI(t, "", "create-user", "--sub", otherSub, "--name", "Second", "--admin"); r.Code != 0 {
 			t.Fatalf("create-user: %d", r.Code)
 		}
-		if r := admin.Do(t, "POST", "/api/users/"+userID(t, s, otherSub)+"/disabled", map[string]bool{"disabled": true}); r.Status != 204 {
+		if r := admin.Do(t, "POST", "/api/users/"+identityUserID(t, s, otherSub)+"/disabled", map[string]bool{"disabled": true}); r.Status != 204 {
 			t.Fatalf("disabling another admin: %d %s", r.Status, r.Body)
 		}
 
-		member := s.Member(t, person(t, s, "plain"))
+		member := s.Member(t, identityPerson(t, s, "plain"))
 		for _, c := range []struct {
 			method, path string
 			body         any
@@ -1356,7 +1348,7 @@ func TestIdentityNoOIDC(t *testing.T) {
 				t.Errorf("member %s %s: %d %s", c.method, c.path, r.Status, r.Body)
 			}
 		}
-		if r := anon.Do(t, "GET", "/api/users", nil); r.Status != 401 || errorCode(t, r) != unauthenticatedSession {
+		if r := anon.Do(t, "GET", "/api/users", nil); r.Status != 401 || errorCode(t, r) != identityUnauthenticated {
 			t.Errorf("anonymous GET /api/users: %d %s", r.Status, r.Body)
 		}
 		if r := anon.Do(t, "POST", "/api/users/"+me.UserID+"/disabled", map[string]bool{"disabled": true}); r.Status != 401 {
@@ -1377,8 +1369,10 @@ func TestIdentityNoOIDC(t *testing.T) {
 
 	t.Run("the people list shows roles, groups and sign-ins", func(t *testing.T) {
 		adminSub := harness.Unique("lister")
-		s.CLI(t, "", "create-user", "--sub", adminSub, "--name", "Lister", "--admin")
-		memberSub := person(t, s, "listed")
+		if r := s.CLI(t, "", "create-user", "--sub", adminSub, "--name", "Lister", "--admin"); r.Code != 0 {
+			t.Fatalf("create-user: %d %s", r.Code, r.Stderr)
+		}
+		memberSub := identityPerson(t, s, "listed")
 		var users []struct {
 			ID, Name   string
 			Email      *string
@@ -1391,12 +1385,12 @@ func TestIdentityNoOIDC(t *testing.T) {
 		seen := map[string]bool{}
 		for _, u := range users {
 			switch u.ID {
-			case userID(t, s, adminSub):
+			case identityUserID(t, s, adminSub):
 				seen["admin"] = true
 				if u.Role != "admin" || !slices.Equal(u.Groups, []string{"mcp-admins"}) || u.Name != "Lister" || u.Email != nil || u.Disabled || u.LastLoginA == nil {
 					t.Errorf("admin row: %+v", u)
 				}
-			case userID(t, s, memberSub):
+			case identityUserID(t, s, memberSub):
 				seen["member"] = true
 				if u.Role != "member" || !slices.Equal(u.Groups, []string{"mcp-users"}) || u.Disabled {
 					t.Errorf("member row: %+v", u)
@@ -1407,61 +1401,77 @@ func TestIdentityNoOIDC(t *testing.T) {
 			t.Fatalf("rows missing: %v", seen)
 		}
 		// The CLI is idempotent by sub: a second create-user updates, keeps the id.
-		if r := s.CLI(t, "", "create-user", "--sub", memberSub, "--name", "Renamed"); r.Code != 0 || !strings.HasPrefix(r.Stdout, `updated member "Renamed" (sub `+memberSub+", id "+userID(t, s, memberSub)+")") {
+		if r := s.CLI(t, "", "create-user", "--sub", memberSub, "--name", "Renamed"); r.Code != 0 || !strings.HasPrefix(r.Stdout, `updated member "Renamed" (sub `+memberSub+", id "+identityUserID(t, s, memberSub)+")") {
 			t.Errorf("second create-user: %d %q", r.Code, r.Stdout)
 		}
 	})
 
 	// --- Rate limits: the last scenarios, each with its own client addresses ---
 
+	// Control for TestIdentityDefaultRateLimits: here the proxy header is trusted, so a changing
+	// address is a different client each time and nothing locks. The same sequence on the default
+	// stack (no TRUST_PROXY) must lock, which is what makes that test meaningful.
+	t.Run("control: with a trusted proxy a changing X-Forwarded-For is a new client each time", func(t *testing.T) {
+		for i := 0; i < 12; i++ {
+			if r := identityPostLink(t, s.Anonymous(), identityRandomLinkCode(), identityForwarded(identityNextIP())); r.Status != 401 {
+				t.Fatalf("link failure %d with its own address: %d %s", i+1, r.Status, r.Body)
+			}
+		}
+		for i := 0; i < 32; i++ {
+			if r := identityMCPInitialize(t, anon, fmt.Sprintf("sk_%043d", i), identityForwarded(identityNextIP())); r.Status != 401 {
+				t.Fatalf("token failure %d with its own address: %d %s", i+1, r.Status, r.Body)
+			}
+		}
+	})
+
 	t.Run("the 11th failed link attempt within a minute from one address is 429 with Retry-After", func(t *testing.T) {
-		ip := nextIP()
+		ip := identityNextIP()
 		for i := 1; i <= 10; i++ {
-			r := postLink(t, s.Anonymous(), randomLinkCode(), forwarded(ip))
-			if r.Status != 401 || errorCode(t, r) != invalidLink {
+			r := identityPostLink(t, s.Anonymous(), identityRandomLinkCode(), identityForwarded(ip))
+			if r.Status != 401 || errorCode(t, r) != identityInvalidLink {
 				t.Fatalf("failure %d: %d %s", i, r.Status, r.Body)
 			}
 		}
-		r := postLink(t, s.Anonymous(), randomLinkCode(), forwarded(ip))
+		r := identityPostLink(t, s.Anonymous(), identityRandomLinkCode(), identityForwarded(ip))
 		if r.Status != 429 || errorCode(t, r) != "rate_limited|too many failed attempts" || r.Header.Get("Retry-After") != "60" {
 			t.Fatalf("11th failure: %d Retry-After %q %s", r.Status, r.Header.Get("Retry-After"), r.Body)
 		}
 		// Still locked: another failure is 429 with the remaining time (an integer within the lock).
-		again := postLink(t, s.Anonymous(), randomLinkCode(), forwarded(ip))
+		again := identityPostLink(t, s.Anonymous(), identityRandomLinkCode(), identityForwarded(ip))
 		if secs, err := strconv.Atoi(again.Header.Get("Retry-After")); again.Status != 429 || err != nil || secs < 1 || secs > 60 {
 			t.Fatalf("12th failure: %d Retry-After %q", again.Status, again.Header.Get("Retry-After"))
 		}
 		// A valid code is still accepted from the locked-out address.
-		sub := person(t, s, "locked")
-		code := linkFor(t, s, sub)
+		sub := identityPerson(t, s, "locked")
+		code := identityLinkFor(t, s, sub)
 		leaked = append(leaked, code)
-		if r := postLink(t, s.Anonymous(), code, forwarded(ip)); r.Status != 204 {
+		if r := identityPostLink(t, s.Anonymous(), code, identityForwarded(ip)); r.Status != 204 {
 			t.Fatalf("a valid code from a locked-out address: %d %s", r.Status, r.Body)
 		}
 		// The lock is per address: another one is not affected (control) ...
-		if r := postLink(t, s.Anonymous(), randomLinkCode(), forwarded(nextIP())); r.Status != 401 {
+		if r := identityPostLink(t, s.Anonymous(), identityRandomLinkCode(), identityForwarded(identityNextIP())); r.Status != 401 {
 			t.Fatalf("another address: %d", r.Status)
 		}
 		// ... and only the address the proxy added counts: a forged leftmost entry does not dodge the lock.
-		if r := postLink(t, s.Anonymous(), randomLinkCode(), forwarded(nextIP()+", "+ip)); r.Status != 429 {
+		if r := identityPostLink(t, s.Anonymous(), identityRandomLinkCode(), identityForwarded(identityNextIP()+", "+ip)); r.Status != 429 {
 			t.Fatalf("forged X-Forwarded-For: %d", r.Status)
 		}
 		// The token limiter is separate: this address may still check tokens.
-		if r := mcpInitialize(t, anon, "sk_"+strings.Repeat("x", 43), forwarded(ip)); r.Status != 401 || errorCode(t, r) != "invalid_token|invalid token" {
+		if r := identityMCPInitialize(t, anon, "sk_"+strings.Repeat("x", 43), identityForwarded(ip)); r.Status != 401 || errorCode(t, r) != "invalid_token|invalid token" {
 			t.Fatalf("a bad token from the link-locked address: %d %s", r.Status, r.Body)
 		}
 	})
 
 	t.Run("the 31st failed token check within a minute from one address is 429; a valid token still works", func(t *testing.T) {
-		ip := nextIP()
+		ip := identityNextIP()
 		// Requests without a token are not failed checks: they never count.
 		for i := 0; i < 40; i++ {
-			r := anon.Do(t, "GET", "/mcp", nil, forwarded(ip))
+			r := anon.Do(t, "GET", "/mcp", nil, identityForwarded(ip))
 			if r.Status != 401 || errorCode(t, r) != "unauthenticated|bearer token required" || r.Header.Get("Www-Authenticate") != "Bearer" {
 				t.Fatalf("no token %d: %d %s", i, r.Status, r.Body)
 			}
 		}
-		owner := s.Member(t, person(t, s, "limited"))
+		owner := s.Member(t, identityPerson(t, s, "limited"))
 		good := owner.Token(t, "laptop")
 		leaked = append(leaked, good)
 		for i := 1; i <= 30; i++ {
@@ -1470,28 +1480,30 @@ func TestIdentityNoOIDC(t *testing.T) {
 			if i%2 == 0 {
 				bad = fmt.Sprintf("nope-%d", i)
 			}
-			r := anon.Do(t, "GET", "/mcp", nil, forwarded(ip), "Authorization: Bearer "+bad)
+			r := anon.Do(t, "GET", "/mcp", nil, identityForwarded(ip), "Authorization: Bearer "+bad)
 			if r.Status != 401 || errorCode(t, r) != "invalid_token|invalid token" || r.Header.Get("Www-Authenticate") != "Bearer" {
 				t.Fatalf("failure %d: %d %v %s", i, r.Status, r.Header, r.Body)
 			}
 		}
-		r := anon.Do(t, "GET", "/mcp", nil, forwarded(ip), "Authorization: Bearer sk_"+strings.Repeat("y", 43))
-		if r.Status != 429 || errorCode(t, r) != "rate_limited|too many failed attempts" || r.Header.Get("Retry-After") != "" || r.Header.Get("Www-Authenticate") != "" {
-			// Unlike the link endpoint, the bearer middleware sets no Retry-After (pinned as is).
-			t.Fatalf("31st failure: %d %v %s", r.Status, r.Header, r.Body)
+		r := anon.Do(t, "GET", "/mcp", nil, identityForwarded(ip), "Authorization: Bearer sk_"+strings.Repeat("y", 43))
+		if r.Status != 429 || errorCode(t, r) != "rate_limited|too many failed attempts" || false {
+			// The image sends neither Retry-After nor WWW-Authenticate on this 429 (unlike the link
+			// endpoint); that is deliberately not asserted, so a rewrite may add them.
+			t.Fatalf("31st failure: %d %s", r.Status, r.Body)
 		}
-		if r := mcpInitialize(t, anon, good, forwarded(ip)); r.Status != 200 {
+		if r := identityMCPInitialize(t, anon, good, identityForwarded(ip)); r.Status != 200 {
 			t.Fatalf("a valid token from the locked-out address: %d %s", r.Status, r.Body)
 		}
 		// Another address is not locked (control), and the link limiter is separate.
-		if r := anon.Do(t, "GET", "/mcp", nil, forwarded(nextIP()), "Authorization: Bearer sk_"+strings.Repeat("z", 43)); r.Status != 401 {
+		if r := anon.Do(t, "GET", "/mcp", nil, identityForwarded(identityNextIP()), "Authorization: Bearer sk_"+strings.Repeat("z", 43)); r.Status != 401 {
 			t.Fatalf("another address: %d", r.Status)
 		}
-		if r := postLink(t, s.Anonymous(), randomLinkCode(), forwarded(ip)); r.Status != 401 || errorCode(t, r) != invalidLink {
+		if r := identityPostLink(t, s.Anonymous(), identityRandomLinkCode(), identityForwarded(ip)); r.Status != 401 || errorCode(t, r) != identityInvalidLink {
 			t.Fatalf("a bad link from the token-locked address: %d %s", r.Status, r.Body)
 		}
 	})
 
+	// Reads data produced by the earlier subtests: it must run as part of this parent test.
 	t.Run("the audit log and the app log hold no link code, token or session id", func(t *testing.T) {
 		entries := auditAll(t, admin)
 		all := mustJSON(t, entries)
@@ -1528,20 +1540,22 @@ func TestIdentityNoOIDC(t *testing.T) {
 	})
 
 	t.Run("a restart prunes expired links and dead sessions and keeps live ones", func(t *testing.T) {
-		sub := person(t, s, "prune")
-		id := userID(t, s, sub)
+		sub := identityPerson(t, s, "prune")
+		id := identityUserID(t, s, sub)
 		// Rows of one person: a live and an expired link; a live, an idle and an expired session.
 		for name, hours := range map[string]string{"live-link": "+15 minutes", "dead-link": "-1 minute"} {
 			execSQL(t, s, `insert into identity.login_links (code_hash, user_id, created_at, expires_at)
 				values ($1, $2::uuid, now(), now() + $3::interval)`, sha256hex(name), id, hours)
 		}
-		for name, c := range map[string][2]string{
-			"live-session": {"0 minutes", "+30 days"},
-			"idle-session": {"-13 hours", "+30 days"},
-			"aged-session": {"0 minutes", "-1 minute"},
+		// created_at agrees with expires_at (30 days) and last_seen_at never precedes created_at, so a
+		// server that judges age by either column prunes exactly the dead rows.
+		for name, c := range map[string][3]string{ // created, last seen, expires: offsets from now()
+			"live-session": {"-1 hour", "-1 minute", "+29 days 23 hours"},
+			"idle-session": {"-14 hours", "-13 hours", "+29 days 10 hours"},
+			"aged-session": {"-30 days 1 minute", "-1 minute", "-1 minute"},
 		} {
 			execSQL(t, s, `insert into identity.sessions (id_hash, user_id, created_at, last_seen_at, expires_at)
-				values ($1, $2::uuid, now() - interval '31 days', now() + $3::interval, now() + $4::interval)`, sha256hex(name), id, c[0], c[1])
+				values ($1, $2::uuid, now() + $3::interval, now() + $4::interval, now() + $5::interval)`, sha256hex(name), id, c[0], c[1], c[2])
 		}
 		s.SwapImage(t, platformImage(), "")
 		harness.Eventually(t, "expired links and dead sessions are removed at start", func() bool {
@@ -1561,10 +1575,69 @@ func TestIdentityNoOIDC(t *testing.T) {
 	})
 }
 
-// cookieDesc describes a cookie without its value.
-func cookieDesc(c *http.Cookie) string {
-	if c == nil {
-		return "<none>"
+// rawPostLink posts a link code with plain net/http, safe to call from goroutines (it never calls
+// t.Fatalf). It returns the status.
+func rawPostLink(base, code, ip string) (int, error) {
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, base+"/api/auth/link", strings.NewReader(`{"code":"`+code+`"}`))
+	if err != nil {
+		return 0, err
 	}
-	return fmt.Sprintf("%s (value %d chars) path %q httpOnly %v secure %v sameSite %v maxAge %d", c.Name, len(c.Value), c.Path, c.HttpOnly, c.Secure, c.SameSite, c.MaxAge)
+	req.Header.Set("Origin", base)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Forwarded-For", ip)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return resp.StatusCode, nil
+}
+
+// TestIdentityDefaultRateLimits runs a stack in its default configuration (no TRUST_PROXY): the
+// per-address limits count the socket peer and ignore X-Forwarded-For, so a client cannot dodge
+// them by changing the header. Both limiters are on this stack (they are independent). The
+// proxy-trusting counterpart (the same sequence does NOT lock there) is the "control" subtest of
+// TestIdentityNoOIDC.
+func TestIdentityDefaultRateLimits(t *testing.T) {
+	s := harness.Start(t, harness.Options{})
+	anon := s.Anonymous()
+	owner := s.Member(t, identityPerson(t, s, "dflt"))
+	good := owner.Token(t, "laptop")
+	validLink := identityLinkFor(t, s, identityPerson(t, s, "dfltlink"))
+
+	t.Run("the 11th failed link attempt is 429 whatever X-Forwarded-For says", func(t *testing.T) {
+		for i := 1; i <= 10; i++ {
+			r := identityPostLink(t, s.Anonymous(), identityRandomLinkCode(), identityForwarded(identityNextIP()))
+			if r.Status != 401 || errorCode(t, r) != identityInvalidLink {
+				t.Fatalf("failure %d: %d %s", i, r.Status, r.Body)
+			}
+		}
+		r := identityPostLink(t, s.Anonymous(), identityRandomLinkCode(), identityForwarded(identityNextIP()))
+		if r.Status != 429 || errorCode(t, r) != "rate_limited|too many failed attempts" || r.Header.Get("Retry-After") != "60" {
+			t.Fatalf("11th failure: %d Retry-After %q %s", r.Status, r.Header.Get("Retry-After"), r.Body)
+		}
+		// A valid code is still accepted from the locked-out peer.
+		if r := identityPostLink(t, s.Anonymous(), validLink, identityForwarded(identityNextIP())); r.Status != 204 {
+			t.Fatalf("a valid code from the locked-out peer: %d %s", r.Status, r.Body)
+		}
+	})
+
+	t.Run("the 31st failed token check is 429 whatever X-Forwarded-For says; a valid token still works", func(t *testing.T) {
+		for i := 1; i <= 30; i++ {
+			r := anon.Do(t, "GET", "/mcp", nil, identityForwarded(identityNextIP()), fmt.Sprintf("Authorization: Bearer sk_%043d", i))
+			if r.Status != 401 || errorCode(t, r) != "invalid_token|invalid token" {
+				t.Fatalf("failure %d: %d %s", i, r.Status, r.Body)
+			}
+		}
+		// Status and body only: the image sends no Retry-After here, which is not pinned.
+		r := anon.Do(t, "GET", "/mcp", nil, identityForwarded(identityNextIP()), "Authorization: Bearer sk_"+strings.Repeat("y", 43))
+		if r.Status != 429 || errorCode(t, r) != "rate_limited|too many failed attempts" {
+			t.Fatalf("31st failure: %d %s", r.Status, r.Body)
+		}
+		// The code only counts failed checks: a genuine token still opens /mcp from the locked-out peer.
+		if r := identityMCPInitialize(t, anon, good, identityForwarded(identityNextIP())); r.Status != 200 {
+			t.Fatalf("a valid token from the locked-out peer: %d %s", r.Status, r.Body)
+		}
+	})
 }

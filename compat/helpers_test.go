@@ -6,6 +6,10 @@ package compat_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/url"
@@ -191,3 +195,53 @@ func auditWhere(entries []auditEntry, action string, keep func(auditEntry) bool)
 }
 
 func ptrIs(p *string, want string) bool { return p != nil && *p == want }
+
+func sha256hex(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])
+}
+
+// countSQL runs a "select count(*)" style query.
+func countSQL(t *testing.T, s *harness.Stack, query string, args ...any) int {
+	t.Helper()
+	var n int
+	if err := s.DB.QueryRow(t.Context(), query, args...).Scan(&n); err != nil {
+		t.Fatalf("%s: %v", query, err)
+	}
+	return n
+}
+
+func execSQL(t *testing.T, s *harness.Stack, query string, args ...any) {
+	t.Helper()
+	if _, err := s.DB.Exec(t.Context(), query, args...); err != nil {
+		t.Fatalf("%s: %v", query, err)
+	}
+}
+
+func mustJSON(t *testing.T, v any) string {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+func mustString(v any) string {
+	s, _ := v.(string)
+	return s
+}
+
+// firstLine is the first line of a CLI output.
+func firstLine(s string) string {
+	line, _, _ := strings.Cut(s, "\n")
+	return strings.TrimSpace(line)
+}
+
+// cookieDesc describes a cookie without its value.
+func cookieDesc(c *http.Cookie) string {
+	if c == nil {
+		return "<none>"
+	}
+	return fmt.Sprintf("%s (value %d chars) path %q httpOnly %v secure %v sameSite %v maxAge %d", c.Name, len(c.Value), c.Path, c.HttpOnly, c.Secure, c.SameSite, c.MaxAge)
+}
