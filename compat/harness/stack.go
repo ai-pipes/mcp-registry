@@ -45,17 +45,16 @@ const (
 // session identifies this test process; every container and network carries it as a label.
 var session = randomHex(6)
 
-// FakeIdP describes an OpenID provider for the app to use. A later task gives it behaviour; the
-// harness only turns it into the OIDC_* settings.
-type FakeIdP struct { //nolint:revive // the name is fixed by the suite interface shared with later tasks
-	Issuer       string
-	ClientID     string
-	ClientSecret string
+// OIDCProvider is an OpenID provider the app signs in with. fakes.FakeIdP implements it, so the
+// harness does not import the fakes (and the fakes do not import the harness).
+type OIDCProvider interface {
+	// OIDCSettings returns the values of OIDC_ISSUER, OIDC_CLIENT_ID and OIDC_CLIENT_SECRET.
+	OIDCSettings() (issuer, clientID, clientSecret string)
 }
 
 // Options configure a stack.
 type Options struct {
-	OIDC  *FakeIdP          // nil = no OIDC (sign-in by links)
+	OIDC  OIDCProvider      // nil = no OIDC (sign-in by links)
 	Env   map[string]string // added on top of the defaults
 	Unset []string          // default variables to remove (applied after Env)
 }
@@ -224,9 +223,7 @@ func boot(o Options, expectExit bool) (s *Stack, err error) {
 		"LOG_LEVEL":     "debug",
 	}
 	if o.OIDC != nil {
-		s.env["OIDC_ISSUER"] = o.OIDC.Issuer
-		s.env["OIDC_CLIENT_ID"] = o.OIDC.ClientID
-		s.env["OIDC_CLIENT_SECRET"] = o.OIDC.ClientSecret
+		s.env["OIDC_ISSUER"], s.env["OIDC_CLIENT_ID"], s.env["OIDC_CLIENT_SECRET"] = o.OIDC.OIDCSettings()
 	}
 	for k, v := range o.Env {
 		s.env[k] = v
