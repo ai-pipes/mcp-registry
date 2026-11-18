@@ -1,0 +1,9 @@
+{
+  "status": 422,
+  "body": {
+    "error": {
+      "code": "invalid_request",
+      "message": "url: must be an http(s) URL"
+    }
+  }
+}

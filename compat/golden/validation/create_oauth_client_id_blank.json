@@ -1,0 +1,9 @@
+{
+  "status": 422,
+  "body": {
+    "error": {
+      "code": "invalid_auth",
+      "message": "OAuth client id is required"
+    }
+  }
+}

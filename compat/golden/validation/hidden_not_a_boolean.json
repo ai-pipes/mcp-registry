@@ -1,0 +1,9 @@
+{
+  "status": 422,
+  "body": {
+    "error": {
+      "code": "invalid_request",
+      "message": "hidden: Invalid input: expected boolean, received string"
+    }
+  }
+}

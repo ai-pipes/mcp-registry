@@ -1,0 +1,9 @@
+{
+  "status": 422,
+  "body": {
+    "error": {
+      "code": "invalid_request",
+      "message": "dailyLimit: Invalid input: expected number, received string"
+    }
+  }
+}

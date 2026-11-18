@@ -1,0 +1,9 @@
+{
+  "status": 422,
+  "body": {
+    "error": {
+      "code": "invalid_request",
+      "message": "auth.kind: Invalid discriminator value. Expected 'none' | 'shared_secret' | 'pat_user' | 'oauth_user'"
+    }
+  }
+}

@@ -54,6 +54,7 @@ type Upstream struct {
 	redirectTo  string
 	delay       time.Duration
 	respondSize int
+	chunked     bool
 	rejectCode  int
 	rejectMsg   string
 	rejecting   bool
@@ -94,7 +95,11 @@ func (u *Upstream) Delay(d time.Duration) { u.set(func() { u.delay = d }) }
 
 // RespondBytes answers tools/call with a plain JSON-RPC result whose whole HTTP body is exactly n
 // bytes long (at least the size of an empty result).
-func (u *Upstream) RespondBytes(n int) { u.set(func() { u.respondSize = n }) }
+func (u *Upstream) RespondBytes(n int) { u.set(func() { u.respondSize, u.chunked = n, false }) }
+
+// RespondChunked is RespondBytes streamed: the body goes out in chunks with no Content-Length, so
+// a client can only learn that it is too large by counting what arrives.
+func (u *Upstream) RespondChunked(n int) { u.set(func() { u.respondSize, u.chunked = n, true }) }
 
 // RejectCalls answers tools/call with a JSON-RPC error.
 func (u *Upstream) RejectCalls(code int, msg string) {
@@ -131,7 +136,7 @@ func (u *Upstream) Requests() []Request {
 // Reset clears every failure mode and the recorded requests; the tools stay.
 func (u *Upstream) Reset() {
 	u.set(func() {
-		u.failStatus, u.redirectTo, u.delay, u.respondSize = 0, "", 0, 0
+		u.failStatus, u.redirectTo, u.delay, u.respondSize, u.chunked = 0, "", 0, 0, false
 		u.rejecting, u.rejectCode, u.rejectMsg = false, 0, ""
 		u.calls, u.requests, u.listReqs = nil, nil, 0
 	})
@@ -170,7 +175,7 @@ func (u *Upstream) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "tools/call":
 		u.calls = append(u.calls, Call{Tool: rpc.Params.Name, Arguments: rpc.Params.Arguments, Header: r.Header.Clone()})
 	}
-	require, failStatus, redirectTo, delay, size := u.require, u.failStatus, u.redirectTo, u.delay, u.respondSize
+	require, failStatus, redirectTo, delay, size, chunked := u.require, u.failStatus, u.redirectTo, u.delay, u.respondSize, u.chunked
 	rejecting, rejectCode, rejectMsg := u.rejecting, u.rejectCode, u.rejectMsg
 	u.mu.Unlock()
 
@@ -207,7 +212,7 @@ func (u *Upstream) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeRejection(w, rpc.ID, rejectCode, rejectMsg)
 			return
 		case size > 0:
-			writeSized(w, rpc.ID, size)
+			writeSized(w, rpc.ID, size, chunked)
 			return
 		}
 	}
@@ -232,8 +237,9 @@ func writeRejection(w http.ResponseWriter, id json.RawMessage, code int, msg str
 	_, _ = w.Write(out)
 }
 
-// writeSized writes a JSON-RPC text result so that the entire body is exactly size bytes.
-func writeSized(w http.ResponseWriter, id json.RawMessage, size int) {
+// writeSized writes a JSON-RPC text result so that the entire body is exactly size bytes. With
+// chunked the body is streamed in pieces and carries no Content-Length.
+func writeSized(w http.ResponseWriter, id json.RawMessage, size int, chunked bool) {
 	if len(id) == 0 {
 		id = json.RawMessage("null")
 	}
@@ -245,8 +251,23 @@ func writeSized(w http.ResponseWriter, id json.RawMessage, size int) {
 		body = build(string(bytes.Repeat([]byte("x"), pad)))
 	}
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
-	_, _ = w.Write(body)
+	if !chunked {
+		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+		_, _ = w.Write(body)
+		return
+	}
+	const piece = 4096
+	flusher, _ := w.(http.Flusher)
+	for len(body) > 0 {
+		n := min(piece, len(body))
+		if _, err := w.Write(body[:n]); err != nil {
+			return // the client gave up
+		}
+		if flusher != nil {
+			flusher.Flush()
+		}
+		body = body[n:]
+	}
 }
 
 // newServer builds the SDK server for one request from the current tools.

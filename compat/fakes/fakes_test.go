@@ -240,6 +240,29 @@ func TestUpstreamRespondBytesHasExactSize(t *testing.T) {
 	}
 }
 
+func TestUpstreamRespondChunkedStreamsWithoutContentLength(t *testing.T) {
+	u := fakes.StartUpstream(t, fakes.UpstreamOptions{Tools: fakes.Tools("echo")})
+	u.RespondChunked(100_000)
+	body := `{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"echo","arguments":{}}}`
+	status, hdr, got := send(t, "POST", u.URL, body, mcpHeaders...)
+	if status != 200 || len(got) != 100_000 || hdr.Get("Content-Length") != "" {
+		t.Fatalf("status %d, body %d bytes, Content-Length %q", status, len(got), hdr.Get("Content-Length"))
+	}
+	var rpc struct {
+		Result struct {
+			Content []struct{ Text string } `json:"content"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal([]byte(got), &rpc); err != nil || len(rpc.Result.Content) != 1 {
+		t.Fatalf("not a JSON-RPC result: %v", err)
+	}
+	// RespondBytes switches back to a body with a Content-Length; Reset clears both.
+	u.RespondBytes(100_000)
+	if _, hdr, _ = send(t, "POST", u.URL, body, mcpHeaders...); hdr.Get("Content-Length") != "100000" {
+		t.Fatalf("RespondBytes after RespondChunked: Content-Length %q", hdr.Get("Content-Length"))
+	}
+}
+
 func TestUpstreamRedirectTo(t *testing.T) {
 	u := fakes.StartUpstream(t, fakes.UpstreamOptions{Tools: fakes.Tools("a")})
 	u.RedirectTo("http://elsewhere.example/mcp")

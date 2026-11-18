@@ -1,0 +1,9 @@
+{
+  "status": 422,
+  "body": {
+    "error": {
+      "code": "invalid_request",
+      "message": "access.groups.0: Too small: expected string to have \u003e=1 characters"
+    }
+  }
+}

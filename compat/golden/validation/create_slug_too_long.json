@@ -1,0 +1,9 @@
+{
+  "status": 422,
+  "body": {
+    "error": {
+      "code": "invalid_request",
+      "message": "slug: Too big: expected string to have \u003c=64 characters"
+    }
+  }
+}
