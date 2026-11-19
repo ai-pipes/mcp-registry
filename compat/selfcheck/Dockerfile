@@ -1,5 +1,7 @@
-# The image under the suite's self-check: the reference image with a reverse proxy in front of the
-# application. BREAK (environment of the container) selects one distortion; unset = pass-through.
+# The image under the suite's self-check: the reference image plus a distorting reverse proxy.
+# BREAK (environment of the container) selects one distortion, or "passthrough" for the proxy
+# with none; with BREAK unset the entrypoint starts the application alone, as in the reference
+# image, and the proxy is not involved.
 # Build: docker build -t mcp-registry:compat-broken -f compat/selfcheck/Dockerfile compat/selfcheck
 ARG BASE=mcp-registry:compat-ts
 FROM ${BASE}

@@ -80,6 +80,8 @@ type Stack struct {
 	port    int
 	env     map[string]string
 	files   map[string][]byte // placed by PutFile: path inside the container -> content
+
+	fetchLog func(container string) (string, error) // the app log for COMPAT_LOG_DIR; nil = docker logs
 }
 
 // Start boots a database and the app image (COMPAT_IMAGE) and waits for /healthz. The stack is
@@ -356,8 +358,10 @@ func (s *Stack) running() (bool, error) {
 	return out == "true", err
 }
 
-// scrub removes the values of secret-looking settings from text that goes into failure messages.
+// scrub removes the values of secret-looking settings, and anything shaped like a sign-in link
+// code (ll_...) or an API token (sk_...), from text that goes into failure messages and logs.
 func (s *Stack) scrub(text string) string {
+	text = credentialShape.ReplaceAllString(text, "<redacted>")
 	for k, v := range s.env {
 		u := strings.ToUpper(k)
 		if v != "" && (strings.Contains(u, "KEY") || strings.Contains(u, "SECRET") ||

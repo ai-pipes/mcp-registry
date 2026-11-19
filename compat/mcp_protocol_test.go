@@ -379,8 +379,11 @@ func TestMCPGuards(t *testing.T) {
 
 	t.Run("without a token POST /mcp is 401 with a Bearer challenge", func(t *testing.T) {
 		r := anon.Do(t, "POST", "/mcp", listBody, mcpJSON, mcpAccept)
-		if r.Status != 401 || r.Header.Get("Www-Authenticate") != "Bearer" {
-			t.Fatalf("%d %v %s", r.Status, r.Header, r.Body)
+		if r.Status != 401 {
+			t.Fatalf("status %d, want 401: %s", r.Status, r.Body)
+		}
+		if got := r.Header.Get("Www-Authenticate"); got != "Bearer" {
+			t.Fatalf("WWW-Authenticate = %q, want %q", got, "Bearer")
 		}
 		// Control: the same request with a token is served.
 		if ok := mcpPost(t, led, anon, token, listBody); ok.Status != 200 {

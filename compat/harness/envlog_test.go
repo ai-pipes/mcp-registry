@@ -22,6 +22,8 @@ func TestParseAppEnv(t *testing.T) {
 		{"A=1, B=x=y ,C=", map[string]string{"A": "1", "B": "x=y", "C": ""}, false},
 		{"NOEQUALS", nil, true},
 		{"=value", nil, true},
+		{"PUBLIC_URL=http://elsewhere", nil, true},
+		{"BREAK=csp,DATABASE_URL=x", nil, true},
 	} {
 		got, err := parseAppEnv(c.in)
 		if (err != nil) != c.wantErr || !reflect.DeepEqual(got, c.want) {
@@ -77,4 +79,48 @@ func TestWriteLogScrubsAndCreatesTheDirectory(t *testing.T) {
 func TestSaveLogDoesNothingWithoutADirectory(t *testing.T) {
 	t.Setenv("COMPAT_LOG_DIR", "")
 	(&Stack{id: "00", app: "does-not-exist"}).saveLog("TestY") // must not touch docker or the disk
+}
+
+func TestScrubRemovesCredentialShapes(t *testing.T) {
+	s := &Stack{env: map[string]string{}}
+	link := "ll_" + strings.Repeat("a1_-", 11)
+	token := "sk_" + strings.Repeat("Zz9", 15)
+	got := s.scrub("link " + link + " and token " + token + " but sk_short and ll_x stay, as does task_" + strings.Repeat("b", 30))
+	if strings.Contains(got, link) || strings.Contains(got, token) || strings.Count(got, "<redacted>") != 2 {
+		t.Fatalf("scrub: %q", got)
+	}
+	if !strings.Contains(got, "sk_short") || !strings.Contains(got, "task_"+strings.Repeat("b", 30)) {
+		t.Fatalf("scrub removed too much: %q", got)
+	}
+}
+
+func TestFinishSavesTheLogOnlyForAFailedTest(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("COMPAT_LOG_DIR", dir)
+	newStack := func() *Stack {
+		return &Stack{
+			id: "ee11", app: "no-such-container", env: map[string]string{"SECRETS_KEY": "kkkkkkkk"},
+			fetchLog: func(string) (string, error) {
+				return "boot ok\nkey kkkkkkkk token sk_" + strings.Repeat("Q", 43) + "\n", nil
+			},
+		}
+	}
+	newStack().finish("TestPassed/sub", false)
+	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+		t.Fatalf("a passing test wrote %d log files", len(entries))
+	}
+	newStack().finish("TestFailed/sub", true)
+	raw, err := os.ReadFile(filepath.Join(dir, "TestFailed_sub-ee11.log"))
+	if err != nil {
+		t.Fatalf("a failed test wrote no log: %v", err)
+	}
+	if got := string(raw); strings.Contains(got, "kkkkkkkk") || strings.Contains(got, "sk_QQ") || !strings.Contains(got, "boot ok") {
+		t.Fatalf("log: %q", got)
+	}
+	failing := newStack()
+	failing.fetchLog = func(string) (string, error) { return "", os.ErrNotExist }
+	failing.finish("TestNoContainer", true)
+	if _, err := os.Stat(filepath.Join(dir, "TestNoContainer-ee11.log")); err == nil {
+		t.Fatal("a log was written although the app container has no log")
+	}
 }

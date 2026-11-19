@@ -21,6 +21,19 @@ const logDirVar = "COMPAT_LOG_DIR"
 
 func appEnv() (map[string]string, error) { return parseAppEnv(os.Getenv(appEnvVar)) }
 
+// harnessOwned are the variables the harness sets itself (they tie the app to its database, its
+// published port and PUBLIC_URL, which is also Stack.BaseURL, or come from Options.OIDC); the
+// outside may not override them.
+var harnessOwned = map[string]bool{
+	"DATABASE_URL": true, "PUBLIC_URL": true, "COOKIE_SECURE": true, "SECRETS_KEY": true,
+	"LOG_LEVEL": true, "PORT": true,
+	"OIDC_ISSUER": true, "OIDC_CLIENT_ID": true, "OIDC_CLIENT_SECRET": true,
+}
+
+// credentialShape matches the sign-in link codes (ll_ + 32 bytes base64url) and API tokens (sk_ +
+// 32 bytes base64url) of the product; anything that long after the prefix is removed from logs.
+var credentialShape = regexp.MustCompile(`\b(?:ll|sk)_[A-Za-z0-9_-]{20,}`)
+
 // parseAppEnv reads the value of COMPAT_APP_ENV.
 func parseAppEnv(raw string) (map[string]string, error) {
 	var out map[string]string
@@ -36,7 +49,11 @@ func parseAppEnv(raw string) (map[string]string, error) {
 		if out == nil {
 			out = map[string]string{}
 		}
-		out[strings.TrimSpace(name)] = value
+		name = strings.TrimSpace(name)
+		if harnessOwned[name] {
+			return nil, fmt.Errorf("%s: %s is set by the harness and cannot be overridden", appEnvVar, name)
+		}
+		out[name] = value
 	}
 	return out, nil
 }
@@ -69,7 +86,11 @@ func (s *Stack) saveLog(testName string) {
 	if dir == "" || s.app == "" {
 		return
 	}
-	text, err := dockerLogs(s.app, "")
+	fetch := s.fetchLog
+	if fetch == nil {
+		fetch = func(container string) (string, error) { return dockerLogs(container, "") }
+	}
+	text, err := fetch(s.app)
 	if err != nil { // no app container (the boot failed before it started): nothing to keep
 		fmt.Fprintf(os.Stderr, "harness: no app log to save for %s: %v\n", s.app, err)
 		return

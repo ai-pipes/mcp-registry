@@ -6,10 +6,16 @@
 // runs the proxy with no distortion. When BREAK is unset entrypoint.sh does not start the proxy at
 // all: the app listens on the public port itself.
 //
-// Known limit of any HTTP proxy: an app that answers early and closes while the client is still
-// uploading (the 10 MiB body limit scenario) resets the connection, and Node loses the answer to
-// that reset in about one run in ten, where a client that reads while it writes (Go) keeps it.
-// Distortion runs therefore name the subtest that must fail instead of any failure of the test.
+// Known defect, not a limit of HTTP proxies: the 10 MiB body-limit scenario (the app answers 413
+// without reading the upload and closes) is relayed wrongly by this proxy in a minority of runs
+// (a 502 or an EOF instead of the 413). Observed: about 1 in 10 runs with a plain pipe of the
+// request, about 1 in 30 with the forwarding below (one chunk per event-loop turn, nothing written
+// once the app has answered, a request-side error after an answer ignored). The proxy log of the
+// failing runs says `write EPIPE` before any answer was seen, i.e. the write hit the reset before
+// Node had read the answer that the app sent first; Node destroys the socket on that error and the
+// answer is lost. The cause fits the evidence but a fix was not found; a client that reads while
+// it writes (the Go test client) is not affected (15 of 15 direct runs). Hence the passthrough
+// control skips that one subtest and no distortion case depends on an early refusal.
 //
 // No dependencies: only node:http, so the image needs nothing beyond its Node runtime.
 import http from 'node:http';
@@ -157,15 +163,28 @@ const server = http.createServer((clientReq, clientRes) => {
     agent: false,
   });
 
+  // Set when the app has answered. An early refusal (the app answers 413 and closes without
+  // reading the body) resets the connection while the client's body is still being forwarded; a
+  // write error from then on is not a failure of the exchange, the answer is relayed.
+  let answered = false;
+
   upstream.on('response', (answer) => {
+    answered = true;
     const status = (statusDistortions[mode] ?? ((s) => s))(answer.statusCode, info);
     const received = pairsOf(answer.rawHeaders).filter(([n]) => !hopByHop.has(n.toLowerCase()));
     let pairs = (headerDistortions[mode] ?? ((p) => p))(received, info, answer.statusCode);
     const contentType = answer.headers['content-type'] ?? '';
     const rewrite = bodyDistortions[mode]?.(info, answer.statusCode, contentType) ?? null;
 
-    if (rewrite === null || answer.headers['content-encoding'] !== undefined) {
+    const compressed = answer.headers['content-encoding'] !== undefined;
+    if (rewrite !== null && compressed) {
+      console.error(
+        `selfcheck proxy: ${info.method} ${info.path}: BREAK=${mode} not applied, the response is ${answer.headers['content-encoding']}-encoded`,
+      );
+    }
+    if (rewrite === null || compressed) {
       clientRes.writeHead(status, answer.statusMessage, flat(pairs));
+      answer.on('error', () => clientRes.destroy());
       answer.pipe(clientRes);
       return;
     }
@@ -193,6 +212,9 @@ const server = http.createServer((clientReq, clientRes) => {
   });
 
   upstream.on('error', (err) => {
+    // After an answer the request side may fail (see `answered`); the answer's own stream reports
+    // a broken answer.
+    if (answered) return;
     if (clientRes.headersSent) {
       clientRes.destroy();
       return;
@@ -206,13 +228,26 @@ const server = http.createServer((clientReq, clientRes) => {
   // The client went away: stop the upstream request too.
   clientRes.on('close', () => upstream.destroy());
   clientReq.on('error', () => upstream.destroy());
-  // The application may answer before it has read the whole body (early refusals): once it has
-  // answered, drain the rest of the upload instead of writing into a finished request.
-  upstream.on('response', () => {
-    clientReq.unpipe(upstream);
-    clientReq.resume();
+  // Forward the client's body one chunk per event-loop turn, in the check phase: every socket that
+  // is ready has then been read first, so an answer that is already queued from the app is seen
+  // before the next write can hit the reset. Once the app has answered the rest of the upload is
+  // drained, not forwarded.
+  clientReq.on('data', (chunk) => {
+    if (answered) return;
+    clientReq.pause();
+    setImmediate(() => {
+      if (answered || upstream.destroyed) {
+        clientReq.resume();
+        return;
+      }
+      upstream.write(chunk, () => clientReq.resume());
+    });
   });
-  clientReq.pipe(upstream);
+  clientReq.on('end', () => {
+    setImmediate(() => {
+      if (!answered && !upstream.destroyed) upstream.end();
+    });
+  });
 });
 
 // The app's own limits decide how long a request may take, not the proxy.
