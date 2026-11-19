@@ -68,15 +68,29 @@ type Upstream struct {
 // StartUpstream starts an upstream that stops with the test.
 func StartUpstream(t *testing.T, o UpstreamOptions) *Upstream {
 	t.Helper()
+	u, err := StartUpstreamE(t.Cleanup, o)
+	if err != nil {
+		t.Fatalf("fake listen: %v", err)
+	}
+	return u
+}
+
+// StartUpstreamE is StartUpstream for a caller that is not the test goroutine (the control API of
+// compat/e2e): it returns the error instead of failing the test, and registers the stop with
+// cleanup (pass t.Cleanup).
+func StartUpstreamE(cleanup func(func()), o UpstreamOptions) (*Upstream, error) {
 	u := &Upstream{tools: append([]Tool(nil), o.Tools...), pageSize: o.PageSize, require: o.RequireHeader}
 	u.sdk = mcp.NewStreamableHTTPHandler(u.newServer, &mcp.StreamableHTTPOptions{
 		Stateless:                  true,           // every request sees the current tools
 		DisableLocalhostProtection: true,           // the Host is host.docker.internal
 		MaxRequestBodyBytes:        maxRequestBody, // large tool arguments are the gateway's to limit, not the fake's
 	})
-	port := serve(t, u)
+	port, err := serveE(cleanup, u)
+	if err != nil {
+		return nil, err
+	}
 	u.URL = baseURL(port) + "/mcp"
-	return u
+	return u, nil
 }
 
 // SetTools replaces the tools served from now on.

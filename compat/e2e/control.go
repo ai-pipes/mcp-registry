@@ -28,7 +28,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"testing"
 	"time"
 
 	"github.com/ai-pipes/mcp-registry/compat/fakes"
@@ -55,37 +54,32 @@ type Stack struct {
 	OIDC     bool
 	Provider *fakes.OAuthProvider // nil = oauth_user servers cannot be registered here
 
-	adminOnce sync.Once
-	admin     *http.Client
-	adminErr  error
+	adminMu sync.Mutex
+	admin   *http.Client // set once a sign-in succeeded; a failed one is not remembered
 }
 
-// Control is the control API. Build it with NewControl, Listen, and keep Serve going: a handler
-// that must create a fake (they need *testing.T) hands the work to Serve instead of using t from
-// its own request goroutine.
+// Control is the control API. Build it with NewControl and Listen. A handler that creates a fake
+// uses the error-returning constructors and registers the fake's stop with the cleanup function it
+// was given (t.Cleanup, safe from any goroutine), so no handler ever fails a test from its own
+// goroutine.
 type Control struct {
-	token  string
-	stacks map[string]*Stack
-	idp    *fakes.FakeIdP
-	jobs   chan job
+	token   string
+	stacks  map[string]*Stack
+	idp     *fakes.FakeIdP
+	cleanup func(func())
 
 	mu        sync.Mutex
 	upstreams map[string]*fakes.Upstream // by slug
 }
 
-type job struct {
-	run  func(t *testing.T)
-	done chan struct{}
-}
-
 // NewControl returns a control API over the stacks (by name) and the IdP the OIDC stack uses (nil
-// when none).
-func NewControl(stacks []*Stack, idp *fakes.FakeIdP) *Control {
+// when none). cleanup is t.Cleanup of the test the fakes belong to.
+func NewControl(cleanup func(func()), stacks []*Stack, idp *fakes.FakeIdP) *Control {
 	c := &Control{
 		token:     randomToken(),
 		stacks:    map[string]*Stack{},
 		idp:       idp,
-		jobs:      make(chan job),
+		cleanup:   cleanup,
 		upstreams: map[string]*fakes.Upstream{},
 	}
 	for _, s := range stacks {
@@ -105,39 +99,6 @@ func randomToken() string {
 	return hex.EncodeToString(b)
 }
 
-// Serve answers the jobs of handlers that create fakes until ctx ends; t is the test the fakes
-// belong to. In TestBrowserFlows the test goroutine itself is blocked on the browser run, so it
-// serves; a test that makes the calls itself runs Serve on a goroutine of its own.
-func (c *Control) Serve(ctx context.Context, t *testing.T) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case j := <-c.jobs:
-			func() {
-				defer close(j.done) // also when a fake's t.Fatalf ends this goroutine: the caller must not hang
-				j.run(t)
-			}()
-		}
-	}
-}
-
-// onServe runs f on the goroutine that runs Serve and waits for it.
-func (c *Control) onServe(ctx context.Context, f func(t *testing.T)) error {
-	j := job{run: f, done: make(chan struct{})}
-	select {
-	case c.jobs <- j:
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-	select {
-	case <-j.done:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
-
 // Handler is the control API.
 func (c *Control) Handler() http.Handler {
 	mux := http.NewServeMux()
@@ -149,6 +110,7 @@ func (c *Control) Handler() http.Handler {
 	mux.HandleFunc("POST /servers", c.registerServer)
 	mux.HandleFunc("GET /upstream/calls", c.upstreamCalls)
 	mux.HandleFunc("POST /sessions/expire", c.expireSession)
+	mux.HandleFunc("GET /audit", c.auditRows)
 	return c.authenticated(mux)
 }
 
@@ -456,17 +418,13 @@ func (c *Control) registerServer(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	var up *fakes.Upstream
 	opts := fakes.UpstreamOptions{Tools: fakes.Tools(b.Tools...)}
 	if b.Kind == "shared_secret" {
 		opts.RequireHeader = [2]string{"Authorization", "Bearer " + sharedSecret}
 	}
-	if err := c.onServe(r.Context(), func(t *testing.T) { up = fakes.StartUpstream(t, opts) }); err != nil {
-		writeError(w, http.StatusServiceUnavailable, err.Error())
-		return
-	}
-	if up == nil {
-		writeError(w, http.StatusInternalServerError, "the fake upstream could not be started")
+	up, err := fakes.StartUpstreamE(c.cleanup, opts)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "the fake upstream could not be started: "+err.Error())
 		return
 	}
 	var sopts []fakes.ServerOpt
@@ -494,11 +452,18 @@ func (c *Control) registerServer(w http.ResponseWriter, r *http.Request) {
 
 // adminDo sends a request to the stack as the control admin (a session made on first use).
 func (s *Stack) adminDo(method, path string, body any) (int, []byte, error) {
-	s.adminOnce.Do(func() { s.admin, s.adminErr = s.signInControlAdmin() })
-	if s.adminErr != nil {
-		return 0, nil, s.adminErr
+	s.adminMu.Lock()
+	if s.admin == nil {
+		client, err := s.signInControlAdmin()
+		if err != nil {
+			s.adminMu.Unlock()
+			return 0, nil, err // not cached: the next call signs in again
+		}
+		s.admin = client
 	}
-	return s.doJSON(s.admin, method, path, body)
+	client := s.admin
+	s.adminMu.Unlock()
+	return s.doJSON(client, method, path, body)
 }
 
 func (s *Stack) doJSON(client *http.Client, method, path string, body any) (int, []byte, error) {
@@ -605,8 +570,10 @@ func (c *Control) expireSession(w http.ResponseWriter, r *http.Request) {
 	if s == nil {
 		return
 	}
-	// The one fixed SQL statement of the control API: the person's sessions look unused for
-	// longer than the idle limit, which is how a session expires without waiting.
+	// A fixed SQL statement: the person's sessions look unused for longer than the idle limit,
+	// which is how a session expires without waiting. It writes identity.sessions.last_seen_at
+	// directly, so it assumes the server under test keeps that schema (the compat suite's time
+	// travel assumes the same; the migration plan to Go requires it).
 	tag, err := s.Harness.DB.Exec(r.Context(),
 		`update identity.sessions set last_seen_at = now() - interval '13 hours' -- past the 12 h idle limit
 		  where user_id = (select id from identity.users where oidc_sub = $1)`, b.Sub)
@@ -619,4 +586,60 @@ func (c *Control) expireSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"sessions": tag.RowsAffected()})
+}
+
+// --- audit ----------------------------------------------------------------------------------
+
+var actionPattern = regexp.MustCompile(`^[a-z][a-z_.]{0,59}$`)
+
+// AuditRow is a row of platform.audit_log as GET /audit returns it.
+type AuditRow struct {
+	Action   string `json:"action"`
+	Target   string `json:"target"`
+	ActorSub string `json:"actorSub"`
+}
+
+// auditRows reads platform.audit_log, read-only, with parameterised SQL: the audit REST list of the
+// image is ordered by the text form of the id and pages wrongly, so a flow that needs a specific
+// record reads it here instead of relying on the first page of the UI. actor (a person's sub) and
+// action are optional filters.
+func (c *Control) auditRows(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	actor, action := q.Get("actor"), q.Get("action")
+	if actor != "" && !subjectPattern.MatchString(actor) {
+		writeError(w, http.StatusBadRequest, "actor must match "+subjectPattern.String())
+		return
+	}
+	if action != "" && !actionPattern.MatchString(action) {
+		writeError(w, http.StatusBadRequest, "action must match "+actionPattern.String())
+		return
+	}
+	s := c.stack(w, q.Get("stack"))
+	if s == nil {
+		return
+	}
+	rows, err := s.Harness.DB.Query(r.Context(),
+		`select a.action, coalesce(a.target, ''), coalesce(u.oidc_sub, '')
+		   from platform.audit_log a left join identity.users u on u.id = a.actor_id
+		  where ($1 = '' or u.oidc_sub = $1) and ($2 = '' or a.action = $2)
+		  order by a.id desc limit 500`, actor, action)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	defer rows.Close()
+	out := []AuditRow{}
+	for rows.Next() {
+		var row AuditRow
+		if err := rows.Scan(&row.Action, &row.Target, &row.ActorSub); err != nil {
+			writeError(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		out = append(out, row)
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"rows": out})
 }

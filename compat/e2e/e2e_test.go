@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -50,7 +51,7 @@ func TestBrowserFlows(t *testing.T) {
 		PublicHost: "gateway.compat.test",
 		ExtraHosts: []string{"idp.compat.test:host-gateway"},
 	})
-	control := e2e.NewControl([]*e2e.Stack{
+	control := e2e.NewControl(t.Cleanup, []*e2e.Stack{
 		{Name: "plain", Harness: plain, Provider: localProvider},
 		{Name: "oidc", Harness: withIDP, OIDC: true},
 		{Name: "samesite", Harness: sameSite, Provider: sameSiteProvider},
@@ -62,9 +63,11 @@ func TestBrowserFlows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	go control.Serve(ctx, t)
 
-	cmd := exec.CommandContext(ctx, "pnpm", "exec", "playwright", "test", "-c", "e2e/flows/playwright.config.ts")
+	args := []string{"exec", "playwright", "test", "-c", "e2e/flows/playwright.config.ts"}
+	// E2E_PLAYWRIGHT_ARGS (space separated) selects flows, for example a file name or -g <title>.
+	args = append(args, strings.Fields(os.Getenv("E2E_PLAYWRIGHT_ARGS"))...)
+	cmd := exec.CommandContext(ctx, "pnpm", args...) //nolint:gosec // G204: the arguments are the developer's own, from their environment
 	cmd.Dir = root
 	cmd.Env = append(os.Environ(),
 		"E2E_CONTROL_URL="+controlURL,

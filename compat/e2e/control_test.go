@@ -47,8 +47,7 @@ func ctl(t *testing.T, base, token, method, path string, body any) (int, []byte)
 	return resp.StatusCode, data
 }
 
-// withControl serves the control API of c while fn runs on the test goroutine. The jobs of the
-// handlers that create fakes run on their own goroutine (Serve).
+// withControl serves the control API of c while fn runs on the test goroutine.
 func withControl(t *testing.T, c *e2e.Control, fn func(base string)) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -57,12 +56,11 @@ func withControl(t *testing.T, c *e2e.Control, fn func(base string)) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	go c.Serve(ctx, t)
 	fn(base)
 }
 
 func TestControlRefusesEveryRequestWithoutTheRunToken(t *testing.T) {
-	c := e2e.NewControl(nil, nil)
+	c := e2e.NewControl(t.Cleanup, nil, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	base, err := c.Listen(ctx)
@@ -81,6 +79,7 @@ func TestControlRefusesEveryRequestWithoutTheRunToken(t *testing.T) {
 		{"POST", "/servers"},
 		{"GET", "/upstream/calls?slug=x"},
 		{"POST", "/sessions/expire"},
+		{"GET", "/audit?stack=x"},
 		{"GET", "/no-such-path"},
 	} {
 		var body any
@@ -100,7 +99,7 @@ func TestControlRefusesEveryRequestWithoutTheRunToken(t *testing.T) {
 	if status, _ := ctl(t, base, c.Token(), "GET", "/no-such-path", nil); status != http.StatusNotFound {
 		t.Errorf("an unknown path with the token: %d, want 404", status)
 	}
-	if c.Token() == e2e.NewControl(nil, nil).Token() {
+	if c.Token() == e2e.NewControl(t.Cleanup, nil, nil).Token() {
 		t.Error("two controls share a token")
 	}
 	// A bearer scheme only: the bare token is not accepted.
@@ -120,7 +119,7 @@ func TestControlRefusesEveryRequestWithoutTheRunToken(t *testing.T) {
 }
 
 func TestControlRefusesBadParametersBeforeTouchingAnything(t *testing.T) {
-	c := e2e.NewControl(nil, nil) // no stacks, no IdP: every refusal below happens before any is needed
+	c := e2e.NewControl(t.Cleanup, nil, nil) // no stacks, no IdP: every refusal below happens before any is needed
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	base, err := c.Listen(ctx)
@@ -143,6 +142,9 @@ func TestControlRefusesBadParametersBeforeTouchingAnything(t *testing.T) {
 		{"a server of an unknown stack", "POST", "/servers", map[string]any{"stack": "x", "kind": "none"}, 404},
 		{"an unknown session stack", "POST", "/sessions/expire", map[string]any{"stack": "x", "sub": "a"}, 404},
 		{"a body that is not JSON", "POST", "/sessions/expire", "not json", 400},
+		{"an actor that is not a sub", "GET", "/audit?stack=x&actor=--admin", nil, 400},
+		{"an action that is not a name", "GET", "/audit?stack=x&action=DROP%20TABLE", nil, 400},
+		{"audit of an unknown stack", "GET", "/audit?stack=x", nil, 404},
 		{"calls of an unknown server", "GET", "/upstream/calls?slug=nope", nil, 404},
 	} {
 		var status int
@@ -172,7 +174,7 @@ func TestControlRefusesBadParametersBeforeTouchingAnything(t *testing.T) {
 func TestControlRefusesBadServerParameters(t *testing.T) {
 	// Parameter checks on /servers come after the stack lookup, so they need a stack entry; the
 	// entry is never booted (a nil harness stack) because every case is refused first.
-	c := e2e.NewControl([]*e2e.Stack{{Name: "s"}}, nil)
+	c := e2e.NewControl(t.Cleanup, []*e2e.Stack{{Name: "s"}}, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	base, err := c.Listen(ctx)
@@ -197,7 +199,7 @@ func TestControlOperationsAgainstARealStack(t *testing.T) {
 	provider := fakes.StartOAuthProvider(t)
 	plain := harness.Start(t, harness.Options{})
 	oidc := harness.Start(t, harness.Options{OIDC: idp})
-	c := e2e.NewControl([]*e2e.Stack{
+	c := e2e.NewControl(t.Cleanup, []*e2e.Stack{
 		{Name: "plain", Harness: plain, Provider: provider},
 		{Name: "oidc", Harness: oidc, OIDC: true},
 	}, idp)
@@ -311,6 +313,32 @@ func TestControlOperationsAgainstARealStack(t *testing.T) {
 		}
 		call("POST", "/servers", map[string]any{"stack": "plain", "kind": "none", "slug": "ctl-none"}, 502, nil) // the slug is taken
 		call("POST", "/servers", map[string]any{"stack": "oidc", "kind": "oauth_user"}, 400, nil)                // that stack has no provider
+
+		// audit: the registrations above are in the trail, by the control admin, whatever the order.
+		var trail struct {
+			Rows []e2e.AuditRow `json:"rows"`
+		}
+		call("GET", "/audit?stack=plain&actor=e2e-control&action=server.create", nil, 200, &trail)
+		targets := map[string]bool{}
+		for _, r := range trail.Rows {
+			if r.Action != "server.create" || r.ActorSub != "e2e-control" {
+				t.Errorf("audit row outside the filter: %+v", r)
+			}
+			targets[r.Target] = true
+		}
+		for _, slug := range []string{"ctl-none", "ctl-shared-secret", "ctl-pat-user", "ctl-oauth-user"} {
+			if !targets[slug] {
+				t.Errorf("no server.create row for %s in %+v", slug, trail.Rows)
+			}
+		}
+		call("GET", "/audit?stack=plain&actor=ctl-member&action=server.create", nil, 200, &trail)
+		if len(trail.Rows) != 0 {
+			t.Errorf("another person's filter returned %+v", trail.Rows)
+		}
+		call("GET", "/audit?stack=plain", nil, 200, &trail)
+		if len(trail.Rows) < 4 {
+			t.Errorf("unfiltered audit: %d rows", len(trail.Rows))
+		}
 
 		type calls struct {
 			Calls []e2e.UpstreamCall `json:"calls"`

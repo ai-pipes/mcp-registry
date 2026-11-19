@@ -11,6 +11,7 @@ test('disabling a person ends the session of their open tab at its next action',
     401,
     /^\/api\/catalog$/,
     "the request the disabled person's next click makes",
+    page,
   );
   const base = stacks.plain.baseURL;
   const victim = await newPerson('plain', 'Soon Disabled', false);

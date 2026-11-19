@@ -52,7 +52,7 @@ test('a token and its connect command are shown once; afterwards only the prefix
   // The list keeps the name and the prefix only.
   const row = page.getByRole('row', { name: /laptop/ });
   await expect(row).toBeVisible();
-  const prefix = (await row.getByRole('cell').nth(1).innerText()).replace('…', '');
+  const prefix = (await row.getByText(/^sk_\S+…$/).innerText()).replace('…', '');
   expect(prefix).toMatch(/^sk_/);
   expect(token.startsWith(prefix)).toBe(true);
   expect(prefix.length).toBeLessThan(token.length);

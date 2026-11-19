@@ -1,6 +1,9 @@
 // Scenario 1: the first start without OIDC and signing in with the link from the log.
 // The person it signs in is the admin with sub `local-admin`; the UI shows its name, which the
 // server gives as "Admin" (the sub is not displayed anywhere).
+// Precondition: this stack's first-start link is fresh and unused, so no earlier flow may sign the
+// first admin in (none does: the other flows make their own people), and this flow must run once
+// per stack. If the link is already spent the flow says so instead of failing somewhere obscure.
 import { expect, strings, test, control, getStacks } from './fixtures.ts';
 
 test('the first-start link opens a confirmation, sends nothing until the click, and signs the first admin in', async ({
@@ -38,10 +41,24 @@ test('the first-start link opens a confirmation, sends nothing until the click, 
     page.getByRole('heading', { level: 1, name: strings.login.linkTitle }),
   ).toBeVisible();
   expect(sent).toEqual([]);
+  guard.excuseRefusal(
+    401,
+    /^\/api\/auth\/link$/,
+    'a link that was already used (reported below)',
+    page,
+  );
   await page.getByRole('button', { name: strings.login.switchConfirm }).click();
 
   // Signed in: the shell names the person and the role.
-  await expect(page.getByRole('heading', { level: 1, name: strings.catalog.title })).toBeVisible();
+  const catalogHeading = page.getByRole('heading', { level: 1, name: strings.catalog.title });
+  const spent = page.getByText(strings.login.errors['invalid_link']!);
+  await catalogHeading.or(spent).waitFor();
+  if (await spent.isVisible()) {
+    throw new Error(
+      'the first-start link was already used or has expired: this flow needs the fresh link of a stack whose first admin has not signed in yet',
+    );
+  }
+  await expect(catalogHeading).toBeVisible();
   await expect(page).toHaveURL(`${base}/catalog`);
   expect(sent).toEqual(['POST']);
   const shell = page.getByRole('complementary');
@@ -51,9 +68,14 @@ test('the first-start link opens a confirmation, sends nothing until the click, 
 
   // Negative control: a link is good once. The same link in another browser is refused, with the
   // text of the sign-in page, and signs nobody in.
-  guard.excuseRefusal(401, /^\/api\/auth\/link$/, 'the refused second use of a one-time link');
   const other = await guard.newContext();
   const page2 = await other.newPage();
+  guard.excuseRefusal(
+    401,
+    /^\/api\/auth\/link$/,
+    'the refused second use of a one-time link',
+    page2,
+  );
   await page2.goto(link);
   await expect(
     page2.getByRole('heading', { level: 1, name: strings.login.linkTitle }),

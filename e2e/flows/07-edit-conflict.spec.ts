@@ -1,12 +1,18 @@
-// Scenario 7: two tabs edit one server. The brief expected the second save to be refused with a
-// conflict message; the image does not send the version to the client, so optimistic
-// concurrency only guards races inside one request, and the stale tab simply overwrites. This
-// flow pins what really happens (see the report, Findings).
+// Scenario 7: two tabs edit one server. PARTIALLY COVERED. The brief's path, "the second tab gets
+// a conflict message", cannot be reached today: the UI sends no version, so the image only guards
+// races inside a single request and a stale tab overwrites silently (a lost update; Findings of the
+// Task 13 report, "optimistic concurrency not reachable from the UI"). This flow therefore asserts
+// only what a correct server plus this UI must do, whichever way the conflict is handled later:
+//   - the first tab's save succeeds and survives a reload;
+//   - the stale tab's save either succeeds or shows the `server_conflict` text;
+//   - the stored server afterwards equals exactly one of the two tabs' complete forms, never a
+//     mixture of fields that neither tab submitted;
+//   - if the conflict text was shown, the first tab's change is still there.
 import { expect, strings, test, control, getStacks, newPerson, signInWith } from './fixtures.ts';
 
 const f = strings.form;
 
-test('a stale second tab saves over the first one without any conflict message', async ({
+test('two tabs edit one server: both saves end in a consistent state, or the second is told of a conflict', async ({
   page,
 }) => {
   const stacks = await getStacks();
@@ -20,22 +26,34 @@ test('a stale second tab saves over the first one without any conflict message',
   await page.goto(url);
   await second.goto(url);
   const name = (p: typeof page) => p.getByLabel(f.name, { exact: true });
-  await expect(name(page)).toHaveValue(server.name);
+  const description = (p: typeof page) => p.getByLabel(f.description);
   await expect(name(second)).toHaveValue(server.name);
+  const originalDescription = await description(second).inputValue();
 
-  // Tab one saves a new name.
+  // Tab one, opened first, saves a new name and sees it after a reload.
   await name(page).fill('Name from tab one');
   await page.getByRole('button', { name: strings.common.save }).click();
   await expect(page.getByText(strings.servers.saved)).toBeVisible();
-
-  // Tab two, still holding the old data, saves a new description.
-  await second.getByLabel(f.description).fill('Description from tab two');
-  await second.getByRole('button', { name: strings.common.save }).click();
-  await expect(second.getByText(strings.servers.saved)).toBeVisible();
-  await expect(second.getByText(strings.errors.codes['server_conflict']!)).toHaveCount(0);
-
-  // The result: tab two's whole form won, so tab one's name is gone.
   await page.reload();
-  await expect(name(page)).toHaveValue(server.name);
-  await expect(page.getByLabel(f.description)).toHaveValue('Description from tab two');
+  await expect(name(page)).toHaveValue('Name from tab one');
+
+  // Tab two, opened before that save, saves a different field.
+  await description(second).fill('Description from tab two');
+  await second.getByRole('button', { name: strings.common.save }).click();
+  const saved = second.getByText(strings.servers.saved);
+  const conflict = second.getByText(strings.errors.codes['server_conflict']!);
+  await saved.or(conflict).waitFor();
+  const conflictShown = await conflict.isVisible();
+
+  // The stored state is one tab's complete form.
+  await page.reload();
+  const stored = {
+    name: await name(page).inputValue(),
+    description: await description(page).inputValue(),
+  };
+  expect([
+    { name: 'Name from tab one', description: originalDescription }, // tab one's form
+    { name: server.name, description: 'Description from tab two' }, // tab two's form
+  ]).toContainEqual(stored);
+  if (conflictShown) expect(stored.name).toBe('Name from tab one');
 });

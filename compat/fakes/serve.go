@@ -99,17 +99,26 @@ const maxBindAttempts = 20
 // deliberately slow or hanging answer) are cancelled by the cleanup. It returns the port.
 func serve(t *testing.T, h http.Handler) int {
 	t.Helper()
+	port, err := serveE(t.Cleanup, h)
+	if err != nil {
+		t.Fatalf("fake listen: %v", err)
+	}
+	return port
+}
+
+// serveE is serve for callers that must not fail a test from their own goroutine: the error is
+// returned, and cleanup (t.Cleanup, which is safe to call from any goroutine) registers the stop.
+func serveE(cleanup func(func()), h http.Handler) (int, error) {
 	var lastErr error
 	for attempt := 1; attempt <= maxBindAttempts; attempt++ {
 		port, stop, err := tryServe(h)
 		if err == nil {
-			t.Cleanup(stop)
-			return port
+			cleanup(stop)
+			return port, nil
 		}
 		lastErr = err
 	}
-	t.Fatalf("fake listen: no usable port in %d attempts, last error: %v", maxBindAttempts, lastErr)
-	return 0
+	return 0, fmt.Errorf("no usable port in %d attempts, last error: %w", maxBindAttempts, lastErr)
 }
 
 // tryServe makes one attempt: listeners, server, self-check. stop closes everything.

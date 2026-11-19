@@ -18,6 +18,7 @@ test('a bad slug and a bad header name are shown under their own fields and crea
     422,
     /^\/api\/servers$/,
     'the refusals of the bad slug and the bad header name',
+    page,
   );
   const base = stacks.plain.baseURL;
   const upstream = await control.registerServer('plain', 'none');

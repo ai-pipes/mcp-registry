@@ -953,3 +953,16 @@ func TestOAuthProviderConsentPageHasAnApproveLinkToTheRedirectTarget(t *testing.
 		t.Fatalf("authorize requests: %d", len(reqs))
 	}
 }
+
+func TestStartUpstreamEReturnsAWorkingUpstreamAndRegistersItsStop(t *testing.T) {
+	var stops []func()
+	up, err := fakes.StartUpstreamE(func(f func()) { stops = append(stops, f) }, fakes.UpstreamOptions{Tools: fakes.Tools("one")})
+	if err != nil || up == nil || len(stops) != 1 {
+		t.Fatalf("StartUpstreamE: %v %v, %d stops", up, err, len(stops))
+	}
+	status, _, _ := send(t, "POST", up.URL, rpcList, mcpHeaders...)
+	if status != 200 {
+		t.Fatalf("tools/list on the upstream: %d", status)
+	}
+	stops[0]()
+}

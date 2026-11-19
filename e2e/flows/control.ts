@@ -131,6 +131,29 @@ class Control {
     });
   }
 
+  /**
+   * Rows of the audit table (read-only), newest first, filtered by the sub of the actor and/or the
+   * action. For a flow that needs a specific record: the image's audit list is ordered by the text
+   * form of the id, so the first page of the UI does not reliably hold the newest rows.
+   */
+  async audit(
+    stack: StackName,
+    filter: { actor?: string; action?: string } = {},
+  ): Promise<{ action: string; target: string; actorSub: string }[]> {
+    const q = new URLSearchParams({
+      stack,
+      actor: filter.actor ?? '',
+      action: filter.action ?? '',
+    });
+    const rows = field(await this.call('GET', `/audit?${q.toString()}`), 'rows');
+    if (!Array.isArray(rows)) throw new Error('audit answer has no rows');
+    return rows.map((r: unknown) => ({
+      action: str(r, 'action'),
+      target: str(r, 'target'),
+      actorSub: str(r, 'actorSub'),
+    }));
+  }
+
   async expireSession(stack: StackName, sub: string): Promise<void> {
     await this.call('POST', '/sessions/expire', { stack, sub });
   }

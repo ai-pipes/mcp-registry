@@ -33,6 +33,7 @@ go-verify: go-lint go-arch-lint
 	go vet -tags compat ./...
 	go vet -tags "compat selfcheck" ./compat/selfcheck/
 	go vet -tags "compat e2e" ./compat/e2e/
+	go test -tags "compat e2e" -count=1 -run '^TestControlRefuses' ./compat/e2e/
 	go test ./...
 
 # Regenerates compat/schemas from the zod contracts; CI fails when the committed files are stale.
@@ -48,10 +49,11 @@ compat:
 # The browser flows (e2e/flows, Playwright with Chromium) against the image COMPAT_IMAGE (default
 # mcp-registry:compat-ts, see compat-image-ts), orchestrated from Go so that the same flows judge the
 # Go server later. Needs `pnpm install` and `pnpm exec playwright install chromium`. Not part of
-# `make compat` (tag e2e). Traces of a failed run: node_modules/.cache/playwright/flows-results
-# (or E2E_OUTPUT_DIR).
+# `make compat` (tag e2e). It also runs the control API's own tests (TestControl*); the Docker-free
+# ones (TestControlRefuses*, the guarantee behind the API's token and fixed operations) run in go-verify too. Traces of a failed run: node_modules/.cache/playwright/flows-results
+# (or E2E_OUTPUT_DIR). E2E_PLAYWRIGHT_ARGS='03-tokens.spec.ts' (or -g <title>) runs part of the flows.
 e2e-flows:
-	go test -tags "compat e2e" -count=1 -timeout 30m -v -run '^TestBrowserFlows$$' ./compat/e2e/
+	go test -tags "compat e2e" -count=1 -timeout 30m -v -run '^(TestBrowserFlows|TestControl)' ./compat/e2e/
 
 # Records compat/golden/search-<arch>.json for the architecture of this machine, from the reference
 # image only (the one test that writes it; -update would rewrite other goldens if it ran them).

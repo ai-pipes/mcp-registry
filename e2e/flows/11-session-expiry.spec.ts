@@ -8,6 +8,7 @@ test('an expired session shows the sign-in page at the next action', async ({ pa
     401,
     /^\/api\/catalog$/,
     'the request the next click makes on an expired session',
+    page,
   );
   const base = stacks.plain.baseURL;
   const person = await newPerson('plain', 'Idle Person', false);

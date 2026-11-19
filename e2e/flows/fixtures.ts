@@ -10,6 +10,7 @@ import {
   test as base,
   expect,
   type BrowserContext,
+  type Frame,
   type Page,
   type Response,
 } from '@playwright/test';
@@ -29,6 +30,8 @@ interface ExcusedRefusal {
   status: number;
   path: RegExp;
   why: string;
+  /** Only messages of this page are excused; without it, those of any page of the test. */
+  page?: Page | undefined;
 }
 
 const RESOURCE_ERROR = /^Failed to load resource: the server responded with a status of (\d+) /;
@@ -51,10 +54,14 @@ const alwaysExcused: ExcusedRefusal[] = [
   { status: 401, path: /^\/api\/auth\/me$/, why: 'the session probe of a signed-out visitor' },
 ];
 
+type Body =
+  | { kind: 'text'; text: string }
+  | { kind: 'unreadable'; why: string; excused: () => boolean };
+
 interface Seen {
   url: string;
   method: string;
-  response: Response;
+  body: Promise<Body>;
 }
 
 interface Watched {
@@ -62,6 +69,8 @@ interface Watched {
   seen: Seen[];
   secrets: { value: string; fromIndex: number; label: string }[];
   excused: ExcusedRefusal[];
+  /** How many times each frame has navigated (a frame can come back to the same URL). */
+  navs: WeakMap<Frame, number>;
 }
 
 const LINK_CODE = /\bll_[A-Za-z0-9_-]{20,}/;
@@ -73,7 +82,12 @@ declare global {
   }
 }
 
-function isExcused(excused: ExcusedRefusal[], text: string, url: string): boolean {
+function isExcused(
+  excused: ExcusedRefusal[],
+  text: string,
+  url: string,
+  page: Page | null,
+): boolean {
   let parsed: URL;
   try {
     parsed = new URL(url);
@@ -83,24 +97,83 @@ function isExcused(excused: ExcusedRefusal[], text: string, url: string): boolea
   if (untrustworthyOrigin.test(text) && compatTestHost.test(parsed.hostname)) return true;
   const status = RESOURCE_ERROR.exec(text)?.[1];
   if (status === undefined) return false;
-  return excused.some((e) => e.status === Number(status) && e.path.test(parsed.pathname));
+  return excused.some(
+    (e) =>
+      e.status === Number(status) &&
+      e.path.test(parsed.pathname) &&
+      (e.page === undefined || e.page === page),
+  );
 }
 
-function watch(context: BrowserContext, w: Watched): void {
+/**
+ * The conditions under which a response whose body cannot be read is not a failure; every other
+ * unreadable body is. This is the one place that lists them:
+ *   - redirects (Playwright cannot read them), 204, 304, and answers to HEAD have no body;
+ *   - binary assets (fonts, images, audio, video) are not read as text, and Chromium serves some of
+ *     them (the preloaded font) without keeping a body to ask for; no secret is searched in them;
+ *   - the request belonged to a frame that navigated away, was detached, or whose page was closed
+ *     after the response: Chromium drops the bodies of the document that is left, and the
+ *     response event fires before the body is complete, so a navigation that follows at once (the
+ *     Connect button, a reload) can win the race even against a read started at the event. This
+ *     is judged at the verdict, when the navigation has committed. It is the residual blind spot of
+ *     reading bodies through Playwright, and the one place a leak could still hide.
+ */
+function legitimatelyUnreadable(
+  r: Response,
+  frame: Frame | null,
+  navigated: () => boolean,
+): boolean {
+  const status = r.status();
+  if ((status >= 300 && status < 400) || status === 204 || status === 304) return true;
+  if (r.request().method() === 'HEAD') return true;
+  if (/^(font|image|audio|video)\//.test(r.headers()['content-type'] ?? '')) return true;
+  return frame !== null && (frame.isDetached() || frame.page().isClosed() || navigated());
+}
+
+async function readBody(r: Response, navs: WeakMap<Frame, number>): Promise<Body> {
+  let frame: Frame | null = null;
+  try {
+    frame = r.request().frame();
+  } catch {
+    // a request without a frame (a worker's): never excused by navigation
+  }
+  const navsThen = frame === null ? 0 : (navs.get(frame) ?? 0);
+  try {
+    return { kind: 'text', text: await r.text() };
+  } catch (e) {
+    return {
+      kind: 'unreadable',
+      why: e instanceof Error ? (e.message.split('\n')[0] ?? '') : String(e),
+      excused: () =>
+        legitimatelyUnreadable(r, frame, () => frame !== null && (navs.get(frame) ?? 0) > navsThen),
+    };
+  }
+}
+
+async function watch(context: BrowserContext, w: Watched): Promise<void> {
   context.on('console', (m) => {
     if (m.type() !== 'error') return;
     const text = m.text();
-    if (isExcused(w.excused, text, m.location().url)) return;
+    if (isExcused(w.excused, text, m.location().url, m.page())) return;
     w.problems.push(`console.error: ${text} (${m.location().url})`);
   });
+  const countNavigations = (page: Page) =>
+    page.on('framenavigated', (f) => w.navs.set(f, (w.navs.get(f) ?? 0) + 1));
+  context.pages().forEach(countNavigations);
+  context.on('page', countNavigations);
   context.on('weberror', (e) => w.problems.push(`page error: ${e.error().message}`));
   context.on('response', (response) => {
-    w.seen.push({ url: response.url(), method: response.request().method(), response });
+    // Read at once: a later navigation of the page drops the body.
+    w.seen.push({
+      url: response.url(),
+      method: response.request().method(),
+      body: readBody(response, w.navs),
+    });
   });
-  void context.exposeFunction('e2eReport', (kind: string, detail: string) => {
+  await context.exposeFunction('e2eReport', (kind: string, detail: string) => {
     w.problems.push(`${kind}: ${detail}`);
   });
-  void context.addInitScript(() => {
+  await context.addInitScript(() => {
     document.addEventListener('securitypolicyviolation', (e) => {
       window.e2eReport?.(
         'CSP violation',
@@ -110,20 +183,42 @@ function watch(context: BrowserContext, w: Watched): void {
   });
 }
 
-async function bodyOf(r: Response): Promise<string | null> {
-  try {
-    return await r.text();
-  } catch {
-    return null; // a redirect or an aborted request has no body to read
+/** The guard's verdict so far: every problem the test must not have. */
+async function verdict(w: Watched): Promise<string[]> {
+  const issues = [...w.problems];
+  const bodies = await Promise.all(w.seen.map((s) => s.body));
+  for (const [i, s] of w.seen.entries()) {
+    const body = bodies[i];
+    if (body === undefined) continue;
+    if (body.kind === 'unreadable' && !body.excused()) {
+      issues.push(
+        `the body of the response to ${s.method} ${s.url} could not be read (${body.why}): the secret checks cannot see it`,
+      );
+    }
+    const text = body.kind === 'text' ? body.text : '';
+    const created = s.method === 'POST' && new URL(s.url).pathname === '/api/tokens';
+    if (LINK_CODE.test(s.url) || LINK_CODE.test(text)) {
+      issues.push(`a sign-in link code is in the response to ${s.method} ${s.url}`);
+    }
+    if (!created && API_TOKEN.test(text)) {
+      issues.push(`an API token is in the response to ${s.method} ${s.url}`);
+    }
+    for (const sec of w.secrets) {
+      if (i >= sec.fromIndex && text.includes(sec.value)) {
+        issues.push(`${sec.label} is in the response to ${s.method} ${s.url}`);
+      }
+    }
   }
+  return issues;
 }
 
 export interface Guard {
   /**
    * This flow makes the server refuse requests on purpose: the browser's console line about a
-   * response with `status` for a path matching `path` is not a failure. `why` is the reason.
+   * response with `status` for a path matching `path` is not a failure. `why` is the reason;
+   * `page` limits it to the messages of that page.
    */
-  excuseRefusal: (status: number, path: RegExp, why: string) => void;
+  excuseRefusal: (status: number, path: RegExp, why: string, page?: Page) => void;
   /** A browser context of its own (another person, another tab group), watched like the first. */
   newContext: () => Promise<BrowserContext>;
   /**
@@ -131,21 +226,31 @@ export interface Guard {
    * `page` at once and, from now on, every response received. `label` names it in failures.
    */
   secretGone: (page: Page, value: string, label: string) => Promise<void>;
+  /** What the guard would report now (the fixture's teardown asserts it is empty). */
+  problems: () => Promise<string[]>;
+  /** Forgets everything seen so far: for the guard's own self-test, after it asserted a verdict. */
+  reset: () => void;
 }
 
 export const test = base.extend<{ guard: Guard }>({
   guard: [
     async ({ context, browser }, use) => {
-      const w: Watched = { problems: [], seen: [], secrets: [], excused: [...alwaysExcused] };
+      const w: Watched = {
+        problems: [],
+        seen: [],
+        secrets: [],
+        excused: [...alwaysExcused],
+        navs: new WeakMap(),
+      };
       const extra: BrowserContext[] = [];
-      watch(context, w);
+      await watch(context, w);
       const guard: Guard = {
-        excuseRefusal(status, path, why) {
-          w.excused.push({ status, path, why });
+        excuseRefusal(status, path, why, page) {
+          w.excused.push({ status, path, why, page });
         },
         async newContext() {
           const c = await browser.newContext();
-          watch(c, w);
+          await watch(c, w);
           extra.push(c);
           return c;
         },
@@ -172,26 +277,16 @@ export const test = base.extend<{ guard: Guard }>({
           expect(await page.content(), `${label} is in page.content()`).not.toContain(value);
           w.secrets.push({ value, fromIndex: w.seen.length, label });
         },
+        problems: () => verdict(w),
+        reset() {
+          w.problems.length = 0;
+          w.seen.length = 0;
+          w.secrets.length = 0;
+        },
       };
       await use(guard);
 
-      const issues = [...w.problems];
-      const bodies = await Promise.all(w.seen.map((s) => bodyOf(s.response)));
-      for (const [i, s] of w.seen.entries()) {
-        const body = bodies[i] ?? null;
-        const created = s.method === 'POST' && new URL(s.url).pathname === '/api/tokens';
-        if (LINK_CODE.test(s.url) || (body !== null && LINK_CODE.test(body))) {
-          issues.push(`a sign-in link code is in the response to ${s.method} ${s.url}`);
-        }
-        if (!created && body !== null && API_TOKEN.test(body)) {
-          issues.push(`an API token is in the response to ${s.method} ${s.url}`);
-        }
-        for (const sec of w.secrets) {
-          if (i >= sec.fromIndex && body?.includes(sec.value) === true) {
-            issues.push(`${sec.label} is in the response to ${s.method} ${s.url}`);
-          }
-        }
-      }
+      const issues = await verdict(w);
       await Promise.all(extra.map((c) => c.close()));
       expect(issues, 'console errors, CSP violations and leaked secrets').toEqual([]);
     },

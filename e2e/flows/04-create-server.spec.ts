@@ -50,8 +50,10 @@ test('a server made in the form shows its synced tools on its page and in the ca
 
   // The catalog: the server's card with its refs.
   await page.goto(`${base}/catalog`);
-  const card = page.locator('[data-slot=card]', { hasText: 'Form Created' });
-  await expect(card.getByText(strings.catalog.tools(2))).toBeVisible();
-  await expect(card.getByText(`${slug}.alpha`, { exact: true })).toBeVisible();
-  await expect(card.getByText(`${slug}.beta`, { exact: true })).toBeVisible();
+  // The search box narrows the catalog to this server, so what follows is about its card only.
+  await page.getByRole('searchbox', { name: strings.catalog.search }).fill(slug);
+  await expect(page.getByText(strings.catalog.tools(2))).toBeVisible();
+  await expect(page.getByText(`${slug}.alpha`, { exact: true })).toBeVisible();
+  await expect(page.getByText(`${slug}.beta`, { exact: true })).toBeVisible();
+  await expect(page.getByText(upstream.name)).toHaveCount(0); // the other server is filtered out
 });
