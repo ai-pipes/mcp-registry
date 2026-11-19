@@ -148,6 +148,14 @@ func Main(m *testing.M) {
 	os.Exit(code)
 }
 
+// DefaultImage is the image under test: COMPAT_IMAGE, else the built-in default. Scenarios use it
+// instead of repeating the default.
+func DefaultImage() string { return envOr("COMPAT_IMAGE", defaultImage) }
+
+// DefaultCLI is the invocation prefix of the CLI of the image under test: COMPAT_CLI, else the
+// built-in default. Scenarios never write the prefix themselves.
+func DefaultCLI() string { return envOr("COMPAT_CLI", defaultCLI) }
+
 func envOr(name, def string) string {
 	if v := os.Getenv(name); v != "" {
 		return v
@@ -199,11 +207,11 @@ func inspectArch(image string) (string, error) {
 func boot(o Options, expectExit bool) (s *Stack, err error) {
 	image := o.Image
 	if image == "" {
-		image = envOr("COMPAT_IMAGE", defaultImage)
+		image = DefaultImage()
 	}
 	cli := o.CLI
 	if cli == "" {
-		cli = envOr("COMPAT_CLI", defaultCLI)
+		cli = DefaultCLI()
 	}
 	s = &Stack{id: randomHex(4), cli: cli, image: image}
 	defer func() {

@@ -246,7 +246,8 @@ func TestMCPRecordingHandsOverTheRawAnswers(t *testing.T) {
 }
 
 func TestCLIWithEnvRunsInAOneOffContainerWithTheStacksFiles(t *testing.T) {
-	s := harness.Start(t, harness.Options{})
+	// The image and the CLI are given explicitly (Options.Image, Options.CLI), as the upgrade scenario does.
+	s := harness.Start(t, harness.Options{Image: harness.DefaultImage(), CLI: harness.DefaultCLI()})
 	if r := s.CLIWithEnv(t, nil, "", "--version"); r.Code != 0 || strings.TrimSpace(r.Stdout) == "" {
 		t.Fatalf("--version in a one-off container: %+v", r)
 	}
@@ -292,12 +293,5 @@ func TestCLIWithEnvRunsWhileTheAppIsDown(t *testing.T) {
 	s.SwapImage(t, testImage(), "")
 	if r := s.CLI(t, "", "create-server", "--json", "/tmp/harness-down.json", "--as", "x"); !strings.Contains(r.Stderr, "is not valid JSON") {
 		t.Fatalf("the file after the app came back: %+v", r)
-	}
-}
-
-func TestStartWithAnExplicitImageAndCLI(t *testing.T) {
-	s := harness.Start(t, harness.Options{Image: testImage(), CLI: "node   dist/cli.js"})
-	if r := s.CLI(t, "", "--version"); r.Code != 0 || strings.TrimSpace(r.Stdout) == "" {
-		t.Fatalf("--version: %+v", r)
 	}
 }

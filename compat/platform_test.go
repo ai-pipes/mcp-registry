@@ -38,7 +38,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"os"
 	"regexp"
 	"strings"
 	"testing"
@@ -63,12 +62,7 @@ const (
 	newerDBMigrName = "9999_from_the_future.sql"
 )
 
-func platformImage() string {
-	if image := os.Getenv("COMPAT_IMAGE"); image != "" {
-		return image
-	}
-	return "mcp-registry:compat-ts"
-}
+func platformImage() string { return harness.DefaultImage() }
 
 // securityHeaders is every header securityHeaders() (hono's secureHeaders with the strict CSP)
 // sets on every response, with its exact value.

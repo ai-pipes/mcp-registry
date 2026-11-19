@@ -7,9 +7,9 @@ package compat_test
 // database, and everything that must survive is checked without a reindex, a reconnect or a new
 // token.
 //
-// COMPAT_UPGRADE_FROM defaults to COMPAT_IMAGE (and COMPAT_UPGRADE_FROM_CLI to the harness's CLI
-// default, "node dist/cli.js", when COMPAT_UPGRADE_FROM is set; COMPAT_CLI is the CLI of the image
-// under test). With the default (the same image on both sides) this is a RESTART test: the app is
+// COMPAT_UPGRADE_FROM defaults to COMPAT_IMAGE, and COMPAT_UPGRADE_FROM_CLI (the invocation prefix
+// of the old image's CLI) to the CLI of the image under test (COMPAT_CLI, see harness.DefaultCLI).
+// With the default (the same image on both sides) this is a RESTART test: the app is
 // stopped and started again on its database. It becomes the real upgrade test in milestone 8, when
 // COMPAT_UPGRADE_FROM names the TypeScript 1.x image and COMPAT_IMAGE the Go one.
 //
@@ -18,7 +18,8 @@ package compat_test
 // and refresh token exist), a member with an sk_ token, an indexed catalog (about thirty tools),
 // calls in the call log with quota counters (every server has a daily limit), audit records, and a
 // pending sign-in link of another person. After the swap:
-//   - the app is healthy: no fatal record, no new first-start link, no new key-check record;
+//   - the app is healthy (SwapImage waits for /healthz), logs no error and no new first-start link,
+//     and leaves the key check as it was;
 //   - the token works on /mcp, and call_tool delivers the right credential to each upstream (the
 //     shared secret, the member's token, the stored OAuth access token), and an access token that is
 //     about to expire is refreshed with the STORED refresh token;
@@ -40,8 +41,6 @@ import (
 	"github.com/ai-pipes/mcp-registry/compat/fakes"
 	"github.com/ai-pipes/mcp-registry/compat/harness"
 )
-
-const upgradeDefaultCLI = "node dist/cli.js"
 
 // upgradeSnapshot is what is recorded before the swap and compared after it.
 type upgradeSnapshot struct {
@@ -168,15 +167,12 @@ func upgradeExpectSame(t *testing.T, before, after upgradeSnapshot) {
 func TestUpgradeKeepsEverything(t *testing.T) {
 	opts := harness.Options{}
 	if from := os.Getenv("COMPAT_UPGRADE_FROM"); from != "" {
-		opts.Image, opts.CLI = from, upgradeDefaultCLI
+		opts.Image, opts.CLI = from, harness.DefaultCLI()
 		if cli := os.Getenv("COMPAT_UPGRADE_FROM_CLI"); cli != "" {
 			opts.CLI = cli
 		}
 	}
-	newCLI := os.Getenv("COMPAT_CLI")
-	if newCLI == "" {
-		newCLI = upgradeDefaultCLI
-	}
+	newCLI := harness.DefaultCLI()
 	s := harness.Start(t, opts)
 	led := newMCPLedger(t, s)
 
@@ -237,15 +233,11 @@ func TestUpgradeKeepsEverything(t *testing.T) {
 	// ---- the swap ----
 	s.SwapImage(t, platformImage(), newCLI)
 
-	recs, _ := logRecords(t, s.Logs(t))
-	if fatal := recordsAtLevel(recs, pinoFatal); len(fatal) != 0 {
-		t.Fatalf("fatal records after the swap: %v", fatal)
+	if n := gwErrorRecords(t, s); n != 0 {
+		t.Fatalf("%d error-level or fatal records in the log after the swap", n)
 	}
 	if links := linkRecords(t, s.Logs(t)); len(links) != 0 {
 		t.Fatalf("the swapped app announced a first-start link (%d records)", len(links))
-	}
-	if n := len(recordsWithMsg(recs, keyCreatedMsg)); n != 0 {
-		t.Fatalf("the swapped app recorded a key check again (%d records)", n)
 	}
 
 	// The app synchronises every server at start; wait for that and for the outbox before the

@@ -156,3 +156,29 @@ func TestOneOffCLIContainerNeverPutsAValueOnTheCommandLine(t *testing.T) {
 		t.Errorf("an overridden or removed value is in the docker environment: %q", got)
 	}
 }
+
+func TestDefaultImageAndCLIFollowTheEnvironment(t *testing.T) {
+	t.Setenv("COMPAT_IMAGE", "")
+	t.Setenv("COMPAT_CLI", "")
+	if DefaultImage() != defaultImage || DefaultCLI() != defaultCLI {
+		t.Fatalf("defaults: %q %q", DefaultImage(), DefaultCLI())
+	}
+	t.Setenv("COMPAT_IMAGE", "img:1")
+	t.Setenv("COMPAT_CLI", "mcp-registry")
+	if DefaultImage() != "img:1" || DefaultCLI() != "mcp-registry" {
+		t.Fatalf("from the environment: %q %q", DefaultImage(), DefaultCLI())
+	}
+}
+
+func TestCLIResultStringMasksTokensAndLinkCodes(t *testing.T) {
+	r := CLIResult{Code: 1, Stdout: "sk_abcDEF123-_x\nhttp://h/login#link=ll_QWERTY-_09", Stderr: "plain"}
+	got := r.String()
+	for _, leaked := range []string{"abcDEF123", "QWERTY"} {
+		if strings.Contains(got, leaked) {
+			t.Fatalf("a credential is shown: %s", got)
+		}
+	}
+	if !strings.Contains(got, "sk_<masked>") || !strings.Contains(got, "ll_<masked>") || !strings.Contains(got, "plain") {
+		t.Fatalf("masked result: %s", got)
+	}
+}

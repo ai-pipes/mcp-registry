@@ -5,9 +5,11 @@ package harness
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -17,6 +19,15 @@ import (
 type CLIResult struct {
 	Stdout, Stderr string
 	Code           int
+}
+
+var secretLike = regexp.MustCompile(`\b(sk|ll)_[A-Za-z0-9_-]+`)
+
+// String shows a result for failure messages with API tokens (sk_...) and sign-in link codes
+// (ll_...) masked, so that "%v" and "%+v" of a result never put a credential in a test log.
+func (r CLIResult) String() string {
+	mask := func(text string) string { return secretLike.ReplaceAllString(text, "${1}_<masked>") }
+	return fmt.Sprintf("{exit %d, stdout %q, stderr %q}", r.Code, mask(r.Stdout), mask(r.Stderr))
 }
 
 // CLI runs the operator CLI (COMPAT_CLI plus args) in the app container through docker exec.
