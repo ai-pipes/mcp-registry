@@ -33,7 +33,7 @@ go-verify: go-lint go-arch-lint
 	go vet -tags compat ./...
 	go vet -tags "compat selfcheck" ./compat/selfcheck/
 	go vet -tags "compat e2e" ./compat/e2e/
-	go test -tags "compat e2e" -count=1 -run '^TestControlRefuses' ./compat/e2e/
+	go test -tags "compat e2e" -count=1 -run '^TestControl(Refuses|Echo)' ./compat/e2e/
 	go test ./...
 
 # Regenerates compat/schemas from the zod contracts; CI fails when the committed files are stale.
@@ -50,8 +50,11 @@ compat:
 # mcp-registry:compat-ts, see compat-image-ts), orchestrated from Go so that the same flows judge the
 # Go server later. Needs `pnpm install` and `pnpm exec playwright install chromium`. Not part of
 # `make compat` (tag e2e). It also runs the control API's own tests (TestControl*); the Docker-free
-# ones (TestControlRefuses*, the guarantee behind the API's token and fixed operations) run in go-verify too. Traces of a failed run: node_modules/.cache/playwright/flows-results
-# (or E2E_OUTPUT_DIR). E2E_PLAYWRIGHT_ARGS='03-tokens.spec.ts' (or -g <title>) runs part of the flows.
+# ones (TestControlRefuses*, TestControlEcho*: the guarantee behind the API's token and fixed
+# operations) run in go-verify too. Traces of a failed run: node_modules/.cache/playwright/flows-results
+# (or E2E_OUTPUT_DIR). E2E_PLAYWRIGHT_ARGS='03-tokens.spec.ts' runs one spec file (space-separated
+# arguments only: a test title with spaces cannot be passed, pass its file; --list and
+# --pass-with-no-tests are refused).
 e2e-flows:
 	go test -tags "compat e2e" -count=1 -timeout 30m -v -run '^(TestBrowserFlows|TestControl)' ./compat/e2e/
 

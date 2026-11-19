@@ -33,6 +33,9 @@ test('the first-start link opens a confirmation, sends nothing until the click, 
   // Negative control: declining sends nothing either and leaves the visitor signed out.
   await page.getByRole('button', { name: strings.login.linkCancel }).click();
   await expect(page.getByRole('heading', { level: 1, name: strings.login.title })).toBeVisible();
+  // The sign-in page asks which methods exist; without OIDC it then shows the link instructions.
+  // Waiting for them lets that answer be consumed before the flow navigates again.
+  await expect(page.getByText(strings.login.localHint)).toBeVisible();
   expect(sent).toEqual([]);
 
   // The same link, opened again, still works: declining did not spend it.

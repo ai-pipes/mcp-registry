@@ -5,6 +5,7 @@ package e2e_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -29,6 +30,14 @@ const hostResolverRules = "MAP host.docker.internal 127.0.0.1, MAP *.compat.test
 // gateway.compat.test with an OAuth provider at idp.compat.test, which makes the connect flow the
 // same site as the gateway (the session cookie is SameSite=Strict).
 func TestBrowserFlows(t *testing.T) {
+	// E2E_PLAYWRIGHT_ARGS (space separated) selects flows, for example a file name. Arguments that
+	// would let a run that tested nothing pass, or change the reporters this test reads, are refused.
+	extra := strings.Fields(os.Getenv("E2E_PLAYWRIGHT_ARGS"))
+	for _, a := range extra {
+		if a == "--list" || a == "--pass-with-no-tests" || strings.HasPrefix(a, "--reporter") {
+			t.Fatalf("E2E_PLAYWRIGHT_ARGS: %s is not allowed (it could make a run that tested nothing pass)", a)
+		}
+	}
 	root, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {
 		t.Fatal(err)
@@ -64,9 +73,9 @@ func TestBrowserFlows(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	args := []string{"exec", "playwright", "test", "-c", "e2e/flows/playwright.config.ts"}
-	// E2E_PLAYWRIGHT_ARGS (space separated) selects flows, for example a file name or -g <title>.
-	args = append(args, strings.Fields(os.Getenv("E2E_PLAYWRIGHT_ARGS"))...)
+	report := filepath.Join(t.TempDir(), "report.json")
+	args := []string{"exec", "playwright", "test", "-c", "e2e/flows/playwright.config.ts", "--reporter=list,json"}
+	args = append(args, extra...)
 	cmd := exec.CommandContext(ctx, "pnpm", args...) //nolint:gosec // G204: the arguments are the developer's own, from their environment
 	cmd.Dir = root
 	cmd.Env = append(os.Environ(),
@@ -74,6 +83,7 @@ func TestBrowserFlows(t *testing.T) {
 		"E2E_CONTROL_TOKEN="+control.Token(),
 		"E2E_HOST_RESOLVER_RULES="+hostResolverRules,
 		"E2E_OUTPUT_DIR="+out,
+		"PLAYWRIGHT_JSON_OUTPUT_NAME="+report,
 	)
 	w := &logWriter{t: t}
 	cmd.Stdout, cmd.Stderr = w, w // the same writer: exec copies both through one goroutine
@@ -81,6 +91,13 @@ func TestBrowserFlows(t *testing.T) {
 	t.Logf("running the browser flows against image %s", harness.DefaultImage())
 	runErr := cmd.Run()
 	w.flush()
+	if ran, err := testsRun(report); err != nil {
+		t.Errorf("reading the Playwright report: %v", err)
+	} else if ran == 0 {
+		t.Errorf("Playwright ran no test: a run that tested nothing is a failure")
+	} else {
+		t.Logf("Playwright ran %d tests", ran)
+	}
 	if runErr != nil {
 		var ee *exec.ExitError
 		if errors.As(runErr, &ee) {
@@ -89,6 +106,22 @@ func TestBrowserFlows(t *testing.T) {
 			t.Errorf("could not run playwright (is `pnpm install` done?): %v", runErr)
 		}
 	}
+}
+
+// testsRun counts the tests Playwright ran (expected, unexpected and flaky outcomes; skipped ones
+// do not count) from its JSON report.
+func testsRun(path string) (int, error) {
+	raw, err := os.ReadFile(path) //nolint:gosec // G304: a file in this test's temporary directory
+	if err != nil {
+		return 0, err
+	}
+	var rep struct {
+		Stats struct{ Expected, Unexpected, Flaky int }
+	}
+	if err := json.Unmarshal(raw, &rep); err != nil {
+		return 0, err
+	}
+	return rep.Stats.Expected + rep.Stats.Unexpected + rep.Stats.Flaky, nil
 }
 
 // logWriter passes the lines of the subprocess to the test log.

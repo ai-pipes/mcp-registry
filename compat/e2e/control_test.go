@@ -80,6 +80,7 @@ func TestControlRefusesEveryRequestWithoutTheRunToken(t *testing.T) {
 		{"GET", "/upstream/calls?slug=x"},
 		{"POST", "/sessions/expire"},
 		{"GET", "/audit?stack=x"},
+		{"POST", "/echo"},
 		{"GET", "/no-such-path"},
 	} {
 		var body any
@@ -335,6 +336,9 @@ func TestControlOperationsAgainstARealStack(t *testing.T) {
 		if len(trail.Rows) != 0 {
 			t.Errorf("another person's filter returned %+v", trail.Rows)
 		}
+		restore := e2e.SetAuditRowLimit(2)
+		call("GET", "/audit?stack=plain", nil, 422, nil) // more rows than the limit: an error, not a silent cut
+		restore()
 		call("GET", "/audit?stack=plain", nil, 200, &trail)
 		if len(trail.Rows) < 4 {
 			t.Errorf("unfiltered audit: %d rows", len(trail.Rows))
@@ -402,4 +406,44 @@ func ctlFollow(t *testing.T, target string) string {
 		t.Fatalf("GET %s: %d", target, resp.StatusCode)
 	}
 	return resp.Header.Get("Location")
+}
+
+func TestControlEchoReturnsWhatIsPostedAndNeedsTheToken(t *testing.T) {
+	c := e2e.NewControl(t.Cleanup, nil, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	base, err := c.Listen(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, body := ctlRaw(t, base, c.Token(), "POST", "/echo", "a secret-looking value \"quoted\"")
+	var got struct{ Echo string }
+	if err := json.Unmarshal(body, &got); status != 200 || err != nil || got.Echo != "a secret-looking value \"quoted\"" {
+		t.Fatalf("echo: %d %s (%v)", status, body, err)
+	}
+	if status, _ := ctlRaw(t, base, "", "POST", "/echo", "x"); status != 401 {
+		t.Fatalf("echo without the token: %d", status)
+	}
+	if status, _ := ctlRaw(t, base, c.Token(), "POST", "/echo", strings.Repeat("x", 1<<17)); status != http.StatusRequestEntityTooLarge {
+		t.Fatalf("echo of a body over 64 KiB: %d", status)
+	}
+}
+
+// ctlRaw sends a raw text body to the control API.
+func ctlRaw(t *testing.T, base, token, method, path, body string) (int, []byte) {
+	t.Helper()
+	req, err := http.NewRequestWithContext(context.Background(), method, base+path, strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	data, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, data
 }

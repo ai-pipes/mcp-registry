@@ -33,4 +33,8 @@ test('an expired session shows the sign-in page at the next action', async ({ pa
   await expect(
     otherPage.getByRole('heading', { level: 1, name: strings.tokens.title }),
   ).toBeVisible();
+  // The tokens answer is in once the empty state or the list shows (the flow ends right after).
+  await expect(
+    otherPage.getByText(strings.tokens.empty).or(otherPage.getByRole('table')),
+  ).toBeVisible();
 });

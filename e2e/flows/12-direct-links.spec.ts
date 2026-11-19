@@ -1,5 +1,11 @@
 // Scenario 12: a page reload on a deep link serves the app; an unknown API path does not.
+import type { Page } from '@playwright/test';
 import { expect, strings, test, getStacks, newPerson, signInWith } from './fixtures.ts';
+
+// The shell asks the server for its version on every load; waiting for it to show lets the answer
+// be consumed before the flow navigates again (a navigation drops an unfinished body).
+const versionShown = (page: Page) =>
+  expect(page.getByRole('complementary').getByText(/^v\d+\.\d+\.\d+/)).toBeVisible();
 
 test('a reload on /admin/servers/new and /connections serves the app, /api/unknown does not', async ({
   page,
@@ -13,17 +19,23 @@ test('a reload on /admin/servers/new and /connections serves the app, /api/unkno
   await expect(
     page.getByRole('heading', { level: 1, name: strings.servers.createTitle }),
   ).toBeVisible();
+  await versionShown(page);
   await page.reload();
   await expect(
     page.getByRole('heading', { level: 1, name: strings.servers.createTitle }),
   ).toBeVisible();
+  await versionShown(page);
   await expect(page).toHaveURL(`${base}/admin/servers/new`);
 
   await page.goto(`${base}/connections`);
+  await versionShown(page);
+  await expect(page.getByText(strings.connections.empty).or(page.getByRole('table'))).toBeVisible();
   await page.reload();
   await expect(
     page.getByRole('heading', { level: 1, name: strings.connections.title }),
   ).toBeVisible();
+  await versionShown(page);
+  await expect(page.getByText(strings.connections.empty).or(page.getByRole('table'))).toBeVisible();
   await expect(page).toHaveURL(`${base}/connections`);
 
   // An unknown page is the app's own "not found"; an unknown API path is a JSON 404, not the app.

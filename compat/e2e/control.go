@@ -111,6 +111,7 @@ func (c *Control) Handler() http.Handler {
 	mux.HandleFunc("GET /upstream/calls", c.upstreamCalls)
 	mux.HandleFunc("POST /sessions/expire", c.expireSession)
 	mux.HandleFunc("GET /audit", c.auditRows)
+	mux.HandleFunc("POST /echo", c.echo)
 	return c.authenticated(mux)
 }
 
@@ -588,9 +589,27 @@ func (c *Control) expireSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"sessions": tag.RowsAffected()})
 }
 
+// --- echo ------------------------------------------------------------------------------------
+
+// echo returns the posted text (at most 64 KiB) in a JSON body. It exists for the guard's
+// self-test: a response served by the real network, from a page that may fetch it same-origin (the
+// control API's own origin), carrying a value the test chose.
+func (c *Control) echo(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<16))
+	if err != nil {
+		writeError(w, http.StatusRequestEntityTooLarge, "the text is larger than 64 KiB")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"echo": string(body)})
+}
+
 // --- audit ----------------------------------------------------------------------------------
 
 var actionPattern = regexp.MustCompile(`^[a-z][a-z_.]{0,59}$`)
+
+// auditRowLimit is how many rows GET /audit returns at most; more matching rows are an error, not
+// a silent cut (a test overrides it through export_test.go).
+var auditRowLimit = 500
 
 // AuditRow is a row of platform.audit_log as GET /audit returns it.
 type AuditRow struct {
@@ -622,7 +641,7 @@ func (c *Control) auditRows(w http.ResponseWriter, r *http.Request) {
 		`select a.action, coalesce(a.target, ''), coalesce(u.oidc_sub, '')
 		   from platform.audit_log a left join identity.users u on u.id = a.actor_id
 		  where ($1 = '' or u.oidc_sub = $1) and ($2 = '' or a.action = $2)
-		  order by a.id desc limit 500`, actor, action)
+		  order by a.id desc limit $3`, actor, action, auditRowLimit+1)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
@@ -639,6 +658,10 @@ func (c *Control) auditRows(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := rows.Err(); err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	if len(out) > auditRowLimit {
+		writeError(w, http.StatusUnprocessableEntity, fmt.Sprintf("more than %d audit rows match: narrow the filter", auditRowLimit))
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"rows": out})

@@ -14,7 +14,11 @@ test('disabling a person ends the session of their open tab at its next action',
     page,
   );
   const base = stacks.plain.baseURL;
-  const victim = await newPerson('plain', 'Soon Disabled', false);
+  const victim = await newPerson(
+    'plain',
+    `Soon Disabled ${Math.random().toString(36).slice(2, 7)}`,
+    false,
+  );
   const admin = await newPerson('plain', 'Disabling Admin', true);
   await signInWith(page, victim.link);
   await page.getByRole('link', { name: strings.nav.tokens }).click();
@@ -30,7 +34,7 @@ test('disabling a person ends the session of their open tab at its next action',
   const adminPage = await (await guard.newContext()).newPage();
   await signInWith(adminPage, admin.link);
   await adminPage.goto(`${base}/admin/users`);
-  const row = adminPage.getByRole('row', { name: /Soon Disabled/ });
+  const row = adminPage.getByRole('row', { name: new RegExp(victim.name) });
   await row.getByRole('button', { name: strings.users.disable }).click();
   await adminPage
     .getByRole('alertdialog')

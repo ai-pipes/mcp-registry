@@ -64,6 +64,9 @@ test('a bad slug and a bad header name are shown under their own fields and crea
   await header.fill('X-Api-Key');
   await page.getByRole('button', { name: strings.common.save }).click();
   await expect(page.getByText(strings.servers.created)).toBeVisible();
+  // The page of the new server shows its name once the server's answer is in; wait for that before
+  // navigating on, so the answer is consumed (a navigation drops an unfinished body).
+  await expect(page.getByRole('heading', { level: 1, name: /Never Created/ })).toBeVisible();
   await page.goto(`${base}/admin/servers`);
   await expect(page.getByRole('row', { name: /Never Created/ })).toHaveCount(1);
 });

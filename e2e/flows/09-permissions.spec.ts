@@ -61,6 +61,7 @@ test('an admin sees the menu, the call log with a call just made, and the audit 
   await dialog.getByRole('button', { name: strings.tokens.submit }).click();
   const token = await dialog.getByRole('textbox', { name: strings.tokens.token }).inputValue();
   await dialog.getByRole('button', { name: strings.tokens.done }).click();
+  await expect(dialog).toBeHidden(); // closed and gone from the DOM before it is searched
   await guard.secretGone(page, token, 'the token of the call');
   const called = await request.post(`${base}/mcp`, {
     headers: {
