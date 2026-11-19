@@ -724,8 +724,8 @@ func TestConnectionsArePersonal(t *testing.T) {
 			got[e.Server] = [3]string{e.Name, e.AuthKind, e.Status}
 		}
 		for slug, want := range map[string][3]string{
-			env.slug: {env.slug, "oauth_user", "missing"},
-			pat.slug: {pat.slug, "pat_user", "missing"},
+			env.slug: {fakes.DisplayName(env.slug), "oauth_user", "missing"},
+			pat.slug: {fakes.DisplayName(pat.slug), "pat_user", "missing"},
 		} {
 			if got[slug] != want {
 				t.Errorf("%s: %v, want %v", slug, got[slug], want)

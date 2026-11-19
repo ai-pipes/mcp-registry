@@ -1193,7 +1193,7 @@ func TestCatalogOptimisticConcurrency(t *testing.T) {
 			r := catalogRaceWrite(t, s, slug, func() harness.Response { return w.send(slug, v) })
 			catalogExpectError(t, w.name+" racing a change", r, 409, fmt.Sprintf("server_conflict|server %q was changed meanwhile; reload it and try again", slug))
 			// Nothing of the losing request was written; the other admin's change stands.
-			if got := catalogGet(t, admin, slug); got.Description != "theirs" || got.Name != slug {
+			if got := catalogGet(t, admin, slug); got.Description != "theirs" || got.Name != fakes.DisplayName(slug) {
 				t.Fatalf("description %q name %q: the refused request wrote, or the other change was lost", got.Description, got.Name)
 			}
 			if !bytes.Equal(secretBytes(t, slug), secretBefore) {
@@ -1465,6 +1465,7 @@ func catalogUpstreamCalls(t *testing.T, s *harness.Stack, admin *harness.Client)
 	slug := harness.Unique("up")
 	catalogRegister(t, admin, fakes.ServerInput(up, slug, "shared_secret", fakes.WithHeader("X-API-Key", "key {secret}"), fakes.WithSecret(secret), fakes.WithTimeoutMs(1000)))
 	ref := slug + ".echo"
+	name := fakes.DisplayName(slug) // product texts name the server by its display name
 	outcomes := func() []string {
 		r := admin.Do(t, "GET", "/api/calls?server="+slug, nil)
 		var list []struct{ Outcome string }
@@ -1533,15 +1534,15 @@ func catalogUpstreamCalls(t *testing.T, s *harness.Stack, admin *harness.Client)
 		outcome string
 		within  time.Duration
 	}{
-		{"HTTP 401", func() { up.FailWith(401) }, slug + " rejected the gateway credentials. Ask the administrator to check the server key.", "transport_error", 0},
-		{"HTTP 500", func() { up.FailWith(500) }, slug + " is unavailable.", "transport_error", 0},
-		{"slower than timeoutMs", func() { up.Delay(5 * time.Second) }, slug + " did not respond in 1 s.", "timeout", 4 * time.Second},
-		{"a Content-Length above the limit", func() { up.RespondBytes(100_000) }, slug + " returned a response larger than 0.06 MiB.", "transport_error", 0},
+		{"HTTP 401", func() { up.FailWith(401) }, name + " rejected the gateway credentials. Ask the administrator to check the server key.", "transport_error", 0},
+		{"HTTP 500", func() { up.FailWith(500) }, name + " is unavailable.", "transport_error", 0},
+		{"slower than timeoutMs", func() { up.Delay(5 * time.Second) }, name + " did not respond in 1 s.", "timeout", 4 * time.Second},
+		{"a Content-Length above the limit", func() { up.RespondBytes(100_000) }, name + " returned a response larger than 0.06 MiB.", "transport_error", 0},
 		// The limit is hit while the answer streams, long before the 1 s timeout: half of it is a generous ceiling.
-		{"a streamed answer above the limit", func() { up.RespondChunked(100_000) }, slug + " returned a response larger than 0.06 MiB.", "transport_error", 500 * time.Millisecond},
-		{"a JSON-RPC invalid params error", func() { up.RejectCalls(-32602, "Invalid params: owner is required") }, slug + " rejected the call (JSON-RPC -32602): Invalid params: owner is required", "upstream_error", 0},
-		{"a JSON-RPC internal error", func() { up.RejectCalls(-32603, "repository not found") }, slug + " rejected the call (JSON-RPC -32603): repository not found", "upstream_error", 0},
-		{"a redirect is not followed", func() { up.RedirectTo(other.URL) }, slug + " is unavailable.", "transport_error", 0},
+		{"a streamed answer above the limit", func() { up.RespondChunked(100_000) }, name + " returned a response larger than 0.06 MiB.", "transport_error", 500 * time.Millisecond},
+		{"a JSON-RPC invalid params error", func() { up.RejectCalls(-32602, "Invalid params: owner is required") }, name + " rejected the call (JSON-RPC -32602): Invalid params: owner is required", "upstream_error", 0},
+		{"a JSON-RPC internal error", func() { up.RejectCalls(-32603, "repository not found") }, name + " rejected the call (JSON-RPC -32603): repository not found", "upstream_error", 0},
+		{"a redirect is not followed", func() { up.RedirectTo(other.URL) }, name + " is unavailable.", "transport_error", 0},
 	}
 	for _, f := range failures {
 		t.Run(f.name, func(t *testing.T) {

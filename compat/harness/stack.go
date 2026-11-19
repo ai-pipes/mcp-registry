@@ -533,8 +533,18 @@ func sweepStale() {
 // MCP connects to /mcp with a bearer token (an sk_ value from Client.Token). The session is
 // closed when the test ends.
 func (s *Stack) MCP(t *testing.T, token string) *mcp.ClientSession {
+	t.Helper()
+	return s.MCPRecording(t, token, nil)
+}
+
+// MCPRecording is MCP that also hands every HTTP response body of the session to record, as the
+// raw bytes the server wrote (an event stream or a JSON message, before the SDK decodes and drops
+// what it does not know), once the body has been read to its end or closed. record may be called
+// from several goroutines. A nil record is MCP.
+func (s *Stack) MCPRecording(t *testing.T, token string, record func(body []byte)) *mcp.ClientSession {
+	t.Helper()
 	hc := newHTTPClient(nil)
-	hc.Transport = &bearerTransport{base: hc.Transport, token: token}
+	hc.Transport = &bearerTransport{base: hc.Transport, token: token, record: record}
 	client := mcp.NewClient(&mcp.Implementation{Name: "compat-harness", Version: "0"}, nil)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -551,12 +561,56 @@ func (s *Stack) MCP(t *testing.T, token string) *mcp.ClientSession {
 }
 
 type bearerTransport struct {
-	base  http.RoundTripper
-	token string
+	base   http.RoundTripper
+	token  string
+	record func([]byte)
 }
 
 func (b *bearerTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	r = r.Clone(r.Context())
 	r.Header.Set("Authorization", "Bearer "+b.token)
-	return b.base.RoundTrip(r)
+	resp, err := b.base.RoundTrip(r)
+	if err == nil && b.record != nil && resp.Body != nil {
+		resp.Body = &recordingBody{ReadCloser: resp.Body, record: b.record}
+	}
+	return resp, err
+}
+
+// recordingBody copies what is read and reports it once, at the end of the body or at Close.
+type recordingBody struct {
+	io.ReadCloser
+	record func([]byte)
+	mu     sync.Mutex
+	buf    bytes.Buffer
+	done   bool
+}
+
+func (r *recordingBody) Read(p []byte) (int, error) {
+	n, err := r.ReadCloser.Read(p)
+	r.mu.Lock()
+	r.buf.Write(p[:n])
+	r.mu.Unlock()
+	if err != nil {
+		r.flush()
+	}
+	return n, err
+}
+
+func (r *recordingBody) Close() error {
+	r.flush()
+	return r.ReadCloser.Close()
+}
+
+func (r *recordingBody) flush() {
+	r.mu.Lock()
+	if r.done {
+		r.mu.Unlock()
+		return
+	}
+	r.done = true
+	data := bytes.Clone(r.buf.Bytes())
+	r.mu.Unlock()
+	if len(data) > 0 {
+		r.record(data)
+	}
 }

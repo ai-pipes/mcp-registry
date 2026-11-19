@@ -69,11 +69,15 @@ func FixtureTools(name string) []Tool {
 	return out
 }
 
+// DisplayName is the display name ServerInput gives a server by default: distinct from its slug, so
+// that a text which must carry the name cannot be satisfied by the slug (and the other way round).
+func DisplayName(slug string) string { return "Display " + slug }
+
 // ServerOpt changes the body ServerInput builds.
 type ServerOpt func(body map[string]any)
 
 // ServerInput builds a POST /api/servers body for an upstream: slug, name = slug, the upstream's
-// URL, access for everyone and the auth of kind authKind ("none", "shared_secret", "pat_user" or
+// URL, display name DisplayName(slug), access for everyone and the auth of kind authKind ("none", "shared_secret", "pat_user" or
 // "oauth_user"; the last needs WithOAuth). Header auth defaults to "Authorization: Bearer {secret}".
 func ServerInput(u *Upstream, slug, authKind string, opts ...ServerOpt) map[string]any {
 	auth := map[string]any{"kind": authKind}
@@ -83,7 +87,7 @@ func ServerInput(u *Upstream, slug, authKind string, opts ...ServerOpt) map[stri
 	}
 	body := map[string]any{
 		"slug":        slug,
-		"name":        slug,
+		"name":        DisplayName(slug),
 		"description": "Compat test server " + slug,
 		"url":         u.URL,
 		"auth":        auth,

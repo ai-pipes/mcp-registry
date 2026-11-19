@@ -126,15 +126,17 @@ func connLeakCheck(t *testing.T, s *harness.Stack, admin *harness.Client) {
 
 // ---- texts the agent gets ----
 
+// The texts name the server by its display name (fakes.DisplayName), never by its slug.
 func connTextExpired(s *harness.Stack, slug string) string {
-	return fmt.Sprintf("%s connection expired. Ask the user to reconnect at %s/connections.", slug, s.BaseURL)
+	return fmt.Sprintf("%s connection expired. Ask the user to reconnect at %s/connections.", fakes.DisplayName(slug), s.BaseURL)
 }
 
 func connTextNotConnected(s *harness.Stack, slug string) string {
-	return fmt.Sprintf("%s is not connected. Ask the user to open %s/connections and connect %s.", slug, s.BaseURL, slug)
+	name := fakes.DisplayName(slug)
+	return fmt.Sprintf("%s is not connected. Ask the user to open %s/connections and connect %s.", name, s.BaseURL, name)
 }
 
-func connTextUnavailable(slug string) string { return slug + " is unavailable." }
+func connTextUnavailable(slug string) string { return fakes.DisplayName(slug) + " is unavailable." }
 
 // ---- environment ----
 

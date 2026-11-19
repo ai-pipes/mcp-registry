@@ -6,11 +6,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
 	"net/http/cookiejar"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -140,7 +142,7 @@ func (c *Client) Do(t *testing.T, method, path string, body any, hdr ...string) 
 			req.Header.Set(name, value)
 		}
 	}
-	resp, err := c.http.Do(req)
+	resp, err := c.send(req)
 	if err != nil {
 		t.Fatalf("%s %s: %v", method, path, err)
 	}
@@ -150,6 +152,42 @@ func (c *Client) Do(t *testing.T, method, path string, body any, hdr ...string) 
 		t.Fatalf("%s %s: read body: %v", method, path, err)
 	}
 	return Response{Status: resp.StatusCode, Header: resp.Header, Body: data}
+}
+
+// largeBody is the size from which an upload that the server refuses early can lose the race
+// against its own reset (see send).
+const largeBody = 512 << 10
+
+// send performs the request. A server that refuses a large upload (413) answers and closes without
+// reading the rest of the body; the kernel then resets the connection, and the client can see
+// "broken pipe" or "connection reset" instead of the answer. That is the transport losing a race,
+// not an answer, so a request with a large body is repeated on a new connection (up to 4 times in
+// all) before the error is reported. The refusal is deterministic, so the repetition hides nothing
+// that a scenario asserts: the status and body of the final answer are still compared.
+func (c *Client) send(req *http.Request) (*http.Response, error) {
+	attempts := 1
+	if n := req.ContentLength; n >= largeBody {
+		attempts = 4
+	}
+	var resp *http.Response
+	var err error
+	for i := 0; i < attempts; i++ {
+		if i > 0 {
+			if req.GetBody == nil {
+				break
+			}
+			var b io.ReadCloser
+			if b, err = req.GetBody(); err != nil {
+				break
+			}
+			req.Body = b
+		}
+		resp, err = c.http.Do(req)
+		if err == nil || (!errors.Is(err, syscall.EPIPE) && !errors.Is(err, syscall.ECONNRESET)) {
+			break
+		}
+	}
+	return resp, err
 }
 
 // Token creates an API token for the signed-in person and returns the sk_ value.

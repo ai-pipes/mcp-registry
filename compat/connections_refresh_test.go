@@ -568,7 +568,7 @@ func TestConnectionsUpstreamRejectsTheToken(t *testing.T) {
 			connExpectOK(t, "call within the limit", p.call(t, env))
 		}
 		res := p.call(t, env)
-		if !res.IsError || !strings.HasPrefix(res.Text, "Daily limit for "+env.slug+" reached. Resets at ") {
+		if !res.IsError || !strings.HasPrefix(res.Text, "Daily limit for "+fakes.DisplayName(env.slug)+" reached. Resets at ") {
 			t.Fatalf("the sixth call: %+v, want the daily limit text", res)
 		}
 		if n := connQuota(t, s, p.id, env.slug); n != 5 {

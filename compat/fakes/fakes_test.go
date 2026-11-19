@@ -306,7 +306,7 @@ func TestUpstreamDelayHonoursTheRequestContext(t *testing.T) {
 func TestServerInputShapes(t *testing.T) {
 	u := fakes.StartUpstream(t, fakes.UpstreamOptions{})
 	none := fakes.ServerInput(u, "s1", "none")
-	if none["slug"] != "s1" || none["url"] != u.URL || none["name"] == "" {
+	if none["slug"] != "s1" || none["url"] != u.URL || none["name"] != fakes.DisplayName("s1") || none["name"] == none["slug"] {
 		t.Fatalf("none: %v", none)
 	}
 	if a, _ := none["auth"].(map[string]any); a["kind"] != "none" {

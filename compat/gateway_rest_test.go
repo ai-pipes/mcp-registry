@@ -230,8 +230,8 @@ func TestGatewayCallsAPI(t *testing.T) {
 
 	t.Run("a call over MCP is one row with the person, the token and the outcome; no arguments", func(t *testing.T) {
 		led := newMCPLedger(t, s)
-		e := gwNewServer(t, s, admin, nil, "none")
-		p := gwNewPerson(t, s)
+		e := gwNewServer(t, admin, nil, "none")
+		p := gwNewPerson(t, s, led)
 		marker := "compat-rest-" + harness.Unique("m")
 		started := time.Now().UTC().Add(-time.Minute)
 		if res := p.call(led, e.ref("echo"), map[string]any{"text": marker}); res.IsError {
@@ -261,7 +261,7 @@ func TestGatewayCallsAPI(t *testing.T) {
 		// A server name is a slug (a short one), so only a tool name or a malformed reference can be
 		// long; the log cuts both, the latter being kept whole as the tool of an empty server.
 		led := newMCPLedger(t, s)
-		p := gwNewPerson(t, s)
+		p := gwNewPerson(t, s, led)
 		malformed, longTool := strings.Repeat("s", 250)+".x", strings.Repeat("t", 290)
 		p.call(led, malformed, map[string]any{})
 		p.call(led, "srv."+longTool, map[string]any{})
@@ -291,7 +291,7 @@ func TestGatewayAuditAPI(t *testing.T) {
 	memberID := whoami(t, member).UserID
 
 	const pat, adminPat = "audit-member-pat-4c1d", "audit-admin-pat-9e2b"
-	e := gwNewServer(t, s, admin, fakes.Tools("alpha", "beta"), "pat_user", fakes.WithHeader("X-Token", "pat {secret}"))
+	e := gwNewServer(t, admin, fakes.Tools("alpha", "beta"), "pat_user", fakes.WithHeader("X-Token", "pat {secret}"))
 	_ = adminPat
 	catalogHide(t, admin, e.slug, "beta", true)
 	if msg := savePAT(t, member, e.slug, pat); msg != "" {

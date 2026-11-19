@@ -8,6 +8,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/ai-pipes/mcp-registry/compat/harness"
@@ -201,4 +202,30 @@ func testImage() string {
 		return image
 	}
 	return "mcp-registry:compat-ts"
+}
+
+func TestMCPRecordingHandsOverTheRawAnswers(t *testing.T) {
+	s := harness.Shared(t)
+	token := s.Admin(t).Token(t, "recording")
+	var mu sync.Mutex
+	var seen []string
+	sess := s.MCPRecording(t, token, func(b []byte) {
+		mu.Lock()
+		defer mu.Unlock()
+		seen = append(seen, string(b))
+	})
+	if _, err := sess.ListTools(t.Context(), nil); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	all := strings.Join(seen, "\n")
+	// The SDK decodes into its own types and drops what it does not know; the raw bytes keep all.
+	if !strings.Contains(all, "list_servers") || !strings.Contains(all, "mcp-registry") {
+		t.Fatalf("the recorded answers (%d) do not hold the raw tools/list: %.300s", len(seen), all)
+	}
+	// Control: a plain session records nothing.
+	if _, err := s.MCP(t, token).ListTools(t.Context(), nil); err != nil {
+		t.Fatal(err)
+	}
 }

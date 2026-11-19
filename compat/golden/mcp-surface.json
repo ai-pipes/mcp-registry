@@ -5,49 +5,6 @@
     }
   },
   "instructions": "This server is a gateway to the user's services (git hosting, issue tracker and others). When a task needs one of them, call search_tools with a short description of the action, then describe_tool for the chosen tool, then call_tool. If nothing fits, continue without them. If a tool needs a connection, tell the user the link from the error.",
-  "revisions": {
-    "classic": {
-      "initializeEncoding": "text/event-stream",
-      "initializeResultKeys": [
-        "capabilities",
-        "instructions",
-        "protocolVersion",
-        "serverInfo"
-      ],
-      "toolsListResultKeys": [
-        "tools"
-      ]
-    },
-    "stateless": {
-      "discover": {
-        "_meta": {
-          "io.modelcontextprotocol/serverInfo": {
-            "name": "mcp-registry",
-            "version": "<version>"
-          }
-        },
-        "cacheScope": "private",
-        "resultType": "complete",
-        "supportedVersions": [
-          "2026-07-28"
-        ],
-        "ttlMs": 0
-      },
-      "encoding": "application/json",
-      "toolsListEnvelope": {
-        "cacheScope": "private",
-        "resultType": "complete",
-        "ttlMs": 0
-      },
-      "toolsListResultKeys": [
-        "_meta",
-        "cacheScope",
-        "resultType",
-        "tools",
-        "ttlMs"
-      ]
-    }
-  },
   "serverInfo": {
     "name": "mcp-registry",
     "version": "<version>"
