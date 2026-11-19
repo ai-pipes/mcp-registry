@@ -3,7 +3,7 @@ GO_ARCH_LINT := github.com/fe3dback/go-arch-lint@v1.14.0
 GOFUMPT := mvdan.cc/gofumpt@v0.12.0
 VERSION := $(shell node -p "require('./apps/server/package.json').version")
 
-.PHONY: compat compat-record-search compat-selfcheck compat-schemas compat-image-ts go-lint go-lint-new go-fmt-check go-arch-lint go-verify go-build print-go-arch-lint print-golangci-lint
+.PHONY: compat compat-record-search compat-selfcheck compat-schemas compat-image-ts e2e-flows go-lint go-lint-new go-fmt-check go-arch-lint go-verify go-build print-go-arch-lint print-golangci-lint
 
 go-lint:
 	go run $(GOLANGCI_LINT) run
@@ -32,6 +32,7 @@ go-verify: go-lint go-arch-lint
 	go vet ./...
 	go vet -tags compat ./...
 	go vet -tags "compat selfcheck" ./compat/selfcheck/
+	go vet -tags "compat e2e" ./compat/e2e/
 	go test ./...
 
 # Regenerates compat/schemas from the zod contracts; CI fails when the committed files are stale.
@@ -43,6 +44,14 @@ compat-image-ts:
 
 compat:
 	COMPAT_REFERENCE=1 go test -tags compat -count=1 -timeout 30m ./compat/...
+
+# The browser flows (e2e/flows, Playwright with Chromium) against the image COMPAT_IMAGE (default
+# mcp-registry:compat-ts, see compat-image-ts), orchestrated from Go so that the same flows judge the
+# Go server later. Needs `pnpm install` and `pnpm exec playwright install chromium`. Not part of
+# `make compat` (tag e2e). Traces of a failed run: node_modules/.cache/playwright/flows-results
+# (or E2E_OUTPUT_DIR).
+e2e-flows:
+	go test -tags "compat e2e" -count=1 -timeout 30m -v -run '^TestBrowserFlows$$' ./compat/e2e/
 
 # Records compat/golden/search-<arch>.json for the architecture of this machine, from the reference
 # image only (the one test that writes it; -update would rewrite other goldens if it ran them).

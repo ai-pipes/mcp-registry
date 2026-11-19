@@ -3,6 +3,7 @@ run:
   build-tags:
     - compat
     - selfcheck
+    - e2e
 linters:
   default: none
   enable:

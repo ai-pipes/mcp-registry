@@ -3,6 +3,8 @@
 package fakes
 
 import (
+	"html"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -99,6 +101,7 @@ type OAuthProvider struct {
 	issued     []IssuedTokens
 	handed     []string
 	refreshLag time.Duration
+	consent    bool
 	grants     map[string]oauthGrant
 	refreshes  map[string]bool
 	stopped    chan struct{}
@@ -106,9 +109,37 @@ type OAuthProvider struct {
 
 type oauthGrant struct{ challenge, redirectURI string }
 
+// ProviderOption changes how StartOAuthProvider sets the provider up.
+type ProviderOption func(*providerConfig)
+
+type providerConfig struct {
+	host    string
+	consent bool
+}
+
+// WithConsentPage makes authorize answer with a page that has an "Approve" link to the redirect
+// target (the code and state in its query) instead of redirecting at once, as a real provider's
+// consent screen does. The distinction matters to a browser: a redirect straight from the
+// application's own request keeps the application as the initiator, whereas the click on the
+// provider's page is a navigation the provider's site initiates, which a SameSite=Strict session
+// cookie is not sent on unless provider and gateway are the same site.
+func WithConsentPage() ProviderOption { return func(c *providerConfig) { c.consent = true } }
+
+// WithAdvertisedHost makes the provider's URLs (AuthorizeURL, TokenURL, RevokeURL) use host
+// instead of host.docker.internal. The caller makes the name resolve: the app container through
+// harness.Options.ExtraHosts, a browser through its resolver rules, the test process for any
+// *.compat.test name by itself.
+func WithAdvertisedHost(host string) ProviderOption {
+	return func(c *providerConfig) { c.host = host }
+}
+
 // StartOAuthProvider starts a provider that stops with the test.
-func StartOAuthProvider(t *testing.T) *OAuthProvider {
+func StartOAuthProvider(t *testing.T, opts ...ProviderOption) *OAuthProvider {
 	t.Helper()
+	cfg := providerConfig{host: containerHost}
+	for _, o := range opts {
+		o(&cfg)
+	}
 	p := &OAuthProvider{ //nolint:gosec // G101: a made-up client secret of a test double
 		ClientID:     "gateway-client",
 		ClientSecret: "gate+way%2F:secret",
@@ -116,11 +147,12 @@ func StartOAuthProvider(t *testing.T) *OAuthProvider {
 		refreshes:    map[string]bool{},
 		stopped:      make(chan struct{}),
 	}
+	p.consent = cfg.consent
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /authorize", p.authorize)
 	mux.HandleFunc("POST /token", p.token)
 	mux.HandleFunc("POST /revoke", p.revoke)
-	base := baseURL(serve(t, mux))
+	base := advertisedURL(cfg.host, serve(t, mux))
 	p.AuthorizeURL, p.TokenURL, p.RevokeURL = base+"/authorize", base+"/token", base+"/revoke"
 	t.Cleanup(func() { close(p.stopped) })
 	return p
@@ -216,6 +248,12 @@ func (p *OAuthProvider) authorize(w http.ResponseWriter, r *http.Request) {
 	rq.Set("code", code)
 	rq.Set("state", q.Get("state"))
 	target.RawQuery = rq.Encode()
+	if p.consent {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		page := `<!doctype html><title>Authorize</title><p>Allow access?</p><a id="approve" href="` + html.EscapeString(target.String()) + `">Approve</a>`
+		_, _ = io.WriteString(w, page) //nolint:gosec // G705: the target is escaped for an attribute; this is a test double's page
+		return
+	}
 	// The fake exists to send the browser to whatever redirect_uri the application registered.
 	http.Redirect(w, r, target.String(), http.StatusFound) //nolint:gosec // G710: see above
 }

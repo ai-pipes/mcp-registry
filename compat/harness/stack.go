@@ -61,6 +61,14 @@ type Options struct {
 	// the old image first). Empty = the environment variable, then the default.
 	Image string
 	CLI   string
+	// PublicHost replaces "localhost" in PUBLIC_URL and Stack.BaseURL (http://<PublicHost>:<port>).
+	// The test process resolves any *.compat.test name to the loopback address itself (the same
+	// rule a browser run needs through --host-resolver-rules); nothing else resolves it. Empty =
+	// localhost.
+	PublicHost string
+	// ExtraHosts are "name:host-gateway" entries (docker --add-host) of the app and one-off CLI
+	// containers, for names a fake advertises that the container must resolve to the host.
+	ExtraHosts []string
 
 	testName string // set by Start, StartExpectingExit and Shared: names the log file of COMPAT_LOG_DIR
 }
@@ -78,6 +86,8 @@ type Stack struct {
 	cli     string
 	image   string
 	port    int
+	host    string   // host part of BaseURL
+	hosts   []string // docker --add-host values given by Options.ExtraHosts
 	env     map[string]string
 	files   map[string][]byte // placed by PutFile: path inside the container -> content
 
@@ -219,7 +229,10 @@ func boot(o Options, expectExit bool) (s *Stack, err error) {
 	if cli == "" {
 		cli = DefaultCLI()
 	}
-	s = &Stack{id: randomHex(4), cli: cli, image: image}
+	s = &Stack{id: randomHex(4), cli: cli, image: image, host: "localhost", hosts: o.ExtraHosts}
+	if o.PublicHost != "" {
+		s.host = o.PublicHost
+	}
 	defer func() {
 		if err != nil {
 			s.finish(o.testName, true) // a failed boot always keeps the app log (when COMPAT_LOG_DIR is set)
@@ -231,7 +244,7 @@ func boot(o Options, expectExit bool) (s *Stack, err error) {
 	s.network = "compat-" + s.id
 	s.dbName = s.network + "-db"
 	s.app = s.network + "-app"
-	s.BaseURL = fmt.Sprintf("http://localhost:%d", s.port)
+	s.BaseURL = fmt.Sprintf("http://%s:%d", s.host, s.port)
 	if s.Arch, err = inspectArch(image); err != nil {
 		return s, err
 	}
@@ -328,7 +341,7 @@ func (s *Stack) startAppOnAFreePort() error {
 			return perr
 		}
 		s.port = port
-		s.BaseURL = fmt.Sprintf("http://localhost:%d", port)
+		s.BaseURL = fmt.Sprintf("http://%s:%d", s.host, port)
 		s.env["PUBLIC_URL"] = s.BaseURL
 	}
 }
@@ -345,6 +358,9 @@ func (s *Stack) startApp(image string, env map[string]string) error {
 		"--add-host", "host.docker.internal:host-gateway",
 		"-p", fmt.Sprintf("127.0.0.1:%d:3000", s.port),
 	}
+	for _, h := range s.hosts {
+		args = append(args, "--add-host", h)
+	}
 	args = append(args, s.labels()...)
 	for _, k := range names {
 		args = append(args, "-e", k+"="+env[k])
@@ -352,6 +368,13 @@ func (s *Stack) startApp(image string, env map[string]string) error {
 	_, err := dockerErr(append(args, image)...)
 	return err
 }
+
+// loopbackURL is where the test process reaches the app whatever PublicHost is.
+func (s *Stack) loopbackURL() string { return fmt.Sprintf("http://127.0.0.1:%d", s.port) }
+
+// LoopbackURL is the address the published port answers on, for a caller that must not depend on
+// a name resolving (BaseURL may use a PublicHost that only a browser rule resolves).
+func (s *Stack) LoopbackURL() string { return s.loopbackURL() }
 
 func (s *Stack) running() (bool, error) {
 	out, err := dockerErr("inspect", "-f", "{{.State.Running}}", s.app)
@@ -402,7 +425,7 @@ func (s *Stack) awaitHealthy() error {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.BaseURL+"/healthz", nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.loopbackURL()+"/healthz", nil)
 		if err != nil {
 			return false, err
 		}
@@ -434,7 +457,7 @@ func (s *Stack) awaitExit() (code int, logs string, err error) {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
-		if req, rerr := http.NewRequestWithContext(ctx, http.MethodGet, s.BaseURL+"/healthz", nil); rerr == nil {
+		if req, rerr := http.NewRequestWithContext(ctx, http.MethodGet, s.loopbackURL()+"/healthz", nil); rerr == nil {
 			if resp, derr := c.Do(req); derr == nil {
 				body, _ := io.ReadAll(resp.Body)
 				_ = resp.Body.Close()
@@ -524,6 +547,10 @@ func (s *Stack) swap(image, cli string, overrides []map[string]string) error {
 	}
 	return nil
 }
+
+// TryLogs is Logs for callers that are not the test goroutine: it returns the error instead of
+// failing the test.
+func (s *Stack) TryLogs() (string, error) { return dockerLogs(s.app, "") }
 
 // Logs returns what the app container wrote to stdout and stderr.
 func (s *Stack) Logs(t *testing.T) string {

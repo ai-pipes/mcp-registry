@@ -158,7 +158,10 @@ func tryServe(h http.Handler) (port int, stop func(), err error) {
 	return tcp.Port, stop, nil
 }
 
-func baseURL(port int) string { return fmt.Sprintf("http://%s:%d", containerHost, port) }
+func baseURL(port int) string { return advertisedURL(containerHost, port) }
+
+// advertisedURL is the URL a fake puts in its own discovery data and in the URLs it hands out.
+func advertisedURL(host string, port int) string { return fmt.Sprintf("http://%s:%d", host, port) }
 
 // randomToken returns prefix and 16 random bytes in hex.
 func randomToken(prefix string) string {

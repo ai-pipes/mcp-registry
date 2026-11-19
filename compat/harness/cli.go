@@ -47,6 +47,23 @@ func (s *Stack) CLI(t *testing.T, stdin string, args ...string) CLIResult {
 	return s.runDocker(t, argv, stdin, nil, args)
 }
 
+// TryCLI is CLI for callers that are not the test goroutine (a control server answering requests
+// while a test runs): a docker failure or a stopped app is returned as an error instead of failing
+// the test.
+func (s *Stack) TryCLI(stdin string, args ...string) (CLIResult, error) {
+	if up, err := s.running(); err != nil || !up {
+		return CLIResult{}, fmt.Errorf("cli %v: the app container is not running (%v)", args, err)
+	}
+	argv := []string{"exec"}
+	if stdin != "" {
+		argv = append(argv, "-i")
+	}
+	argv = append(argv, s.app)
+	argv = append(argv, strings.Fields(s.cli)...)
+	argv = append(argv, args...)
+	return s.execDocker(argv, stdin, nil, args)
+}
+
 // CLIWithEnv runs the CLI in a fresh one-off container of the stack's current image, on the stack's
 // network and against the stack's database, with the stack's settings and env on top (an empty
 // value removes the variable). It works when the app container is not running (the app refuses to
@@ -95,6 +112,9 @@ func (s *Stack) oneOffCreateArgs(env map[string]string, withStdin bool, args []s
 	}
 	sort.Strings(names)
 	create = []string{"create", "--network", s.network, "--add-host", "host.docker.internal:host-gateway"}
+	for _, h := range s.hosts {
+		create = append(create, "--add-host", h)
+	}
 	create = append(create, s.labels()...)
 	if withStdin {
 		create = append(create, "-i")
@@ -157,6 +177,15 @@ func dockerEnv(extraEnv []string, args ...string) (string, error) {
 
 func (s *Stack) runDocker(t *testing.T, argv []string, stdin string, extraEnv []string, args []string) CLIResult {
 	t.Helper()
+	res, err := s.execDocker(argv, stdin, extraEnv, args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return res
+}
+
+// execDocker runs docker with argv; an error means docker itself failed, not the CLI.
+func (s *Stack) execDocker(argv []string, stdin string, extraEnv []string, args []string) (CLIResult, error) {
 	cmd := exec.Command("docker", argv...)
 	cmd.Env = append(os.Environ(), extraEnv...)
 	var out, errb bytes.Buffer
@@ -173,10 +202,10 @@ func (s *Stack) runDocker(t *testing.T, argv []string, stdin string, extraEnv []
 		res.Code = ee.ExitCode()
 		// 125-127 and a daemon error are docker's own failures, not the CLI's answer.
 		if res.Code >= 125 && res.Code <= 127 || strings.HasPrefix(res.Stderr, "Error response from daemon") {
-			t.Fatalf("docker failed running the cli %v (exit %d): %s", args, res.Code, strings.TrimSpace(s.scrub(res.Stderr)))
+			return res, fmt.Errorf("docker failed running the cli %v (exit %d): %s", args, res.Code, strings.TrimSpace(s.scrub(res.Stderr)))
 		}
 	default:
-		t.Fatalf("docker: %v", err)
+		return res, fmt.Errorf("docker: %w", err)
 	}
-	return res
+	return res, nil
 }

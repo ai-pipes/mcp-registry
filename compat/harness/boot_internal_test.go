@@ -182,3 +182,63 @@ func TestCLIResultStringMasksTokensAndLinkCodes(t *testing.T) {
 		t.Fatalf("masked result: %s", got)
 	}
 }
+
+func TestPublicHostAndExtraHostsReachTheContainerArguments(t *testing.T) {
+	s := &Stack{
+		network: "compat-x", image: "img", cli: "node dist/cli.js", id: "x", port: 4321, app: "compat-x-app",
+		host: "gateway.compat.test", hosts: []string{"idp.compat.test:host-gateway"},
+		env: map[string]string{"LOG_LEVEL": "debug"},
+	}
+	create, _ := s.oneOffCreateArgs(nil, false, []string{"sync", "x"})
+	if line := strings.Join(create, " "); !strings.Contains(line, "--add-host idp.compat.test:host-gateway") || !strings.Contains(line, "--add-host host.docker.internal:host-gateway") {
+		t.Fatalf("the one-off container lacks the hosts: %q", line)
+	}
+	if got := s.LoopbackURL(); got != "http://127.0.0.1:4321" {
+		t.Fatalf("loopback URL %q", got)
+	}
+}
+
+func TestLoopbackHostResolution(t *testing.T) {
+	for host, want := range map[string]bool{
+		"host.docker.internal": true, "gateway.compat.test": true, "idp.compat.test": true,
+		"localhost": false, "example.com": false, "compat.test.evil.example": false, "notcompat.test": false,
+	} {
+		if got := loopbackHost(host); got != want {
+			t.Errorf("loopbackHost(%q) = %v, want %v", host, got, want)
+		}
+	}
+}
+
+func TestPublicHostBootsAStackThatAnswersOnItsPublicName(t *testing.T) {
+	s, err := boot(Options{PublicHost: "gateway.compat.test", ExtraHosts: []string{"idp.compat.test:host-gateway"}}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.teardown)
+	if !strings.HasPrefix(s.BaseURL, "http://gateway.compat.test:") || s.env["PUBLIC_URL"] != s.BaseURL {
+		t.Fatalf("BaseURL %q, PUBLIC_URL %q", s.BaseURL, s.env["PUBLIC_URL"])
+	}
+	// The test process resolves *.compat.test itself, so a client of the stack works.
+	c := &Client{base: s.BaseURL, http: newHTTPClient(nil)}
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, c.base+"/healthz", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("healthz through the public name: %d", resp.StatusCode)
+	}
+	out, err := dockerErr("exec", s.app, "sh", "-c", "getent hosts idp.compat.test")
+	if err != nil || !strings.Contains(out, "idp.compat.test") {
+		t.Fatalf("the container does not resolve the extra host: %q %v", out, err)
+	}
+	// A failed CLI of a stopped app is an error, not a test failure.
+	_, _ = dockerErr("rm", "-f", s.app)
+	if _, err := s.TryCLI("", "sync", "x"); err == nil {
+		t.Fatal("TryCLI on a stopped app returned no error")
+	}
+}

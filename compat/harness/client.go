@@ -38,6 +38,13 @@ var validateSchema func(schema string, body []byte) error
 
 const fakesHost = "host.docker.internal"
 
+// loopbackHost reports whether the test process resolves host to the loopback address itself:
+// the name the container uses for the test process, and any *.compat.test name (Options.PublicHost,
+// a fake's advertised host).
+func loopbackHost(host string) bool {
+	return host == fakesHost || strings.HasSuffix(host, ".compat.test")
+}
+
 // newHTTPClient builds a client that maps host.docker.internal to the loopback interface, so the
 // URLs the container uses to reach test fakes also work from the test process.
 func newHTTPClient(jar http.CookieJar) *http.Client {
@@ -47,7 +54,7 @@ func newHTTPClient(jar http.CookieJar) *http.Client {
 		Timeout: 60 * time.Second,
 		Transport: &http.Transport{
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-				if host, port, err := net.SplitHostPort(addr); err == nil && host == fakesHost {
+				if host, port, err := net.SplitHostPort(addr); err == nil && loopbackHost(host) {
 					addr = net.JoinHostPort("127.0.0.1", port)
 				}
 				return dialer.DialContext(ctx, network, addr)

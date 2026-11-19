@@ -9,10 +9,12 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"html"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -891,5 +893,63 @@ func TestUpstreamTakesLargeArguments(t *testing.T) {
 	res, err := connect(t, u).CallTool(context.Background(), &mcp.CallToolParams{Name: "echo", Arguments: map[string]any{"text": text}})
 	if err != nil || res.IsError || len(res.Content[0].(*mcp.TextContent).Text) < 6<<20 {
 		t.Fatalf("a 6 MiB argument: %v", err)
+	}
+}
+
+func TestOAuthProviderAdvertisesTheGivenHostAndStillAnswers(t *testing.T) {
+	p := fakes.StartOAuthProvider(t, fakes.WithAdvertisedHost("idp.compat.test"))
+	for _, u := range []string{p.AuthorizeURL, p.TokenURL, p.RevokeURL} {
+		if !strings.HasPrefix(u, "http://idp.compat.test:") {
+			t.Fatalf("URL %q does not use the advertised host", u)
+		}
+	}
+	// Nothing resolves idp.compat.test in a unit test: ask the same port by its loopback address
+	// (a browser rule or the container's --add-host does the mapping in real use).
+	loopback := strings.Replace(p.AuthorizeURL, "idp.compat.test", "127.0.0.1", 1)
+	q := url.Values{
+		"client_id": {p.ClientID}, "response_type": {"code"}, "state": {"s-1"},
+		"redirect_uri":   {"http://gateway.compat.test:3000/api/connections/callback"},
+		"code_challenge": {"x"}, "code_challenge_method": {"S256"},
+	}
+	status, hdr, _ := send(t, "GET", loopback+"?"+q.Encode(), "")
+	if status != 302 || !strings.HasPrefix(hdr.Get("Location"), "http://gateway.compat.test:3000/api/connections/callback?") {
+		t.Fatalf("authorize: %d %v", status, hdr)
+	}
+	if def := fakes.StartOAuthProvider(t); !strings.HasPrefix(def.AuthorizeURL, "http://host.docker.internal:") {
+		t.Fatalf("the default host changed: %q", def.AuthorizeURL)
+	}
+}
+
+func TestOAuthProviderConsentPageHasAnApproveLinkToTheRedirectTarget(t *testing.T) {
+	p := fakes.StartOAuthProvider(t, fakes.WithConsentPage())
+	q := url.Values{
+		"client_id": {p.ClientID}, "response_type": {"code"}, "state": {"s-7"},
+		"redirect_uri":   {"http://localhost:3000/api/connections/callback"},
+		"code_challenge": {"x"}, "code_challenge_method": {"S256"},
+	}
+	status, hdr, body := send(t, "GET", p.AuthorizeURL+"?"+q.Encode(), "")
+	if status != 200 || hdr.Get("Location") != "" || !strings.HasPrefix(hdr.Get("Content-Type"), "text/html") {
+		t.Fatalf("authorize with a consent page: %d %v", status, hdr)
+	}
+	m := regexp.MustCompile(`<a id="approve" href="([^"]+)">Approve</a>`).FindStringSubmatch(body)
+	if m == nil {
+		t.Fatalf("no approve link in %q", body)
+	}
+	target, err := url.Parse(html.UnescapeString(m[1]))
+	if err != nil || target.Host != "localhost:3000" || target.Path != "/api/connections/callback" ||
+		target.Query().Get("state") != "s-7" || target.Query().Get("code") == "" {
+		t.Fatalf("approve target %q (%v)", m[1], err)
+	}
+	// The code it carries is good for the exchange, as after a redirect.
+	status, tokBody := tokenCall(t, p, url.Values{
+		"grant_type": {"authorization_code"}, "code": {target.Query().Get("code")},
+		"redirect_uri": {"http://localhost:3000/api/connections/callback"}, "code_verifier": {"anything"},
+	})
+	_ = tokBody
+	if status != 400 { // the challenge "x" is not the verifier's hash: refused, so the grant is really checked
+		t.Fatalf("exchange with a wrong verifier: %d", status)
+	}
+	if reqs := p.AuthorizeRequests(); len(reqs) != 1 {
+		t.Fatalf("authorize requests: %d", len(reqs))
 	}
 }

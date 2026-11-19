@@ -38,7 +38,10 @@ make go-verify              # Go lint, architecture rules, vet, unit tests (CI j
 make compat-image-ts        # builds mcp-registry:compat-ts from this tree
 make compat                 # the suite against that image (needs Docker, 7-8 minutes; CI job `compat`)
 make compat-selfcheck       # proves the suite fails on a deliberately broken image (daily in CI)
+make e2e-flows              # the web UI's browser flows (Playwright, Chromium) against the same image (CI job `e2e-flows`)
 ```
+
+`make e2e-flows` needs `pnpm install` and `pnpm exec playwright install chromium`. The flows (`e2e/flows/*.spec.ts`) cannot run on their own: the Go test `TestBrowserFlows` (`compat/e2e`) boots the stacks and the fakes and passes a control API (127.0.0.1, per-run bearer token, fixed operations only) to them. A failed run leaves traces and screenshots in `node_modules/.cache/playwright/flows-results` (`pnpm exec playwright show-trace <dir>/trace.zip`). A new flow goes in `e2e/flows/NN-name.spec.ts`, takes texts from `apps/web/src/strings.ts`, uses role-based locators, never waits for a fixed time, and is shown to fail when its expectation is broken.
 
 - Run against another image with `COMPAT_IMAGE` (and `COMPAT_CLI` for its CLI invocation). To keep the app log of failed tests, set `COMPAT_LOG_DIR=<dir>`; `COMPAT_APP_ENV=NAME=value,...` adds non-secret variables to the app container.
 - **A scenario changes only together with confirmation against the 1.0.0 TypeScript image.** Never edit a scenario or a golden to make the Go server pass; if the Go server differs, the Go server is wrong unless the owner decides otherwise.

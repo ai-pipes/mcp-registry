@@ -1,0 +1,114 @@
+//go:build compat && e2e
+
+package e2e_test
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/ai-pipes/mcp-registry/compat/e2e"
+	"github.com/ai-pipes/mcp-registry/compat/fakes"
+	"github.com/ai-pipes/mcp-registry/compat/harness"
+)
+
+// hostResolverRules is what Chromium is told so that the names the fakes and the same-site stack
+// use reach this machine: the fakes listen on every interface of the test process, the stacks on
+// 127.0.0.1.
+const hostResolverRules = "MAP host.docker.internal 127.0.0.1, MAP *.compat.test 127.0.0.1"
+
+// TestBrowserFlows runs the Playwright flows (e2e/flows) in Chromium against the image under test
+// (COMPAT_IMAGE) and fails when Playwright fails. Three stacks are booted: without OIDC (the
+// sign-in by link and most flows), with the fake IdP, and one whose public address is
+// gateway.compat.test with an OAuth provider at idp.compat.test, which makes the connect flow the
+// same site as the gateway (the session cookie is SameSite=Strict).
+func TestBrowserFlows(t *testing.T) {
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := os.Getenv("E2E_OUTPUT_DIR")
+	if out == "" {
+		out = filepath.Join(root, "node_modules", ".cache", "playwright", "flows-results")
+	}
+
+	idp := fakes.StartIdP(t)
+	// Both providers show a consent page and wait for the click: the navigation that brings the
+	// person back is then initiated by the provider's site, which is what decides whether the
+	// SameSite=Strict session cookie travels with it (a provider that redirects at once would
+	// let the gateway's own request be the initiator and hide the difference).
+	localProvider := fakes.StartOAuthProvider(t, fakes.WithConsentPage())
+	sameSiteProvider := fakes.StartOAuthProvider(t, fakes.WithConsentPage(), fakes.WithAdvertisedHost("idp.compat.test"))
+	plain := harness.Start(t, harness.Options{})
+	withIDP := harness.Start(t, harness.Options{OIDC: idp})
+	sameSite := harness.Start(t, harness.Options{
+		PublicHost: "gateway.compat.test",
+		ExtraHosts: []string{"idp.compat.test:host-gateway"},
+	})
+	control := e2e.NewControl([]*e2e.Stack{
+		{Name: "plain", Harness: plain, Provider: localProvider},
+		{Name: "oidc", Harness: withIDP, OIDC: true},
+		{Name: "samesite", Harness: sameSite, Provider: sameSiteProvider},
+	}, idp)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	controlURL, err := control.Listen(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go control.Serve(ctx, t)
+
+	cmd := exec.CommandContext(ctx, "pnpm", "exec", "playwright", "test", "-c", "e2e/flows/playwright.config.ts")
+	cmd.Dir = root
+	cmd.Env = append(os.Environ(),
+		"E2E_CONTROL_URL="+controlURL,
+		"E2E_CONTROL_TOKEN="+control.Token(),
+		"E2E_HOST_RESOLVER_RULES="+hostResolverRules,
+		"E2E_OUTPUT_DIR="+out,
+	)
+	w := &logWriter{t: t}
+	cmd.Stdout, cmd.Stderr = w, w // the same writer: exec copies both through one goroutine
+	cmd.WaitDelay = 10 * time.Second
+	t.Logf("running the browser flows against image %s", harness.DefaultImage())
+	runErr := cmd.Run()
+	w.flush()
+	if runErr != nil {
+		var ee *exec.ExitError
+		if errors.As(runErr, &ee) {
+			t.Errorf("playwright failed (exit %d). Traces and screenshots of the failed flows: %s (open one with `pnpm exec playwright show-trace <dir>/trace.zip`)", ee.ExitCode(), out)
+		} else {
+			t.Errorf("could not run playwright (is `pnpm install` done?): %v", runErr)
+		}
+	}
+}
+
+// logWriter passes the lines of the subprocess to the test log.
+type logWriter struct {
+	t   *testing.T
+	buf []byte
+}
+
+func (w *logWriter) Write(p []byte) (int, error) {
+	w.buf = append(w.buf, p...)
+	for {
+		i := bytes.IndexByte(w.buf, '\n')
+		if i < 0 {
+			return len(p), nil
+		}
+		w.t.Log(string(w.buf[:i]))
+		w.buf = w.buf[i+1:]
+	}
+}
+
+func (w *logWriter) flush() {
+	if len(w.buf) > 0 {
+		w.t.Log(string(w.buf))
+		w.buf = nil
+	}
+}
