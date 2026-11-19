@@ -1,0 +1,4 @@
+exit: 0
+--- stdout ---
+synced "<SLUG>": 1 added, 0 changed, 0 removed
+--- stderr ---

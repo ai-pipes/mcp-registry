@@ -1,0 +1,4 @@
+exit: 0
+--- stdout ---
+created server "<SLUG>" (shared_secret, secret set); sync failed: Could not reach the upstream
+--- stderr ---

@@ -1,0 +1,4 @@
+exit: 1
+--- stdout ---
+--- stderr ---
+error: SECRETS_KEY does not match the data in this database; refusing to seal a new secret with it. See "Recovering from a key mismatch" in the README.

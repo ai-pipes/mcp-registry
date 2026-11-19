@@ -164,7 +164,9 @@ type auditEntry struct {
 // order) and returns the entries in the order of the query.
 func auditRows(t *testing.T, s *harness.Stack, tail string, args ...any) []auditEntry {
 	t.Helper()
-	rows, err := s.DB.Query(t.Context(), `select id::text, to_char(at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+	// The id is selected as "audit_id": an output column named "id" would win over the table's
+	// bigint column in the caller's "order by id" and sort the entries as text ("10" before "9").
+	rows, err := s.DB.Query(t.Context(), `select id::text as audit_id, to_char(at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
 		actor_id::text, action, target, meta::text from platform.audit_log `+tail, args...)
 	if err != nil {
 		t.Fatalf("select audit_log: %v", err)

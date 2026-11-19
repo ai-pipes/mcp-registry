@@ -57,6 +57,10 @@ type Options struct {
 	OIDC  OIDCProvider      // nil = no OIDC (sign-in by links)
 	Env   map[string]string // added on top of the defaults
 	Unset []string          // default variables to remove (applied after Env)
+	// Image and CLI override COMPAT_IMAGE and COMPAT_CLI for this stack (the upgrade scenario boots
+	// the old image first). Empty = the environment variable, then the default.
+	Image string
+	CLI   string
 }
 
 // Stack is a running app container with its Postgres.
@@ -73,6 +77,7 @@ type Stack struct {
 	image   string
 	port    int
 	env     map[string]string
+	files   map[string][]byte // placed by PutFile: path inside the container -> content
 }
 
 // Start boots a database and the app image (COMPAT_IMAGE) and waits for /healthz. The stack is
@@ -192,8 +197,15 @@ func inspectArch(image string) (string, error) {
 // boot creates the network, the database and the app. On any error everything created so far is
 // removed again. With expectExit the app is only started, not waited for.
 func boot(o Options, expectExit bool) (s *Stack, err error) {
-	image := envOr("COMPAT_IMAGE", defaultImage)
-	s = &Stack{id: randomHex(4), cli: envOr("COMPAT_CLI", defaultCLI), image: image}
+	image := o.Image
+	if image == "" {
+		image = envOr("COMPAT_IMAGE", defaultImage)
+	}
+	cli := o.CLI
+	if cli == "" {
+		cli = envOr("COMPAT_CLI", defaultCLI)
+	}
+	s = &Stack{id: randomHex(4), cli: cli, image: image}
 	defer func() {
 		if err != nil {
 			s.teardown()
@@ -479,7 +491,15 @@ func (s *Stack) swap(image, cli string, overrides []map[string]string) error {
 			}
 		}
 	}
-	return s.startApp(image, env)
+	if err := s.startApp(image, env); err != nil {
+		return err
+	}
+	for path, content := range s.files { // files placed with PutFile survive the new container
+		if err := copyInto(s.app, path, content); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Logs returns what the app container wrote to stdout and stderr.

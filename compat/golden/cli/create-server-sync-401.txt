@@ -1,0 +1,4 @@
+exit: 0
+--- stdout ---
+created server "<SLUG>" (shared_secret, secret set); sync failed: Upstream rejected the credentials (HTTP 401)
+--- stderr ---

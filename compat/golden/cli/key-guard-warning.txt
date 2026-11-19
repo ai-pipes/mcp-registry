@@ -1,0 +1,5 @@
+exit: 0
+--- stdout ---
+created member "Wrong Key" (sub <SUB>, id <UUID>)
+--- stderr ---
+warning: SECRETS_KEY does not match the data in this database. See "Recovering from a key mismatch" in the README.

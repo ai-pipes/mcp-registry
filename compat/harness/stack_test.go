@@ -244,3 +244,60 @@ func TestMCPRecordingHandsOverTheRawAnswers(t *testing.T) {
 		t.Fatal("the recording session recorded nothing for a second call")
 	}
 }
+
+func TestCLIWithEnvRunsInAOneOffContainerWithTheStacksFiles(t *testing.T) {
+	s := harness.Start(t, harness.Options{})
+	if r := s.CLIWithEnv(t, nil, "", "--version"); r.Code != 0 || strings.TrimSpace(r.Stdout) == "" {
+		t.Fatalf("--version in a one-off container: %+v", r)
+	}
+	// The environment is the stack's with the overrides on top; an empty value removes a variable.
+	bare := s.CLIWithEnv(t, map[string]string{"DATABASE_URL": ""}, "", "create-user", "--sub", "x", "--name", "x")
+	if bare.Code != 1 || !strings.Contains(bare.Stderr, "DATABASE_URL") {
+		t.Fatalf("without DATABASE_URL: %+v", bare)
+	}
+	// A file placed with PutFile is visible to the app's CLI and to a one-off container, and the
+	// CLI's own answer about a missing file differs (the control).
+	s.PutFile(t, "/tmp/harness-put.json", []byte("{nope"))
+	want := "/tmp/harness-put.json is not valid JSON"
+	for name, r := range map[string]harness.CLIResult{
+		"docker exec": s.CLI(t, "", "create-server", "--json", "/tmp/harness-put.json", "--as", "x"),
+		"one-off":     s.CLIWithEnv(t, nil, "", "create-server", "--json", "/tmp/harness-put.json", "--as", "x"),
+	} {
+		if r.Code != 1 || !strings.Contains(r.Stderr, want) {
+			t.Fatalf("%s with the placed file: %+v", name, r)
+		}
+	}
+	if r := s.CLIWithEnv(t, nil, "", "create-server", "--json", "/tmp/harness-absent.json", "--as", "x"); !strings.Contains(r.Stderr, "cannot read /tmp/harness-absent.json") {
+		t.Fatalf("a file that was never placed: %+v", r)
+	}
+	// The file follows the app to a new container.
+	s.SwapImage(t, testImage(), "")
+	if r := s.CLI(t, "", "create-server", "--json", "/tmp/harness-put.json", "--as", "x"); !strings.Contains(r.Stderr, want) {
+		t.Fatalf("the placed file after SwapImage: %+v", r)
+	}
+}
+
+func TestCLIWithEnvRunsWhileTheAppIsDown(t *testing.T) {
+	s := harness.Start(t, harness.Options{})
+	if code, logs := s.SwapImageExpectingExit(t, testImage(), "", map[string]string{"SECRETS_KEY": "not-base64"}); code != 1 {
+		t.Fatalf("exit %d, logs %q", code, logs)
+	}
+	if r := s.CLIWithEnv(t, nil, "", "--version"); r.Code != 0 {
+		t.Fatalf("the CLI with the app down: %+v", r)
+	}
+	s.PutFile(t, "/tmp/harness-down.json", []byte("{nope")) // no app container to copy into: only remembered
+	if r := s.CLIWithEnv(t, nil, "", "create-server", "--json", "/tmp/harness-down.json", "--as", "x"); !strings.Contains(r.Stderr, "is not valid JSON") {
+		t.Fatalf("a file placed while the app is down: %+v", r)
+	}
+	s.SwapImage(t, testImage(), "")
+	if r := s.CLI(t, "", "create-server", "--json", "/tmp/harness-down.json", "--as", "x"); !strings.Contains(r.Stderr, "is not valid JSON") {
+		t.Fatalf("the file after the app came back: %+v", r)
+	}
+}
+
+func TestStartWithAnExplicitImageAndCLI(t *testing.T) {
+	s := harness.Start(t, harness.Options{Image: testImage(), CLI: "node   dist/cli.js"})
+	if r := s.CLI(t, "", "--version"); r.Code != 0 || strings.TrimSpace(r.Stdout) == "" {
+		t.Fatalf("--version: %+v", r)
+	}
+}

@@ -1,0 +1,4 @@
+exit: 0
+--- stdout ---
+key check removed: the next start records the configured SECRETS_KEY
+--- stderr ---

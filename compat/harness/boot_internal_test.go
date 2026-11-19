@@ -125,3 +125,34 @@ func TestPortTakenRecognisesDockersMessages(t *testing.T) {
 		t.Error("an unrelated docker failure is taken for a busy port")
 	}
 }
+
+func TestOneOffCLIContainerNeverPutsAValueOnTheCommandLine(t *testing.T) {
+	s := &Stack{
+		network: "compat-x", image: "img", cli: "node dist/cli.js", id: "x",
+		env: map[string]string{"SECRETS_KEY": "stack-key-value", "DATABASE_URL": "postgres://u:" + "stack-password" + "@db/x", "LOG_LEVEL": "debug"},
+	}
+	create, extraEnv := s.oneOffCreateArgs(map[string]string{"SECRETS_KEY": "other-key-value", "EXTRA_SECRET": "extra-value", "LOG_LEVEL": ""}, true, []string{"create-server", "--secret-env", "EXTRA_SECRET"})
+	line := strings.Join(create, " ")
+	for _, value := range []string{"stack-key-value", "other-key-value", "stack-password", "extra-value"} {
+		if strings.Contains(line, value) {
+			t.Fatalf("a value is on the command line: %q", line)
+		}
+	}
+	for _, want := range []string{"-e DATABASE_URL", "-e EXTRA_SECRET", "-e SECRETS_KEY", "-i", "img node dist/cli.js create-server --secret-env EXTRA_SECRET"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("the arguments lack %q: %q", want, line)
+		}
+	}
+	if strings.Contains(line, "LOG_LEVEL") {
+		t.Errorf("a variable removed with an empty value is still passed: %q", line)
+	}
+	got := strings.Join(extraEnv, "|")
+	for _, want := range []string{"SECRETS_KEY=other-key-value", "EXTRA_SECRET=extra-value", "DATABASE_URL=postgres://u:stack-password@db/x"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the docker environment lacks %q: %q", want, got)
+		}
+	}
+	if strings.Contains(got, "stack-key-value") || strings.Contains(got, "LOG_LEVEL") {
+		t.Errorf("an overridden or removed value is in the docker environment: %q", got)
+	}
+}

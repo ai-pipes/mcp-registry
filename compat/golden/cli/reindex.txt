@@ -1,0 +1,4 @@
+exit: 0
+--- stdout ---
+reindexed 11 server(s)
+--- stderr ---

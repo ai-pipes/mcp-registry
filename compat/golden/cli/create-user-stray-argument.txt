@@ -1,0 +1,5 @@
+exit: 2
+--- stdout ---
+--- stderr ---
+error: expected 0 argument(s), got 1
+<USAGE>

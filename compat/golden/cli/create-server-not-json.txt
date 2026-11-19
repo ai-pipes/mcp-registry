@@ -1,0 +1,4 @@
+exit: 1
+--- stdout ---
+--- stderr ---
+error: /tmp/compat-not-json.json is not valid JSON
