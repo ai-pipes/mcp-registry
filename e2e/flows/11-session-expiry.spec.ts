@@ -18,7 +18,7 @@ test('an expired session shows the sign-in page at the next action', async ({ pa
 
   // Control: another person's session is not touched by the expiry below.
   const other = await newPerson('plain', 'Active Person', false);
-  const otherPage = await (await guard.newContext()).newPage();
+  const otherPage = await guard.newPage();
   await signInWith(otherPage, other.link);
 
   await control.expireSession('plain', person.sub);

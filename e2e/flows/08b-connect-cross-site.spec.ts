@@ -8,7 +8,15 @@ const c = strings.connections;
 
 test('a provider on another site brings the person back unauthenticated, with the documented message', async ({
   page,
+  guard,
 }) => {
+  // The answer to Connect is the provider's address and the page leaves for it at once: its body
+  // is lost to that navigation by design (it is listed, and carries no secret).
+  guard.allowLostBody(
+    /^\/api\/connections\/[^/]+\/start$/,
+    'the page navigates to the address the answer carries',
+    page,
+  );
   const stacks = await getStacks();
   const base = stacks.plain.baseURL;
   expect(base).toMatch(/^http:\/\/localhost:\d+$/);

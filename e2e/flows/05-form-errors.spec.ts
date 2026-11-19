@@ -1,6 +1,15 @@
 // Scenario 5: the server refuses a slug and a header name the form let through (the form only
 // checks that they are present); each error is shown under its own field and nothing is created.
-import { expect, strings, test, control, getStacks, newPerson, signInWith } from './fixtures.ts';
+import {
+  expect,
+  strings,
+  test,
+  control,
+  getStacks,
+  newPerson,
+  signInWith,
+  shellReady,
+} from './fixtures.ts';
 
 const f = strings.form;
 
@@ -25,6 +34,7 @@ test('a bad slug and a bad header name are shown under their own fields and crea
   const admin = await newPerson('plain', 'Form Breaker', true);
   await signInWith(page, admin.link);
   await page.goto(`${base}/admin/servers/new`);
+  await shellReady(page);
 
   const slug = page.getByLabel(f.slug);
   const header = page.getByLabel(f.header, { exact: true });
@@ -68,5 +78,6 @@ test('a bad slug and a bad header name are shown under their own fields and crea
   // navigating on, so the answer is consumed (a navigation drops an unfinished body).
   await expect(page.getByRole('heading', { level: 1, name: /Never Created/ })).toBeVisible();
   await page.goto(`${base}/admin/servers`);
+  await shellReady(page);
   await expect(page.getByRole('row', { name: /Never Created/ })).toHaveCount(1);
 });

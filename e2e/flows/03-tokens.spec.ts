@@ -1,5 +1,5 @@
 // Scenario 3: an API token is shown once, then only its prefix; revoking ends it.
-import { expect, strings, test, getStacks, newPerson, signInWith } from './fixtures.ts';
+import { expect, strings, test, getStacks, newPerson, signInWith, shellReady } from './fixtures.ts';
 
 const t = strings.tokens;
 
@@ -24,8 +24,10 @@ test('a token and its connect command are shown once; afterwards only the prefix
   // Shown once, with the command that registers the gateway for an agent.
   await expect(dialog.getByText(t.shownOnce)).toBeVisible();
   const token = await dialog.getByRole('textbox', { name: t.token }).inputValue();
+  guard.secret(token, 'the token');
   expect(token).toMatch(/^sk_[A-Za-z0-9_-]{20,}$/);
   const command = await dialog.getByRole('textbox', { name: t.connectCommand }).inputValue();
+  guard.secret(command, 'the connect command');
   expect(command).toBe(
     `claude mcp add --transport http mcp-registry ${base}/mcp --header "Authorization: Bearer ${token}"`,
   );
@@ -44,6 +46,9 @@ test('a token and its connect command are shown once; afterwards only the prefix
   expect((await mcp(token)).status()).toBe(200);
   expect((await mcp(`${token}x`)).status()).toBe(401); // negative control: a wrong token is refused
 
+  // The dialog ignores Done while the token list is still being refreshed behind it (a UI quirk,
+  // see the report): wait for the new row, which proves the refresh is done, then close.
+  await expect(page.getByRole('row', { name: /laptop/, includeHidden: true })).toBeVisible();
   await dialog.getByRole('button', { name: t.done }).click();
   await expect(dialog).toBeHidden();
   await guard.secretGone(page, token, 'the token');
@@ -60,6 +65,7 @@ test('a token and its connect command are shown once; afterwards only the prefix
 
   // A reload (the list comes from the server again) still has no token anywhere.
   await page.reload();
+  await shellReady(page);
   await expect(page.getByRole('row', { name: /laptop/ })).toBeVisible();
   await guard.secretGone(page, token, 'the token after a reload');
 

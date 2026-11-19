@@ -3,13 +3,30 @@
 // on the stack whose public address is gateway.compat.test, with the provider at idp.compat.test
 // (both mapped to this machine by Chromium's resolver rules). The documented cross-site
 // limitation is pinned by 08b-connect-cross-site.spec.ts.
-import { expect, strings, test, control, getStacks, newPerson, signInWith } from './fixtures.ts';
+import {
+  expect,
+  strings,
+  test,
+  control,
+  getStacks,
+  newPerson,
+  signInWith,
+  shellReady,
+} from './fixtures.ts';
 
 const c = strings.connections;
 
 test('Connect goes to the provider and back; the toast shows, the query string is gone, Disconnect undoes it', async ({
   page,
+  guard,
 }) => {
+  // The answer to Connect is the provider's address and the page leaves for it at once: its body
+  // is lost to that navigation by design (it is listed, and carries no secret).
+  guard.allowLostBody(
+    /^\/api\/connections\/[^/]+\/start$/,
+    'the page navigates to the address the answer carries',
+    page,
+  );
   const stacks = await getStacks();
   const base = stacks.samesite.baseURL;
   expect(base).toMatch(/^http:\/\/gateway\.compat\.test:\d+$/);
@@ -36,6 +53,7 @@ test('Connect goes to the provider and back; the toast shows, the query string i
 
   // A reload shows the same state from the server.
   await page.reload();
+  await shellReady(page);
   await expect(
     page.getByRole('row', { name: new RegExp(server.name) }).getByText(c.status.ready),
   ).toBeVisible();

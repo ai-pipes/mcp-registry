@@ -1,6 +1,15 @@
 // Scenario 10: an admin disables a person; that person's open tab shows the sign-in page at its
 // next action, and they cannot come back with a new link.
-import { expect, strings, test, control, getStacks, newPerson, signInWith } from './fixtures.ts';
+import {
+  expect,
+  strings,
+  test,
+  control,
+  getStacks,
+  newPerson,
+  signInWith,
+  shellReady,
+} from './fixtures.ts';
 
 test('disabling a person ends the session of their open tab at its next action', async ({
   page,
@@ -31,9 +40,10 @@ test('disabling a person ends the session of their open tab at its next action',
   await expect(page.getByRole('heading', { level: 1, name: strings.tokens.title })).toBeVisible();
 
   // The admin disables them in the UI.
-  const adminPage = await (await guard.newContext()).newPage();
+  const adminPage = await guard.newPage();
   await signInWith(adminPage, admin.link);
   await adminPage.goto(`${base}/admin/users`);
+  await shellReady(adminPage);
   const row = adminPage.getByRole('row', { name: new RegExp(victim.name) });
   await row.getByRole('button', { name: strings.users.disable }).click();
   await adminPage

@@ -8,23 +8,35 @@
 //   - the stored server afterwards equals exactly one of the two tabs' complete forms, never a
 //     mixture of fields that neither tab submitted;
 //   - if the conflict text was shown, the first tab's change is still there.
-import { expect, strings, test, control, getStacks, newPerson, signInWith } from './fixtures.ts';
+import {
+  expect,
+  strings,
+  test,
+  control,
+  getStacks,
+  newPerson,
+  signInWith,
+  shellReady,
+} from './fixtures.ts';
 
 const f = strings.form;
 
 test('two tabs edit one server: both saves end in a consistent state, or the second is told of a conflict', async ({
   page,
+  guard,
 }) => {
   const stacks = await getStacks();
   const base = stacks.plain.baseURL;
   const server = await control.registerServer('plain', 'none');
   const admin = await newPerson('plain', 'Concurrent Editor', true);
   await signInWith(page, admin.link);
-  const second = await page.context().newPage(); // another tab of the same session
+  const second = await guard.newTab(page); // another tab of the same session
 
   const url = `${base}/admin/servers/${server.slug}`;
   await page.goto(url);
+  await shellReady(page);
   await second.goto(url);
+  await shellReady(second);
   const name = (p: typeof page) => p.getByLabel(f.name, { exact: true });
   const description = (p: typeof page) => p.getByLabel(f.description);
   await expect(name(second)).toHaveValue(server.name);
@@ -35,6 +47,7 @@ test('two tabs edit one server: both saves end in a consistent state, or the sec
   await page.getByRole('button', { name: strings.common.save }).click();
   await expect(page.getByText(strings.servers.saved)).toBeVisible();
   await page.reload();
+  await shellReady(page);
   await expect(name(page)).toHaveValue('Name from tab one');
 
   // Tab two, opened before that save, saves a different field.
@@ -47,6 +60,7 @@ test('two tabs edit one server: both saves end in a consistent state, or the sec
 
   // The stored state is one tab's complete form.
   await page.reload();
+  await shellReady(page);
   const stored = {
     name: await name(page).inputValue(),
     description: await description(page).inputValue(),

@@ -1,6 +1,15 @@
 // Scenario 9: a member has no administration; an admin sees the call log and the audit, with
 // the records of what was just done.
-import { expect, strings, test, control, getStacks, newPerson, signInWith } from './fixtures.ts';
+import {
+  expect,
+  strings,
+  test,
+  control,
+  getStacks,
+  newPerson,
+  signInWith,
+  shellReady,
+} from './fixtures.ts';
 
 const adminLinks = [strings.nav.servers, strings.nav.users, strings.nav.calls, strings.nav.audit];
 
@@ -25,6 +34,7 @@ test('a member sees no administration and is denied /admin/calls and /admin/audi
 
   const denied = async (path: string) => {
     await page.goto(`${base}${path}`);
+    await shellReady(page);
     await expect(page.getByText(strings.access.forbidden)).toBeVisible();
     await expect(page.getByText(strings.access.forbiddenHint)).toBeVisible();
   };
@@ -55,11 +65,16 @@ test('an admin sees the menu, the call log with a call just made, and the audit 
 
   // A call through /mcp with a token made in the UI.
   await page.goto(`${base}/tokens`);
+  await shellReady(page);
   await page.getByRole('button', { name: strings.tokens.create }).click();
   const dialog = page.getByRole('dialog');
   await dialog.getByRole('textbox', { name: strings.tokens.name }).fill('caller');
   await dialog.getByRole('button', { name: strings.tokens.submit }).click();
   const token = await dialog.getByRole('textbox', { name: strings.tokens.token }).inputValue();
+  guard.secret(token, 'the token of the call');
+  // The dialog ignores Done while the token list is still being refreshed behind it (a UI quirk,
+  // see the report): wait for the new row, which proves the refresh is done, then close.
+  await expect(page.getByRole('row', { name: /caller/, includeHidden: true })).toBeVisible();
   await dialog.getByRole('button', { name: strings.tokens.done }).click();
   await expect(dialog).toBeHidden(); // closed and gone from the DOM before it is searched
   await guard.secretGone(page, token, 'the token of the call');
@@ -85,6 +100,7 @@ test('an admin sees the menu, the call log with a call just made, and the audit 
 
   // An admin action to find in the audit: hiding a tool.
   await page.goto(`${base}/admin/servers/${server.slug}`);
+  await shellReady(page);
   await page.getByRole('checkbox', { name: strings.tools.hiddenAria('beta') }).click();
   await expect(page.getByText(strings.tools.hiddenSaved)).toBeVisible();
 

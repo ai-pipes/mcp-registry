@@ -1,6 +1,15 @@
 // Scenario 6: the "Hidden" switch hides a tool for good: it survives a reload and disappears
 // from a member's catalog (and comes back when switched off).
-import { expect, strings, test, control, getStacks, newPerson, signInWith } from './fixtures.ts';
+import {
+  expect,
+  strings,
+  test,
+  control,
+  getStacks,
+  newPerson,
+  signInWith,
+  shellReady,
+} from './fixtures.ts';
 
 test('a hidden tool stays hidden after a reload and leaves the member catalog', async ({
   page,
@@ -12,11 +21,12 @@ test('a hidden tool stays hidden after a reload and leaves the member catalog', 
   const admin = await newPerson('plain', 'Tool Hider', true);
   const member = await newPerson('plain', 'Tool Seeker', false);
   await signInWith(page, admin.link);
-  const memberPage = await (await guard.newContext()).newPage();
+  const memberPage = await guard.newPage();
   await signInWith(memberPage, member.link);
 
   const memberSees = async (tool: string) => {
     await memberPage.goto(`${base}/catalog`);
+    await shellReady(memberPage);
     await expect(memberPage.getByText(server.name)).toBeVisible();
     return memberPage.getByText(`${server.slug}.${tool}`, { exact: true });
   };
@@ -25,6 +35,7 @@ test('a hidden tool stays hidden after a reload and leaves the member catalog', 
   await expect(await memberSees('beta')).toBeVisible();
 
   await page.goto(`${base}/admin/servers/${server.slug}`);
+  await shellReady(page);
   const beta = page.getByRole('checkbox', { name: strings.tools.hiddenAria('beta') });
   const alpha = page.getByRole('checkbox', { name: strings.tools.hiddenAria('alpha') });
   await expect(beta).not.toBeChecked();
@@ -35,6 +46,7 @@ test('a hidden tool stays hidden after a reload and leaves the member catalog', 
 
   // After a reload the switch is still on, for that tool only.
   await page.reload();
+  await shellReady(page);
   await expect(
     page.getByRole('checkbox', { name: strings.tools.hiddenAria('beta') }),
   ).toBeChecked();

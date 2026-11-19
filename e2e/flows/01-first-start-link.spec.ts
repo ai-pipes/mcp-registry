@@ -13,6 +13,7 @@ test('the first-start link opens a confirmation, sends nothing until the click, 
   const stacks = await getStacks();
   const base = stacks.plain.baseURL;
   const link = await control.firstStartLink('plain');
+  guard.secret(link.split('#link=')[1] ?? '', 'the first-start link code');
   expect(link.startsWith(`${base}/login#link=ll_`)).toBe(true);
 
   const sent: string[] = [];
@@ -71,8 +72,7 @@ test('the first-start link opens a confirmation, sends nothing until the click, 
 
   // Negative control: a link is good once. The same link in another browser is refused, with the
   // text of the sign-in page, and signs nobody in.
-  const other = await guard.newContext();
-  const page2 = await other.newPage();
+  const page2 = await guard.newPage();
   guard.excuseRefusal(
     401,
     /^\/api\/auth\/link$/,
