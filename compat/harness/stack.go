@@ -262,13 +262,42 @@ func boot(o Options, expectExit bool) (s *Stack, err error) {
 		return s, err
 	}
 
-	if err = s.startApp(s.image, s.env); err != nil {
+	if err = s.startAppOnAFreePort(); err != nil {
 		return s, err
 	}
 	if expectExit {
 		return s, nil
 	}
 	return s, s.awaitHealthy()
+}
+
+// portTaken reports whether a docker run error says that the published host port is not free
+// (the port was probed by freePort and taken by someone else before docker bound it).
+func portTaken(err error) bool {
+	msg := err.Error()
+	return strings.Contains(msg, "port is already allocated") || strings.Contains(msg, "address already in use")
+}
+
+// startAppOnAFreePort runs the app. freePort probes a port and releases it before docker binds
+// it, so another process can take it in between; that failure is explained by docker's own error
+// and is the only one retried (3 attempts in all, each with a new port, the reason on stderr).
+func (s *Stack) startAppOnAFreePort() error {
+	const attempts = 3
+	for attempt := 1; ; attempt++ {
+		err := s.startApp(s.image, s.env)
+		if err == nil || attempt == attempts || !portTaken(err) {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "harness: host port %d was taken before docker published it (attempt %d of %d): %v\n", s.port, attempt, attempts, err)
+		_, _ = dockerErr("rm", "-f", s.app)
+		port, perr := freePort()
+		if perr != nil {
+			return perr
+		}
+		s.port = port
+		s.BaseURL = fmt.Sprintf("http://localhost:%d", port)
+		s.env["PUBLIC_URL"] = s.BaseURL
+	}
 }
 
 // startApp runs the app container (its name is fixed per stack) with env.

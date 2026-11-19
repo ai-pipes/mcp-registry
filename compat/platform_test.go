@@ -192,7 +192,7 @@ func TestPlatformSecurityHeaders(t *testing.T) {
 		{"csrf 403", func() harness.Response { return anon.Do(t, "POST", "/api/tokens", nil, "Origin:") }, 403, false},
 		{"mcp 401", func() harness.Response { return anon.Do(t, "GET", "/mcp", nil) }, 401, false},
 		{"413", func() harness.Response {
-			return anon.Do(t, "POST", "/api/tokens", make([]byte, restBodyLimit+1), "Content-Type: application/json", "Connection: close")
+			return anon.DoExpectingEarlyRefusal(t, "POST", "/api/tokens", make([]byte, restBodyLimit+1), "Content-Type: application/json")
 		}, 413, false},
 		{"foreign host on mcp", func() harness.Response { return anon.Do(t, "GET", "/mcp", nil, "Host: evil.example") }, 403, true},
 	}
@@ -372,7 +372,8 @@ func TestPlatformBearerNeverOpensTheWebAPI(t *testing.T) {
 }
 
 // The server answers 413 and closes the connection without reading the rest of the body; the
-// oversized requests send "Connection: close" so the client never reuses that dead connection.
+// oversized requests go through DoExpectingEarlyRefusal, which reads the answer whatever
+// happened to the write; a request that must succeed (exactly the limit) goes through plain Do.
 func TestPlatformBodyLimit(t *testing.T) {
 	s := harness.Shared(t)
 	admin := s.Admin(t)
@@ -383,19 +384,19 @@ func TestPlatformBodyLimit(t *testing.T) {
 		return []byte(prefix + strings.Repeat(" ", n-len(prefix)))
 	}
 	t.Run("a body over 1 MiB is refused with 413", func(t *testing.T) {
-		r := admin.Do(t, "POST", "/api/tokens", padded(restBodyLimit+1), "Content-Type: application/json", "Connection: close")
+		r := admin.DoExpectingEarlyRefusal(t, "POST", "/api/tokens", padded(restBodyLimit+1), "Content-Type: application/json")
 		if r.Status != 413 || errorCode(t, r) != want {
 			t.Fatalf("%d %.200s", r.Status, r.Body)
 		}
 	})
 	t.Run("the limit applies before sign-in", func(t *testing.T) {
-		r := s.Anonymous().Do(t, "POST", "/api/tokens", padded(restBodyLimit+1), "Content-Type: application/json", "Connection: close")
+		r := s.Anonymous().DoExpectingEarlyRefusal(t, "POST", "/api/tokens", padded(restBodyLimit+1), "Content-Type: application/json")
 		if r.Status != 413 || errorCode(t, r) != want {
 			t.Fatalf("%d %.200s", r.Status, r.Body)
 		}
 	})
 	t.Run("a body of exactly 1 MiB is not refused for its size (control)", func(t *testing.T) {
-		r := admin.Do(t, "POST", "/api/tokens", padded(restBodyLimit), "Content-Type: application/json", "Connection: close")
+		r := admin.Do(t, "POST", "/api/tokens", padded(restBodyLimit), "Content-Type: application/json")
 		if r.Status != 201 {
 			t.Fatalf("%d %.200s", r.Status, r.Body)
 		}

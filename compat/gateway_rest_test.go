@@ -230,7 +230,7 @@ func TestGatewayCallsAPI(t *testing.T) {
 
 	t.Run("a call over MCP is one row with the person, the token and the outcome; no arguments", func(t *testing.T) {
 		led := newMCPLedger(t, s)
-		e := gwNewServer(t, admin, nil, "none")
+		e := gwNewServer(t, led, admin, nil, "none")
 		p := gwNewPerson(t, s, led)
 		marker := "compat-rest-" + harness.Unique("m")
 		started := time.Now().UTC().Add(-time.Minute)
@@ -290,9 +290,8 @@ func TestGatewayAuditAPI(t *testing.T) {
 	member := s.Member(t, harness.Unique("audit-member"))
 	memberID := whoami(t, member).UserID
 
-	const pat, adminPat = "audit-member-pat-4c1d", "audit-admin-pat-9e2b"
-	e := gwNewServer(t, admin, fakes.Tools("alpha", "beta"), "pat_user", fakes.WithHeader("X-Token", "pat {secret}"))
-	_ = adminPat
+	const pat = "audit-member-pat-4c1d"
+	e := gwNewServer(t, nil, admin, fakes.Tools("alpha", "beta"), "pat_user", fakes.WithHeader("X-Token", "pat {secret}"))
 	catalogHide(t, admin, e.slug, "beta", true)
 	if msg := savePAT(t, member, e.slug, pat); msg != "" {
 		t.Fatal(msg)

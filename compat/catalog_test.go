@@ -1459,7 +1459,9 @@ func TestCatalogValidation(t *testing.T) {
 // (small UPSTREAM_MAX_RESPONSE_BYTES) and admin, call_tool as the way to reach tools/call.
 func catalogUpstreamCalls(t *testing.T, s *harness.Stack, admin *harness.Client) {
 	const secret = "k-live-7f3a9c" //nolint:gosec // G101: a made-up secret that the test hunts for
-	c := s.MCP(t, admin.Token(t, "catalog-calls"))
+	led := newMCPLedger(t, s)
+	led.note(secret, "k-second")
+	c := led.session(admin.Token(t, "catalog-calls"))
 	other := fakes.StartUpstream(t, fakes.UpstreamOptions{Tools: fakes.Tools("z")})
 	up := fakes.StartUpstream(t, fakes.UpstreamOptions{Tools: fakes.Tools("echo")})
 	slug := harness.Unique("up")

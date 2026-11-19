@@ -224,8 +224,23 @@ func TestMCPRecordingHandsOverTheRawAnswers(t *testing.T) {
 	if !strings.Contains(all, "list_servers") || !strings.Contains(all, "mcp-registry") {
 		t.Fatalf("the recorded answers (%d) do not hold the raw tools/list: %.300s", len(seen), all)
 	}
-	// Control: a plain session records nothing.
+	// Control: a plain session (no recorder) hands nothing over: the count does not move.
+	before := len(seen)
+	mu.Unlock()
 	if _, err := s.MCP(t, token).ListTools(t.Context(), nil); err != nil {
 		t.Fatal(err)
+	}
+	mu.Lock()
+	if len(seen) != before {
+		t.Fatalf("a plain session recorded %d answers", len(seen)-before)
+	}
+	// And the recording session still records (so the equality above is not a dead recorder).
+	mu.Unlock()
+	if _, err := sess.ListTools(t.Context(), nil); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	if len(seen) <= before {
+		t.Fatal("the recording session recorded nothing for a second call")
 	}
 }

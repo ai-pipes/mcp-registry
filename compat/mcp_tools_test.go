@@ -44,14 +44,14 @@ func TestMCPMetaTools(t *testing.T) {
 		"required":   []string{"project", "summary"},
 	}
 	// A server that needs nothing: its tools exercise describe, ToolRef and the answer shape.
-	plain := gwNewServer(t, admin, []fakes.Tool{
+	plain := gwNewServer(t, led, admin, []fakes.Tool{
 		{Name: "get_file_contents", Description: "Read a file from a mcpplain repository", InputSchema: map[string]any{"type": "object"}},
 		{Name: "a.b.c", Description: "A mcpdotted tool whose own name has dots", InputSchema: map[string]any{"type": "object", "properties": map[string]any{"x": map[string]any{"type": "number"}}}},
 	}, "none")
 	// A shared-secret server: the secret and the header must never appear in an answer.
-	shared := gwNewServer(t, admin, fakes.Tools("ping"), "shared_secret", fakes.WithHeader("X-API-Key", "key {secret}"), fakes.WithSecret(apiKey))
+	shared := gwNewServer(t, led, admin, fakes.Tools("ping"), "shared_secret", fakes.WithHeader("X-API-Key", "key {secret}"), fakes.WithSecret(apiKey))
 	// A personal-token server for the group "mcp-users" with the described tool.
-	personal := gwNewServer(t, admin, []fakes.Tool{
+	personal := gwNewServer(t, led, admin, []fakes.Tool{
 		{
 			Name: "create_issue", Title: "Create issue", Description: mcpLong, InputSchema: createSchema,
 			OutputSchema: map[string]any{"type": "object", "properties": map[string]any{"id": map[string]any{"type": "string"}}},
@@ -62,9 +62,9 @@ func TestMCPMetaTools(t *testing.T) {
 			Annotations: map[string]any{"readOnlyHint": true},
 		},
 	}, "pat_user", fakes.WithHeader("Authorization", "Bearer {secret}"), fakes.WithGroups("mcp-users"))
-	closed := gwNewServer(t, admin, fakes.Tools("hidden_tool"), "none", fakes.WithGroups("ops"))
+	closed := gwNewServer(t, led, admin, fakes.Tools("hidden_tool"), "none", fakes.WithGroups("ops"))
 	// A server whose only tool has nothing to do with the query of the empty-answer check.
-	unrelated := gwNewServer(t, admin, []fakes.Tool{{Name: "read_file", Description: "Read the contents of a file from disk", InputSchema: map[string]any{"type": "object"}}}, "none")
+	unrelated := gwNewServer(t, led, admin, []fakes.Tool{{Name: "read_file", Description: "Read the contents of a file from disk", InputSchema: map[string]any{"type": "object"}}}, "none")
 	for _, e := range []*gwServer{plain, shared, personal, unrelated} {
 		catalogWaitDocs(t, s, e.slug, len(e.tools))
 	}
@@ -365,7 +365,7 @@ func TestMCPMetaTools(t *testing.T) {
 		for _, c := range cases {
 			tools = append(tools, fakes.Tool{Name: "short_" + c.tool, Description: c.desc, InputSchema: map[string]any{"type": "object"}})
 		}
-		desc := gwNewServer(t, admin, tools, "none")
+		desc := gwNewServer(t, led, admin, tools, "none")
 		catalogWaitDocs(t, s, desc.slug, len(tools))
 		for i, c := range cases {
 			hits := catalogSearch(t, alice.mcp, fmt.Sprintf("mcpshort%d", i+1), 25, []string{desc.slug})

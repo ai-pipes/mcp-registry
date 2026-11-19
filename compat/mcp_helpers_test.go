@@ -58,30 +58,39 @@ type mcpReply struct {
 
 func (r mcpReply) contentType() string { return r.Header.Get("Content-Type") }
 
+// mcpIsStream and mcpIsJSON compare content types by prefix: parameters (charset) are allowed.
+func mcpIsStream(ct string) bool { return strings.HasPrefix(ct, "text/event-stream") }
+func mcpIsJSON(ct string) bool   { return strings.HasPrefix(ct, "application/json") }
+
 // mcpMessages decodes every JSON-RPC message in a body of either type.
 func mcpMessages(t *testing.T, ct string, body []byte) (msgs []rpcMessage, sse bool) {
 	t.Helper()
 	switch {
-	case strings.HasPrefix(ct, "text/event-stream"):
+	case mcpIsStream(ct):
 		text := strings.ReplaceAll(string(body), "\r\n", "\n")
 		for _, event := range strings.Split(text, "\n\n") {
 			var data []string
+			name := ""
 			for _, line := range strings.Split(event, "\n") {
 				if rest, ok := strings.CutPrefix(line, "data:"); ok {
 					data = append(data, strings.TrimPrefix(rest, " "))
+				} else if rest, ok := strings.CutPrefix(line, "event:"); ok {
+					name = strings.TrimSpace(rest)
 				}
 			}
-			if len(data) == 0 {
+			// A priming event (an id and empty data) and events of another type are not answers.
+			payload := strings.Join(data, "\n")
+			if strings.TrimSpace(payload) == "" || (name != "" && name != "message") {
 				continue
 			}
 			var m rpcMessage
-			if err := json.Unmarshal([]byte(strings.Join(data, "\n")), &m); err != nil {
-				t.Fatalf("an event of the stream is not JSON: %v: %.300s", err, body)
+			if err := json.Unmarshal([]byte(payload), &m); err != nil {
+				t.Fatalf("a message event of the stream is not JSON: %v: %.300s", err, body)
 			}
 			msgs = append(msgs, m)
 		}
 		return msgs, true
-	case strings.HasPrefix(ct, "application/json"):
+	case mcpIsJSON(ct):
 		var m rpcMessage
 		if err := json.Unmarshal(body, &m); err != nil {
 			t.Fatalf("a JSON-RPC message was expected (%s): %v: %.300s", ct, err, body)
@@ -287,7 +296,7 @@ func (e *gwServer) ref(tool string) string { return e.slug + "." + tool }
 // gwNewServer registers a server of authKind on a new fake upstream (tools default to one tool,
 // echo). Its timeout is 5 s unless an option says otherwise. A pat_user server is synced with the
 // admin's own token, as the product requires.
-func gwNewServer(t *testing.T, admin *harness.Client, tools []fakes.Tool, authKind string, opts ...fakes.ServerOpt) *gwServer {
+func gwNewServer(t *testing.T, led *mcpLedger, admin *harness.Client, tools []fakes.Tool, authKind string, opts ...fakes.ServerOpt) *gwServer {
 	t.Helper()
 	if tools == nil {
 		tools = fakes.Tools("echo")
@@ -295,24 +304,29 @@ func gwNewServer(t *testing.T, admin *harness.Client, tools []fakes.Tool, authKi
 	up := fakes.StartUpstream(t, fakes.UpstreamOptions{Tools: tools})
 	slug := harness.Unique("gw")
 	opts = append([]fakes.ServerOpt{fakes.WithTimeoutMs(5000)}, opts...)
-	view := catalogRegister(t, admin, fakes.ServerInput(up, slug, authKind, opts...))
+	body := fakes.ServerInput(up, slug, authKind, opts...)
+	view := catalogRegister(t, admin, body)
+	// The name that product texts use is the one the scenario asked for (the default display name
+	// unless an option set another), not whatever the server answers.
+	name, _ := body["name"].(string)
+	if name == "" || view.Name != name {
+		t.Fatalf("server %s: registered with the name %q, the response says %q", slug, name, view.Name)
+	}
 	if authKind == "pat_user" {
-		if msg := savePAT(t, admin, slug, "admin-pat-"+slug); msg != "" {
+		token := "admin-pat-" + slug
+		if led != nil {
+			led.note(token)
+		}
+		if msg := savePAT(t, admin, slug, token); msg != "" {
 			t.Fatal(msg)
 		}
 		catalogSyncOK(t, admin, slug)
 	}
-	if got := catalogGet(t, admin, slug).ToolCount; got != len(tools) {
-		// The sync at registration can lose to a busy host; log what it said and sync once more.
-		v := catalogGet(t, admin, slug)
-		t.Logf("server %s: the sync at registration left %d of %d tools (last error %q): syncing again", slug, v.ToolCount, len(tools), v.syncError())
-		catalogSyncOK(t, admin, slug)
-	}
-	if got := catalogGet(t, admin, slug).ToolCount; got != len(tools) {
-		t.Fatalf("server %s: %d tools synced, want %d", slug, got, len(tools))
+	if v := catalogGet(t, admin, slug); v.ToolCount != len(tools) {
+		t.Fatalf("server %s: %d tools synced, want %d (last sync error %q)", slug, v.ToolCount, len(tools), v.syncError())
 	}
 	up.Reset()
-	return &gwServer{slug: slug, name: view.Name, up: up, tools: tools}
+	return &gwServer{slug: slug, name: name, up: up, tools: tools}
 }
 
 // gwPerson is a member with a token and an MCP session that records every answer raw.
@@ -382,4 +396,18 @@ func gwOutcomes(rows []gwRow) []string {
 		out = append(out, r.Outcome)
 	}
 	return out
+}
+
+// mcpToolNames lists the names in a tools/list result.
+func mcpToolNames(res map[string]any) []string {
+	var names []string
+	tools, _ := res["tools"].([]any)
+	for _, tl := range tools {
+		if m, ok := tl.(map[string]any); ok {
+			if n, ok := m["name"].(string); ok {
+				names = append(names, n)
+			}
+		}
+	}
+	return names
 }

@@ -3,16 +3,15 @@
 package harness
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"net"
 	"net/http"
 	"net/http/cookiejar"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -98,11 +97,8 @@ func (s *Stack) signIn(t *testing.T, sub, name string, extra ...string) *Client 
 	return c
 }
 
-// Do sends one request. body is nil, a string or []byte (sent as is), or any value (sent as JSON).
-// hdr entries are "Name: Value", applied after the default Origin (= BaseURL). "Host: x" sets the
-// request's Host (net/http ignores a Host header). An entry with an empty value, such as
-// "Origin:", removes that header, so a request without Origin can be sent.
-func (c *Client) Do(t *testing.T, method, path string, body any, hdr ...string) Response {
+// newRequest builds the request of Do and DoExpectingEarlyRefusal (see Do for the arguments).
+func (c *Client) newRequest(t *testing.T, method, path string, body any, hdr []string) *http.Request {
 	t.Helper()
 	var rd io.Reader
 	asJSON := false
@@ -142,7 +138,18 @@ func (c *Client) Do(t *testing.T, method, path string, body any, hdr ...string) 
 			req.Header.Set(name, value)
 		}
 	}
-	resp, err := c.send(req)
+	return req
+}
+
+// Do sends one request. body is nil, a string or []byte (sent as is), or any value (sent as JSON).
+// hdr entries are "Name: Value", applied after the default Origin (= BaseURL). "Host: x" sets the
+// request's Host (net/http ignores a Host header). An entry with an empty value, such as
+// "Origin:", removes that header, so a request without Origin can be sent.
+// There is no retry: a transport error fails the test.
+func (c *Client) Do(t *testing.T, method, path string, body any, hdr ...string) Response {
+	t.Helper()
+	req := c.newRequest(t, method, path, body, hdr)
+	resp, err := c.http.Do(req)
 	if err != nil {
 		t.Fatalf("%s %s: %v", method, path, err)
 	}
@@ -152,42 +159,6 @@ func (c *Client) Do(t *testing.T, method, path string, body any, hdr ...string) 
 		t.Fatalf("%s %s: read body: %v", method, path, err)
 	}
 	return Response{Status: resp.StatusCode, Header: resp.Header, Body: data}
-}
-
-// largeBody is the size from which an upload that the server refuses early can lose the race
-// against its own reset (see send).
-const largeBody = 512 << 10
-
-// send performs the request. A server that refuses a large upload (413) answers and closes without
-// reading the rest of the body; the kernel then resets the connection, and the client can see
-// "broken pipe" or "connection reset" instead of the answer. That is the transport losing a race,
-// not an answer, so a request with a large body is repeated on a new connection (up to 4 times in
-// all) before the error is reported. The refusal is deterministic, so the repetition hides nothing
-// that a scenario asserts: the status and body of the final answer are still compared.
-func (c *Client) send(req *http.Request) (*http.Response, error) {
-	attempts := 1
-	if n := req.ContentLength; n >= largeBody {
-		attempts = 4
-	}
-	var resp *http.Response
-	var err error
-	for i := 0; i < attempts; i++ {
-		if i > 0 {
-			if req.GetBody == nil {
-				break
-			}
-			var b io.ReadCloser
-			if b, err = req.GetBody(); err != nil {
-				break
-			}
-			req.Body = b
-		}
-		resp, err = c.http.Do(req)
-		if err == nil || (!errors.Is(err, syscall.EPIPE) && !errors.Is(err, syscall.ECONNRESET)) {
-			break
-		}
-	}
-	return resp, err
 }
 
 // Token creates an API token for the signed-in person and returns the sk_ value.
@@ -226,4 +197,39 @@ func (r Response) Decode(t *testing.T, into any) {
 	if err := json.Unmarshal(r.Body, into); err != nil {
 		t.Fatalf("decode response (status %d): %v", r.Status, err)
 	}
+}
+
+// DoExpectingEarlyRefusal sends a request whose body the server is expected to refuse without
+// reading it (a body over a limit: 413) and returns that answer. A server that refuses early
+// answers and closes while the client is still writing, so the kernel may reset the connection
+// under the writer, and a regular client can lose the answer to a "broken pipe" or "connection
+// reset". This helper writes the request from a goroutine on a raw connection, reads the response
+// at the same time and returns it whatever happened to the write; if no response arrives at all it
+// fails. It is for the oversize-refusal scenarios only: a request that is expected to succeed goes
+// through Do, which has no retry and no tolerance for transport errors.
+func (c *Client) DoExpectingEarlyRefusal(t *testing.T, method, path string, body []byte, hdr ...string) Response {
+	t.Helper()
+	req := c.newRequest(t, method, path, body, hdr)
+	req.Header.Set("Connection", "close")
+	addr := req.URL.Host
+	if !strings.Contains(addr, ":") {
+		addr += ":80"
+	}
+	conn, err := (&net.Dialer{Timeout: 10 * time.Second}).DialContext(context.Background(), "tcp", addr)
+	if err != nil {
+		t.Fatalf("%s %s: dial: %v", method, path, err)
+	}
+	defer func() { _ = conn.Close() }()
+	_ = conn.SetDeadline(time.Now().Add(30 * time.Second))
+	go func() { _ = req.Write(conn) }() // a write error is expected when the server refuses early
+	resp, err := http.ReadResponse(bufio.NewReader(conn), req)
+	if err != nil {
+		t.Fatalf("%s %s: no response to a request that was expected to be refused early: %v", method, path, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	data, err := io.ReadAll(resp.Body)
+	if err != nil && len(data) == 0 {
+		t.Fatalf("%s %s: read the refusal: %v", method, path, err)
+	}
+	return Response{Status: resp.StatusCode, Header: resp.Header, Body: data}
 }

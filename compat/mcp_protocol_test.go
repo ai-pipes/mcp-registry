@@ -75,7 +75,7 @@ func TestMCPProtocolClassic(t *testing.T) {
 			{"not-a-date", ""},
 		} {
 			r := mcpPost(t, led, anon, token, mcpInitializeBody(c.asked))
-			if r.Status != 200 || !r.HasMsg || r.Msg.Error != nil || (r.contentType() != "application/json" && !strings.HasPrefix(r.contentType(), "text/event-stream")) {
+			if r.Status != 200 || !r.HasMsg || r.Msg.Error != nil || (!mcpIsJSON(r.contentType()) && !mcpIsStream(r.contentType())) {
 				t.Fatalf("initialize %q: status %d %s error %+v: %.200s", c.asked, r.Status, r.contentType(), r.Msg.Error, r.Body)
 			}
 			mcpNoSession(t, "initialize "+c.asked, r)
@@ -113,23 +113,32 @@ func TestMCPProtocolClassic(t *testing.T) {
 			t.Fatalf("tools/list: %d %s", list.Status, list.Body)
 		}
 		mcpNoSession(t, "tools/list", list)
-		var names []string
-		tools, _ := list.Msg.Result["tools"].([]any)
-		for _, tl := range tools {
-			names = append(names, tl.(map[string]any)["name"].(string))
-		}
+		names := mcpToolNames(list.Msg.Result)
 		if !slices.Equal(names, []string{"list_servers", "search_tools", "describe_tool", "call_tool"}) {
 			t.Fatalf("tools/list names %v, want the four meta-tools in this order", names)
+		}
+		if r := mcpPost(t, led, anon, token, mcpClassicBody(5, "ping", nil)); r.Status != 200 || !r.HasMsg || r.Msg.Error != nil || r.Msg.Result == nil || len(r.Msg.Result) != 0 {
+			t.Fatalf("ping: %d %.200s, want an empty result", r.Status, r.Body)
 		}
 		call := mcpPost(t, led, anon, token, mcpClassicBody(3, "tools/call", map[string]any{"name": "list_servers", "arguments": map[string]any{}}))
 		if call.Status != 200 || !call.HasMsg || call.Msg.Result["isError"] != nil {
 			t.Fatalf("tools/call list_servers: %d %v", call.Status, call.Msg.Result)
 		}
 		mcpNoSession(t, "tools/call", call)
+		if blocks, _ := call.Msg.Result["content"].([]any); len(blocks) != 1 {
+			t.Fatalf("list_servers returned %d content blocks, want exactly one", len(blocks))
+		}
 		// The text is the structured content as compact JSON.
 		var fromText any
 		if err := json.Unmarshal([]byte(mcpResultText(call.Msg.Result)), &fromText); err != nil || !reflect.DeepEqual(fromText, call.Msg.Result["structuredContent"]) {
 			t.Fatalf("the text %q is not the structuredContent %v (%v)", mcpResultText(call.Msg.Result), call.Msg.Result["structuredContent"], err)
+		}
+	})
+
+	t.Run("an argument the tool does not declare is ignored (control of the validation test below)", func(t *testing.T) {
+		res := mcpToolsCall(t, led, anon, token, "list_servers", map[string]any{"unknown": 1})
+		if res["isError"] != nil || res["structuredContent"] == nil {
+			t.Fatalf("an undeclared argument of list_servers: %v", res)
 		}
 	})
 
@@ -149,13 +158,25 @@ func TestMCPProtocolClassic(t *testing.T) {
 			}
 			mcpNoSession(t, c.name, r)
 		}
-		// Not pinned beyond "no server error and no tool list": a missing or one-sided Accept, and a
-		// request of the stateless revision without its headers.
-		for _, hdr := range [][]string{{"Accept: application/json"}, {"Accept:"}} {
-			if r := mcpPost(t, led, anon, token, mcpClassicBody(2, "tools/list", nil), hdr...); r.Status >= 500 {
-				t.Errorf("%v: %d", hdr, r.Status)
+		// A missing or one-sided Accept: refused with a 4xx or with a JSON-RPC error, never with a
+		// tool list; only a one-sided `Accept: application/json` may also be answered normally, and
+		// then the answer must be a valid answer to the request that was sent (the four tools).
+		for _, c := range []struct {
+			hdr      string
+			validOK  bool
+			whatItIs string
+		}{{"Accept: application/json", true, "a one-sided Accept"}, {"Accept:", false, "no Accept"}} {
+			r := mcpPost(t, led, anon, token, mcpClassicBody(2, "tools/list", nil), c.hdr)
+			refused := r.Status/100 == 4 || (r.HasMsg && r.Msg.Error != nil && r.Msg.Error.Message != "")
+			valid := c.validOK && r.Status == 200 && r.HasMsg && r.Msg.Error == nil && len(mcpToolNames(r.Msg.Result)) == 4
+			if !refused && !valid {
+				t.Errorf("%s: status %d %.200s, want a 4xx or a JSON-RPC error (or a valid tool list for a one-sided Accept)", c.whatItIs, r.Status, r.Body)
+			}
+			if !refused && !c.validOK && strings.Contains(string(r.Body), "list_servers") {
+				t.Errorf("%s: a tool list was returned", c.whatItIs)
 			}
 		}
+		// A request of the stateless revision without its headers: no server error, no tool list.
 		if r := mcpPost(t, led, anon, token, mcpClassicBody(2, "server/discover", nil)); r.Status >= 500 || strings.Contains(string(r.Body), "list_servers") {
 			t.Errorf("server/discover without the stateless headers: %d %.200s", r.Status, r.Body)
 		}
@@ -220,11 +241,14 @@ func TestMCPProtocolClassic(t *testing.T) {
 				t.Errorf("%s /mcp without a token: %d, want 401 (before 405)", m, r.Status)
 			}
 		}
-		// Other methods: not served either; all that is pinned is that no tool result comes back.
+		// Other methods are not served either: a 4xx, or a JSON-RPC error body, and in no case a tool
+		// result.
 		for _, m := range []string{"PUT", "PATCH", "OPTIONS"} {
 			r := anon.Do(t, m, "/mcp", nil, "Authorization: Bearer "+token)
-			if r.Status/100 == 2 && strings.Contains(string(r.Body), "list_servers") || r.Status >= 500 {
-				t.Errorf("%s /mcp: %d %.200s", m, r.Status, r.Body)
+			msgs, _ := mcpMessages(t, r.Header.Get("Content-Type"), r.Body)
+			rpcError := len(msgs) > 0 && msgs[0].Error != nil
+			if (r.Status/100 != 4 && !rpcError) || strings.Contains(string(r.Body), "list_servers") {
+				t.Errorf("%s /mcp: %d %.200s, want a 4xx or a JSON-RPC error and no tool result", m, r.Status, r.Body)
 			}
 		}
 	})
@@ -423,11 +447,11 @@ func TestMCPGuards(t *testing.T) {
 		// the connection, so right after a heavy exchange a 10 MiB upload can lose the answer to a
 		// reset. The request goes through its own client (its own connections), so a reset
 		// connection is never reused by another request, and it is the first large one of the test.
-		r := s.Anonymous().Do(t, "POST", "/mcp", pad(limit+1), mcpJSON, mcpAccept, "Authorization: Bearer "+token, "Connection: close")
+		r := s.Anonymous().DoExpectingEarlyRefusal(t, "POST", "/mcp", []byte(pad(limit+1)), mcpJSON, mcpAccept, "Authorization: Bearer "+token)
 		if r.Status != 413 || errorCode(t, r) != "limit_exceeded|request body is too large" {
 			t.Fatalf("10 MiB + 1 byte: %d %.200s, want 413 limit_exceeded", r.Status, r.Body)
 		}
-		env := gwNewServer(t, admin, nil, "none")
+		env := gwNewServer(t, led, admin, nil, "none")
 		ref := env.slug + ".echo"
 		// 5 MiB of arguments: above the REST limit and above the SDK's own 4 MiB default.
 		big := strings.Repeat("x", 5*1024*1024)

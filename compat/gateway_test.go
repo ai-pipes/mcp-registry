@@ -127,12 +127,25 @@ func gwTablesContaining(t *testing.T, s *harness.Stack, marker string) []string 
 	return found
 }
 
-// gwErrorRecords counts the records of the app log at error level or above (pino's numeric level
-// 50 and up).
+// gwErrorRecords counts the records of the app log at error level or above, whether the level is
+// written as a number (>= 50, as pino does) or as a name (error, fatal, in either case).
 func gwErrorRecords(t *testing.T, s *harness.Stack) int {
 	t.Helper()
 	recs, _ := logRecords(t, s.Logs(t))
-	return len(recordsAtLevel(recs, pinoFatal)) + len(recordsAtLevel(recs, 50))
+	n := 0
+	for _, r := range recs {
+		switch lv := r["level"].(type) {
+		case float64:
+			if lv >= 50 {
+				n++
+			}
+		case string:
+			if l := strings.ToLower(lv); l == "error" || l == "fatal" {
+				n++
+			}
+		}
+	}
+	return n
 }
 
 // ---- TestGatewayCall ----
@@ -149,7 +162,7 @@ func TestGatewayCall(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		e := gwNewServer(t, admin, fakes.Tools("echo", "image", "multi", "failing"), "shared_secret", fakes.WithHeader("X-API-Key", "key {secret}"), fakes.WithSecret("gw-key-1"))
+		e := gwNewServer(t, led, admin, fakes.Tools("echo", "image", "multi", "failing"), "shared_secret", fakes.WithHeader("X-API-Key", "key {secret}"), fakes.WithSecret("gw-key-1"))
 		led.note("gw-key-1")
 		e.up.SetResult("image", &mcp.CallToolResult{Content: []mcp.Content{&mcp.ImageContent{Data: png, MIMEType: "image/png"}}})
 		e.up.SetResult("multi", &mcp.CallToolResult{
@@ -217,7 +230,7 @@ func TestGatewayCall(t *testing.T) {
 		}}
 		brokenType := fakes.Tool{Name: "broken_type", Description: "b", InputSchema: map[string]any{"type": "object", "properties": map[string]any{"x": map[string]any{"type": "nonsense"}}}}
 		brokenRef := fakes.Tool{Name: "broken_ref", Description: "b", InputSchema: map[string]any{"type": "object", "properties": map[string]any{"x": map[string]any{"$ref": "#/definitions/missing"}}}}
-		e := gwNewServer(t, admin, []fakes.Tool{strict, pattern, brokenType, brokenRef}, "none", fakes.WithDailyLimit(10))
+		e := gwNewServer(t, led, admin, []fakes.Tool{strict, pattern, brokenType, brokenRef}, "none", fakes.WithDailyLimit(10))
 
 		// The text is the product's: `Invalid arguments at <path>: <message>. Call describe_tool("<ref>")
 		// for the schema.` The message is the JSON Schema validator's own wording and is not pinned
@@ -312,7 +325,7 @@ func TestGatewayCall(t *testing.T) {
 		}}
 		idA := fakes.Tool{Name: "id_a", Description: "a", InputSchema: map[string]any{"$id": "urn:compat:tool", "type": "object", "properties": map[string]any{"n": map[string]any{"type": "string"}}}}
 		idB := fakes.Tool{Name: "id_b", Description: "b", InputSchema: map[string]any{"$id": "urn:compat:tool", "type": "object", "properties": map[string]any{"n": map[string]any{"type": "number"}}}}
-		e := gwNewServer(t, admin, []fakes.Tool{evil, keywords, idA, idB}, "none")
+		e := gwNewServer(t, led, admin, []fakes.Tool{evil, keywords, idA, idB}, "none")
 		refuse := func(tool string, args map[string]any, paths ...string) {
 			t.Helper()
 			text := catalogText(alice.call(led, e.ref(tool), args))
@@ -352,7 +365,7 @@ func TestGatewayCall(t *testing.T) {
 	})
 
 	t.Run("every way a tool becomes unavailable gives one answer, no upstream call and denied:not_found", func(t *testing.T) {
-		e := gwNewServer(t, admin, fakes.Tools("echo", "other"), "none")
+		e := gwNewServer(t, led, admin, fakes.Tools("echo", "other"), "none")
 		ref := e.ref("echo")
 		view := catalogGet(t, admin, e.slug)
 		denied := func(what, ref string) {
@@ -424,9 +437,9 @@ func TestGatewayCall(t *testing.T) {
 	})
 
 	t.Run("the daily limit: per person and server, refused without reaching the upstream, reset at UTC midnight", func(t *testing.T) {
-		q := gwNewServer(t, admin, nil, "none", fakes.WithDailyLimit(2))
-		other := gwNewServer(t, admin, nil, "none", fakes.WithDailyLimit(1))
-		free := gwNewServer(t, admin, nil, "none")
+		q := gwNewServer(t, led, admin, nil, "none", fakes.WithDailyLimit(2))
+		other := gwNewServer(t, led, admin, nil, "none", fakes.WithDailyLimit(1))
+		free := gwNewServer(t, led, admin, nil, "none")
 		bob := gwNewPerson(t, s, led)
 		ref := q.ref("echo")
 		args := map[string]any{"text": "hi"}
@@ -498,7 +511,7 @@ func TestGatewayCall(t *testing.T) {
 	})
 
 	t.Run("parallel calls cannot exceed the daily limit", func(t *testing.T) {
-		e := gwNewServer(t, admin, nil, "none", fakes.WithDailyLimit(3))
+		e := gwNewServer(t, led, admin, nil, "none", fakes.WithDailyLimit(3))
 		p := gwNewPerson(t, s, led)
 		results := gwCallMany(t, p, e.ref("echo"), 10, func(int) map[string]any { return map[string]any{"text": "hi"} })
 		var okN, refusedN int
@@ -523,7 +536,7 @@ func TestGatewayCall(t *testing.T) {
 	})
 
 	t.Run("a JSON-RPC error of the upstream: its code and message, cut to 500 characters, trimmed", func(t *testing.T) {
-		e := gwNewServer(t, admin, nil, "none")
+		e := gwNewServer(t, led, admin, nil, "none")
 		head := e.name + " rejected the call (JSON-RPC %d)"
 		long := strings.Repeat("m", 600)
 		for _, c := range []struct {
@@ -560,7 +573,7 @@ func TestGatewayCall(t *testing.T) {
 	})
 
 	t.Run("a timeout is written in seconds, 1.5 s for 1500 ms, and logged as timeout", func(t *testing.T) {
-		e := gwNewServer(t, admin, nil, "none", fakes.WithTimeoutMs(1500))
+		e := gwNewServer(t, led, admin, nil, "none", fakes.WithTimeoutMs(1500))
 		e.up.Delay(5 * time.Second)
 		gwExpectRefused(t, "slow upstream", alice.call(led, e.ref("echo"), map[string]any{}), e.name+" did not respond in 1.5 s.")
 		rows := gwRows(t, s, e.slug)
@@ -574,7 +587,7 @@ func TestGatewayCall(t *testing.T) {
 	})
 
 	t.Run("20 parallel calls with one token all succeed and leave 20 rows", func(t *testing.T) {
-		e := gwNewServer(t, admin, nil, "none")
+		e := gwNewServer(t, led, admin, nil, "none")
 		p := gwNewPerson(t, s, led)
 		results := gwCallMany(t, p, e.ref("echo"), 20, func(i int) map[string]any { return map[string]any{"text": fmt.Sprint("n", i)} })
 		for i, r := range results {
@@ -595,7 +608,7 @@ func TestGatewayCall(t *testing.T) {
 
 	t.Run("the call log has these columns and no arguments or results, here or anywhere", func(t *testing.T) {
 		argMarker, resMarker := "compat-arg-"+harness.Unique("a"), "compat-res-"+harness.Unique("r")
-		e := gwNewServer(t, admin, fakes.Tools("echo", "answer"), "none")
+		e := gwNewServer(t, led, admin, fakes.Tools("echo", "answer"), "none")
 		e.up.SetResult("answer", &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: resMarker}}, StructuredContent: map[string]any{"k": resMarker}})
 		if res := alice.call(led, e.ref("echo"), map[string]any{"text": argMarker}); res.IsError || !strings.Contains(catalogText(res), argMarker) {
 			t.Fatalf("echo: %s", catalogText(res))
@@ -685,7 +698,7 @@ func TestGatewayFaults(t *testing.T) {
 		// pinned. Each request goes through its own client, so a connection the server reset after
 		// the refusal is never reused.
 		over := func(hdr ...string) harness.Response {
-			return s.Anonymous().Do(t, "POST", "/mcp", pad(bodyLimit+1), append([]string{mcpJSON, mcpAccept, "Connection: close"}, hdr...)...)
+			return s.Anonymous().DoExpectingEarlyRefusal(t, "POST", "/mcp", []byte(pad(bodyLimit+1)), append([]string{mcpJSON, mcpAccept}, hdr...)...)
 		}
 		if r := over("Authorization: Bearer " + p.token); r.Status != 413 || errorCode(t, r) != "limit_exceeded|request body is too large" {
 			t.Fatalf("one byte over: %d %.200s", r.Status, r.Body)
@@ -695,8 +708,7 @@ func TestGatewayFaults(t *testing.T) {
 				t.Fatalf("one byte over with %v: %d %.200s, want a refusal (413, 403 or 401)", hdr, r.Status, r.Body)
 			}
 		}
-		// Exactly the limit is accepted. (Sent without Connection: close and after the refusals: a
-		// request that follows an exact-limit one sent with it can get an empty 400 from the image.)
+		// Exactly the limit is accepted (a request that must succeed: plain Do, no tolerance).
 		if r := s.Anonymous().Do(t, "POST", "/mcp", pad(bodyLimit), mcpJSON, mcpAccept, "Authorization: Bearer "+p.token); r.Status != 200 {
 			t.Fatalf("a body of exactly the limit: %d %.200s", r.Status, r.Body)
 		}
@@ -708,7 +720,7 @@ func TestGatewayFaults(t *testing.T) {
 	})
 
 	t.Run("an unexpected failure is Internal error. and the log keeps no arguments", func(t *testing.T) {
-		e := gwNewServer(t, admin, nil, "none", fakes.WithDailyLimit(5))
+		e := gwNewServer(t, led, admin, nil, "none", fakes.WithDailyLimit(5))
 		marker := "compat-fault-" + harness.Unique("a")
 		errorsBefore := gwErrorRecords(t, s)
 		restore := gwBlockWrites(t, s, "gateway.quota")
@@ -723,7 +735,7 @@ func TestGatewayFaults(t *testing.T) {
 			t.Fatalf("call log %+v, want one transport_error row", rows)
 		}
 		// Log messages and levels are not part of the stable surface: all that is pinned is that the
-		// failure is logged at error level or above (the image writes pino's numeric 50) and that no
+		// failure is logged at error level or above and that no
 		// line of the log carries the arguments.
 		if n := gwErrorRecords(t, s); n <= errorsBefore {
 			t.Fatalf("no error-level record for the failure (%d before, %d now)", errorsBefore, n)
@@ -742,7 +754,7 @@ func TestGatewayFaults(t *testing.T) {
 	})
 
 	t.Run("a failed call-log write never changes the agent's answer", func(t *testing.T) {
-		e := gwNewServer(t, admin, nil, "none")
+		e := gwNewServer(t, led, admin, nil, "none")
 		marker := "compat-logfail-" + harness.Unique("a")
 		errorsBefore := gwErrorRecords(t, s)
 		restore := gwBlockWrites(t, s, "gateway.calls")
