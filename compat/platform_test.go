@@ -385,12 +385,18 @@ func TestPlatformBodyLimit(t *testing.T) {
 	}
 	t.Run("a body over 1 MiB is refused with 413", func(t *testing.T) {
 		r := admin.DoExpectingEarlyRefusal(t, "POST", "/api/tokens", padded(restBodyLimit+1), "Content-Type: application/json")
+		if !strings.Contains(r.Sent.Get("Cookie"), "mcp_session=") {
+			t.Fatalf("the signed-in request did not carry the session cookie (Cookie: %q)", r.Sent.Get("Cookie"))
+		}
 		if r.Status != 413 || errorCode(t, r) != want {
 			t.Fatalf("%d %.200s", r.Status, r.Body)
 		}
 	})
 	t.Run("the limit applies before sign-in", func(t *testing.T) {
 		r := s.Anonymous().DoExpectingEarlyRefusal(t, "POST", "/api/tokens", padded(restBodyLimit+1), "Content-Type: application/json")
+		if r.Sent.Get("Cookie") != "" {
+			t.Fatalf("the anonymous request carried a cookie: %q", r.Sent.Get("Cookie"))
+		}
 		if r.Status != 413 || errorCode(t, r) != want {
 			t.Fatalf("%d %.200s", r.Status, r.Body)
 		}

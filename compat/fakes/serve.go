@@ -9,13 +9,12 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"runtime"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -23,12 +22,36 @@ import (
 // containerHost is how the application container reaches the test process.
 const containerHost = "host.docker.internal"
 
+// identityPath is reserved for the self-check of serve; no fake uses it.
+const identityPath = "/__compat_identity"
+
+// listenersFor binds what a fake listens on, by operating system.
+//
+// Linux: one wildcard listener 0.0.0.0:<free port>. The kernel refuses the wildcard bind when
+// another process holds 127.0.0.1:P (and refuses 0.0.0.0:P followed by 127.0.0.1:P in one
+// process), so a pair can never be made there and is not needed.
+//
+// Elsewhere (macOS, BSDs): Go sets SO_REUSEADDR, and binding 0.0.0.0:P then succeeds although
+// another process (a host daemon, another stack's published port) holds 127.0.0.1:P; connections
+// to 127.0.0.1:P reach THAT process, and the test client dials 127.0.0.1 for host.docker.internal.
+// So the loopback address is bound too (listenPair): EADDRINUSE there means someone else holds it.
+func listenersFor(goos string) ([]net.Listener, error) {
+	if goos == "linux" {
+		l, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "0.0.0.0:0")
+		if err != nil {
+			return nil, err
+		}
+		return []net.Listener{l}, nil
+	}
+	all, loopback, err := listenPair("0")
+	if err != nil {
+		return nil, err
+	}
+	return []net.Listener{all, loopback}, nil
+}
+
 // listenPair binds 0.0.0.0:port and then 127.0.0.1:port (port "0" picks a free one for the first).
-// Go sets SO_REUSEADDR, and on macOS binding 0.0.0.0:P succeeds although another process (a host
-// daemon, another stack's published port) already holds 127.0.0.1:P; connections to
-// 127.0.0.1:P then reach THAT process, and the test client dials 127.0.0.1 for
-// host.docker.internal. Binding the loopback address too makes the second bind fail with
-// EADDRINUSE in that case, so the fake never ends up on a port that is not really its own.
+// On macOS the second bind fails with EADDRINUSE when another process holds the loopback port.
 func listenPair(port string) (all, loopback net.Listener, err error) {
 	lc := &net.ListenConfig{}
 	all, err = lc.Listen(context.Background(), "tcp", "0.0.0.0:"+port)
@@ -48,52 +71,91 @@ func listenPair(port string) (all, loopback net.Listener, err error) {
 	return all, loopback, nil
 }
 
-// maxBindAttempts bounds the search for a port that is free on both addresses.
+// selfCheck dials 127.0.0.1:port and asks for the identity the fake serves on identityPath: the
+// connection must have been accepted by the fake's own listener, on every operating system.
+func selfCheck(port int, token string) error {
+	c := &http.Client{Timeout: 3 * time.Second, Transport: &http.Transport{Proxy: nil, DisableKeepAlives: true}}
+	resp, err := c.Get(fmt.Sprintf("http://127.0.0.1:%d%s", port, identityPath))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 256))
+	if err != nil {
+		return err
+	}
+	if string(body) != token {
+		return fmt.Errorf("127.0.0.1:%d answered %q, not this fake: another process holds the port", port, body)
+	}
+	return nil
+}
+
+// maxBindAttempts bounds the search for a port that really is the fake's own.
 const maxBindAttempts = 20
 
-// serve listens on 0.0.0.0:<random port> and on 127.0.0.1 with the same port, and serves h on
-// both until the test ends. A port taken on the loopback address by another process is skipped
-// (EADDRINUSE, at most maxBindAttempts times). In-flight requests (a deliberately slow or hanging
-// answer) are cancelled by the cleanup. It returns the port.
+// serve listens (see listenersFor) on a free port and serves h until the test ends. Before it
+// returns, a request to 127.0.0.1:<port> must reach this fake (selfCheck); otherwise everything is
+// closed and another port is tried, at most maxBindAttempts times. In-flight requests (a
+// deliberately slow or hanging answer) are cancelled by the cleanup. It returns the port.
 func serve(t *testing.T, h http.Handler) int {
 	t.Helper()
-	var all, loopback net.Listener
-	var err error
-	for attempt := 1; ; attempt++ {
-		all, loopback, err = listenPair("0")
+	var lastErr error
+	for attempt := 1; attempt <= maxBindAttempts; attempt++ {
+		port, stop, err := tryServe(h)
 		if err == nil {
-			break
+			t.Cleanup(stop)
+			return port
 		}
-		if !errors.Is(err, syscall.EADDRINUSE) || attempt == maxBindAttempts {
-			t.Fatalf("fake listen: %v (attempt %d of %d)", err, attempt, maxBindAttempts)
-		}
+		lastErr = err
 	}
-	tcp, ok := all.Addr().(*net.TCPAddr)
+	t.Fatalf("fake listen: no usable port in %d attempts, last error: %v", maxBindAttempts, lastErr)
+	return 0
+}
+
+// tryServe makes one attempt: listeners, server, self-check. stop closes everything.
+func tryServe(h http.Handler) (port int, stop func(), err error) {
+	ls, err := listenersFor(runtime.GOOS)
+	if err != nil {
+		return 0, nil, err
+	}
+	tcp, ok := ls[0].Addr().(*net.TCPAddr)
 	if !ok {
-		t.Fatalf("fake listen: unexpected address %v", all.Addr())
+		for _, l := range ls {
+			_ = l.Close()
+		}
+		return 0, nil, fmt.Errorf("unexpected address %v", ls[0].Addr())
 	}
+	token := randomToken("fake-")
 	ctx, cancel := context.WithCancel(context.Background())
 	srv := &http.Server{
-		Handler:           h,
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == identityPath {
+				_, _ = w.Write([]byte(token))
+				return
+			}
+			h.ServeHTTP(w, r)
+		}),
 		ReadHeaderTimeout: 10 * time.Second,
 		BaseContext:       func(net.Listener) context.Context { return ctx },
 	}
 	var wg sync.WaitGroup
-	for _, l := range []net.Listener{all, loopback} {
+	for _, l := range ls {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if err := srv.Serve(l); err != nil && !errors.Is(err, http.ErrServerClosed) {
-				t.Errorf("fake serve: %v", err)
-			}
+			_ = srv.Serve(l) // ErrServerClosed at the end; other errors surface in the self-check
 		}()
 	}
-	t.Cleanup(func() {
+	stop = func() {
 		cancel()
 		_ = srv.Close()
 		wg.Wait()
-	})
-	return tcp.Port
+	}
+	if err := selfCheck(tcp.Port, token); err != nil {
+		stop()
+		return 0, nil, err
+	}
+	return tcp.Port, stop, nil
 }
 
 func baseURL(port int) string { return fmt.Sprintf("http://%s:%d", containerHost, port) }

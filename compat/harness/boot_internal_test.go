@@ -6,6 +6,9 @@ import (
 	"context"
 	"errors"
 	"net"
+	"net/http"
+	"net/http/cookiejar"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -67,6 +70,7 @@ func TestDoExpectingEarlyRefusalReturnsTheAnswerWhateverHappenedToTheWrite(t *te
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = l.Close() })
+	cookies := make(chan string, 16)
 	go func() {
 		for {
 			conn, err := l.Accept()
@@ -75,17 +79,36 @@ func TestDoExpectingEarlyRefusalReturnsTheAnswerWhateverHappenedToTheWrite(t *te
 			}
 			go func() {
 				defer func() { _ = conn.Close() }()
-				_, _ = conn.Read(make([]byte, 4096))
+				buf := make([]byte, 4096)
+				n, _ := conn.Read(buf)
+				for _, line := range strings.Split(string(buf[:n]), "\r\n") {
+					if v, ok := strings.CutPrefix(line, "Cookie: "); ok {
+						cookies <- v
+					}
+				}
 				_, _ = conn.Write([]byte("HTTP/1.1 413 Payload Too Large\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}"))
 			}()
 		}
 	}()
-	c := &Client{base: "http://" + l.Addr().String(), http: newHTTPClient(nil)}
+	jar, _ := cookiejar.New(nil)
+	base := "http://" + l.Addr().String()
+	u, _ := url.Parse(base)
+	jar.SetCookies(u, []*http.Cookie{{Name: "mcp_session", Value: "abc"}}) //nolint:gosec // G124: a cookie of a plain-http test listener, Secure would keep the jar from sending it
+	c := &Client{base: base, http: newHTTPClient(jar)}
 	for range 10 {
 		r := c.DoExpectingEarlyRefusal(t, "POST", "/x", make([]byte, 8<<20), "Content-Type: application/json")
 		if r.Status != 413 || string(r.Body) != "{}" || r.Header.Get("Content-Type") != "application/json" {
 			t.Fatalf("status %d body %q header %v", r.Status, r.Body, r.Header)
 		}
+		// The cookie of the client's jar went out with the raw request, as http.Client.Do would send it.
+		if got := <-cookies; got != "mcp_session=abc" || r.Sent.Get("Cookie") != "mcp_session=abc" {
+			t.Fatalf("the raw listener saw the cookie %q, Sent says %q", got, r.Sent.Get("Cookie"))
+		}
+	}
+	// A client without a jar sends no cookie.
+	anon := &Client{base: base, http: newHTTPClient(nil)}
+	if r := anon.DoExpectingEarlyRefusal(t, "POST", "/x", make([]byte, 1<<20)); r.Sent.Get("Cookie") != "" {
+		t.Fatalf("a client without a jar sent %q", r.Sent.Get("Cookie"))
 	}
 }
 

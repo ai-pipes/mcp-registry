@@ -28,6 +28,9 @@ type Response struct {
 	Status int
 	Header http.Header
 	Body   []byte
+	// Sent holds the headers of the request as it went out; only DoExpectingEarlyRefusal fills it
+	// (it sends the request itself, so the cookies of the client's jar are visible there).
+	Sent http.Header
 }
 
 // validateSchema is wired to ValidateSchema in schema.go.
@@ -158,7 +161,7 @@ func (c *Client) Do(t *testing.T, method, path string, body any, hdr ...string) 
 	if err != nil {
 		t.Fatalf("%s %s: read body: %v", method, path, err)
 	}
-	return Response{Status: resp.StatusCode, Header: resp.Header, Body: data}
+	return Response{Status: resp.StatusCode, Header: resp.Header, Body: data, Sent: req.Header.Clone()}
 }
 
 // Token creates an API token for the signed-in person and returns the sk_ value.
@@ -211,6 +214,12 @@ func (c *Client) DoExpectingEarlyRefusal(t *testing.T, method, path string, body
 	t.Helper()
 	req := c.newRequest(t, method, path, body, hdr)
 	req.Header.Set("Connection", "close")
+	// Only http.Client.Do adds the cookies of its jar; this request is sent raw, so add them here.
+	if jar := c.http.Jar; jar != nil {
+		for _, ck := range jar.Cookies(req.URL) {
+			req.AddCookie(ck)
+		}
+	}
 	addr := req.URL.Host
 	if !strings.Contains(addr, ":") {
 		addr += ":80"
@@ -231,5 +240,5 @@ func (c *Client) DoExpectingEarlyRefusal(t *testing.T, method, path string, body
 	if err != nil && len(data) == 0 {
 		t.Fatalf("%s %s: read the refusal: %v", method, path, err)
 	}
-	return Response{Status: resp.StatusCode, Header: resp.Header, Body: data}
+	return Response{Status: resp.StatusCode, Header: resp.Header, Body: data, Sent: req.Header.Clone()}
 }

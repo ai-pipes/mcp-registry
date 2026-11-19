@@ -117,15 +117,25 @@ func mcpPost(t *testing.T, led *mcpLedger, c *harness.Client, token, body string
 	_ = json.Unmarshal([]byte(body), &req)
 	msgs, sse := mcpMessages(t, r.contentType(), r.Body)
 	r.SSE = sse
+	r.Msg, r.HasMsg = mcpSelect(msgs, req.ID)
+	return r
+}
+
+// mcpSelect picks the answer to a request with that id from the messages of a reply: the message
+// whose id is the request's; for a request without an id (or one the server could not read) a
+// single message with a null id and an error.
+func mcpSelect(msgs []rpcMessage, reqID any) (rpcMessage, bool) {
+	var found rpcMessage
+	var ok bool
 	for _, m := range msgs {
-		if (req.ID != nil && fmt.Sprint(m.ID) == fmt.Sprint(req.ID)) || (req.ID == nil && m.Error != nil) {
-			r.Msg, r.HasMsg = m, true
+		if (reqID != nil && fmt.Sprint(m.ID) == fmt.Sprint(reqID)) || (reqID == nil && m.Error != nil) {
+			found, ok = m, true
 		}
 	}
-	if !r.HasMsg && req.ID != nil && len(msgs) == 1 && msgs[0].ID == nil && msgs[0].Error != nil {
-		r.Msg, r.HasMsg = msgs[0], true // an error answer to a request the server could not read
+	if !ok && reqID != nil && len(msgs) == 1 && msgs[0].ID == nil && msgs[0].Error != nil {
+		return msgs[0], true
 	}
-	return r
+	return found, ok
 }
 
 func mcpNoSession(t *testing.T, what string, r mcpReply) {

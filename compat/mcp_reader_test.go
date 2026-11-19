@@ -45,4 +45,16 @@ func TestMCPReaderIsLenient(t *testing.T) {
 	if !mcpIsStream("text/event-stream; charset=utf-8") || !mcpIsJSON("application/json; charset=utf-8") || mcpIsJSON("text/html") {
 		t.Error("content types are not compared by prefix")
 	}
+
+	// Selection: two message events with different ids; the one with the request's id is the answer.
+	msgs, _ := mcpMessages(t, "text/event-stream", []byte("id: 1\ndata:\n\ndata: "+`{"jsonrpc":"2.0","id":6,"result":{"which":"other"}}`+"\n\ndata: "+answer+"\n\n"))
+	if m, ok := mcpSelect(msgs, float64(7)); !ok || m.Result["ok"] != true {
+		t.Errorf("selected %+v (found %v), want the message with id 7", m, ok)
+	}
+	if m, ok := mcpSelect(msgs, float64(6)); !ok || m.Result["which"] != "other" {
+		t.Errorf("selected %+v (found %v), want the message with id 6", m, ok)
+	}
+	if _, ok := mcpSelect(msgs, float64(8)); ok {
+		t.Error("a message was selected for an id nobody answered")
+	}
 }
