@@ -4,8 +4,9 @@
 //      the narrow, named ones below, or the refusals a flow declares with `excuseRefusal`);
 //   2. every response the browser received is scanned, or listed as not scanned with a reason, or
 //      fails the test (guard.ts has the state machine): no sign-in link code (`ll_...`) in any
-//      response, an API token (`sk_...`) only in the answer that created it, and no registered
-//      secret (`guard.secret`) in any response received after it was registered;
+//      response URL, header or body, an API token (`sk_...`) only in the body of the answer that
+//      created it, and no registered secret (`guard.secret`) in any response of the test, also one
+//      received before it was registered, except the one response declared to carry it;
 //   3. a secret the UI showed once is gone after its dialog closed: not in the DOM, not in
 //      localStorage or sessionStorage (`guard.secretGone`).
 // The guard owns page creation: the page of the test, and every other page or context, exists only
@@ -15,12 +16,16 @@ import { test as base, expect, type BrowserContext, type Page } from '@playwrigh
 import { strings } from '../../apps/web/src/strings.ts';
 import { getStacks } from './control.ts';
 import {
+  attachOrFail,
   attachPage,
   newWatched,
+  pageId,
   registerSecret,
   verdict,
   watchedOf,
   watchPlaywrightResponses,
+  type BodyRead,
+  type CarriedBy,
   type ExcusedRefusal,
   type Verdict,
   type Watched,
@@ -113,20 +118,24 @@ export interface Guard {
    */
   excuseRefusal: (status: number, path: RegExp, why: string, page?: Page) => void;
   /**
-   * A response body that is lost by design to the navigation it causes (the Connect button's
-   * answer carries the provider's address and the page leaves at once): it is still listed, but an
-   * `/api/` body matching `path` does not fail the test for being lost after a secret.
+   * A response body that is lost by design to the new document it causes (the Connect button's
+   * answer carries the provider's address and the page leaves at once): it is still listed, but the
+   * `/api/` body of exactly this page, method and path does not fail the test for being lost while
+   * a secret is registered. It excuses only a loss to a new document: not a closed page, not an
+   * unreadable or uncaptured response.
    */
-  allowLostBody: (path: RegExp, why: string, page?: Page) => void;
+  allowLostBody: (page: Page, method: string, path: RegExp, why: string) => void;
   /** A page in a context of its own (another person), captured before it is returned. */
   newPage: () => Promise<Page>;
   /** Another tab in the context of `page`, captured before it is returned. */
   newTab: (page: Page) => Promise<Page>;
   /**
-   * Registers a secret from the moment the test has it: every response received from now on is
-   * scanned for `value`, and an `/api/` body lost from now on fails the test.
+   * Registers a secret: every response of the test (also those received before this call) is
+   * scanned for `value` in its URL, headers and body, and an `/api/` body lost in the test fails it.
+   * `carriedBy` names the one response whose body legitimately carries it (a token's creating
+   * answer): page + method + exact path, exempt at most once.
    */
-  secret: (value: string, label: string) => void;
+  secret: (value: string, label: string, carriedBy?: CarriedBy) => void;
   /**
    * Call right after the dialog that showed `value` closed: checks the DOM and the storages of
    * `page` at once (and registers the secret if it is not yet). `label` names it in failures.
@@ -140,8 +149,10 @@ export interface Guard {
   settle: (graceMs: number) => Promise<Verdict>;
   /** Forgets everything seen so far: for the guard's own self-test, after it asserted a verdict. */
   reset: () => void;
-  /** Self-test hook: pretends Playwright saw a response that no record exists for. */
-  injectUncaptured: (method: string, url: string, status: number) => void;
+  /** Self-test hook: pretends Playwright saw a response on `page` that no record exists for. */
+  injectUncaptured: (page: Page, method: string, url: string, status: number) => void;
+  /** Self-test hook: replaces how bodies are asked for (to produce a failure at a chosen moment). */
+  replaceBodyRead: (read: BodyRead) => void;
 }
 
 export const test = base.extend<{ guard: Guard }>({
@@ -159,34 +170,35 @@ export const test = base.extend<{ guard: Guard }>({
         Object.values(stacks).map((s) => new URL(s.baseURL).origin),
       );
       const extra: BrowserContext[] = [];
+      const defaultRead = w.readBody;
       const context = page.context();
       // The page of the test exists already but has done nothing: listeners first, then its
       // capture, acknowledged, before the test gets it.
       await watchContext(context, w);
-      await attachPage(context, page, w);
+      await attachOrFail(context, page, w, 'the page of the test');
       const guard: Guard = {
         excuseRefusal(status, path, why, forPage) {
           w.excused.push({ status, path, why, page: forPage });
         },
-        allowLostBody(path, why, forPage) {
-          w.allowedLosses.push({ path, why, page: forPage });
+        allowLostBody(forPage, method, path, why) {
+          w.allowedLosses.push({ page: forPage, method, path, why });
         },
         async newPage() {
           const c = await browser.newContext();
           await watchContext(c, w);
           extra.push(c);
           const p = await c.newPage();
-          await attachPage(c, p, w);
+          await attachOrFail(c, p, w, 'a page in a new context');
           return p;
         },
         async newTab(of) {
           const c = of.context();
           const p = await c.newPage();
-          await attachPage(c, p, w);
+          await attachOrFail(c, p, w, 'a new tab');
           return p;
         },
-        secret(value, label) {
-          registerSecret(w, value, label);
+        secret(value, label, carriedBy) {
+          registerSecret(w, value, label, carriedBy);
         },
         async secretGone(forPage, value, label) {
           expect(value.length, `${label}: the secret to look for is empty`).toBeGreaterThan(8);
@@ -217,14 +229,21 @@ export const test = base.extend<{ guard: Guard }>({
         reset() {
           w.problems.length = 0;
           w.records.length = 0;
+          w.extraHeaders.length = 0;
           w.seenByPlaywright.length = 0;
           w.secrets.length = 0;
+          w.allowedLosses.length = 0;
+          w.readBody = defaultRead;
         },
-        injectUncaptured(method, url, status) {
+        injectUncaptured(forPage, method, url, status) {
           w.seenByPlaywright.push({
+            page: pageId(w, forPage),
             key: `${method} ${url}`,
             text: `${method} ${url} -> ${status}`,
           });
+        },
+        replaceBodyRead(read) {
+          w.readBody = read;
         },
       };
       await use(guard);
@@ -251,7 +270,7 @@ export const test = base.extend<{ guard: Guard }>({
 /**
  * The shell of a signed-in page has asked for the gateway's version and shown it. Waiting for it
  * lets that answer be consumed before the flow navigates to a new document (a navigation drops a
- * body that is still being read, and the guard fails an /api/ body lost after a secret).
+ * body that is still being read, and the guard fails an /api/ body lost while a secret is registered).
  */
 export async function shellReady(page: Page): Promise<void> {
   await expect(page.getByRole('complementary').getByText(/^v\d+\.\d+\.\d+/)).toBeVisible();

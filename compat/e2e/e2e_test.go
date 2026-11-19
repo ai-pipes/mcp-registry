@@ -34,7 +34,7 @@ func TestBrowserFlows(t *testing.T) {
 	// would let a run that tested nothing pass, or change the reporters this test reads, are refused.
 	extra := strings.Fields(os.Getenv("E2E_PLAYWRIGHT_ARGS"))
 	for _, a := range extra {
-		if a == "--list" || a == "--pass-with-no-tests" || a == "-c" || strings.HasPrefix(a, "--reporter") || strings.HasPrefix(a, "--config") {
+		if refusedPlaywrightArg(a) {
 			t.Fatalf("E2E_PLAYWRIGHT_ARGS: %s is not allowed (it could make a run that tested nothing pass, change the reporters this test reads, or run specs outside the guard)", a)
 		}
 	}
@@ -106,6 +106,17 @@ func TestBrowserFlows(t *testing.T) {
 			t.Errorf("could not run playwright (is `pnpm install` done?): %v", runErr)
 		}
 	}
+}
+
+// refusedPlaywrightArg reports whether an argument of E2E_PLAYWRIGHT_ARGS is refused: listing
+// instead of running, passing with no tests, another reporter, or another config (`-c path`,
+// `-cpath`, `-c=path`, `--config...`), which would run specs outside the guard's fixture.
+func refusedPlaywrightArg(a string) bool {
+	return strings.HasPrefix(a, "--list") ||
+		strings.HasPrefix(a, "--pass-with-no-tests") ||
+		strings.HasPrefix(a, "--reporter") ||
+		strings.HasPrefix(a, "--config") ||
+		strings.HasPrefix(a, "-c")
 }
 
 // testsRun counts the tests Playwright ran (expected, unexpected and flaky outcomes; skipped ones

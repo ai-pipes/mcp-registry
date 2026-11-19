@@ -71,7 +71,7 @@ test('an admin sees the menu, the call log with a call just made, and the audit 
   await dialog.getByRole('textbox', { name: strings.tokens.name }).fill('caller');
   await dialog.getByRole('button', { name: strings.tokens.submit }).click();
   const token = await dialog.getByRole('textbox', { name: strings.tokens.token }).inputValue();
-  guard.secret(token, 'the token of the call');
+  guard.secret(token, 'the token of the call', { page, method: 'POST', path: '/api/tokens' });
   // The dialog ignores Done while the token list is still being refreshed behind it (a UI quirk,
   // see the report): wait for the new row, which proves the refresh is done, then close.
   await expect(page.getByRole('row', { name: /caller/, includeHidden: true })).toBeVisible();

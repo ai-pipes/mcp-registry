@@ -24,7 +24,8 @@ test('a token and its connect command are shown once; afterwards only the prefix
   // Shown once, with the command that registers the gateway for an agent.
   await expect(dialog.getByText(t.shownOnce)).toBeVisible();
   const token = await dialog.getByRole('textbox', { name: t.token }).inputValue();
-  guard.secret(token, 'the token');
+  // The answer that created it is the one response allowed to carry it.
+  guard.secret(token, 'the token', { page, method: 'POST', path: '/api/tokens' });
   expect(token).toMatch(/^sk_[A-Za-z0-9_-]{20,}$/);
   const command = await dialog.getByRole('textbox', { name: t.connectCommand }).inputValue();
   guard.secret(command, 'the connect command');

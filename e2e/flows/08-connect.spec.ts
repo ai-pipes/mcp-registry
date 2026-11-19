@@ -23,9 +23,10 @@ test('Connect goes to the provider and back; the toast shows, the query string i
   // The answer to Connect is the provider's address and the page leaves for it at once: its body
   // is lost to that navigation by design (it is listed, and carries no secret).
   guard.allowLostBody(
+    page,
+    'POST',
     /^\/api\/connections\/[^/]+\/start$/,
     'the page navigates to the address the answer carries',
-    page,
   );
   const stacks = await getStacks();
   const base = stacks.samesite.baseURL;
