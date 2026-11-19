@@ -840,3 +840,56 @@ func TestOAuthProviderHandsOutRecordsEveryTokenAndDropClosesTheConnection(t *tes
 		}
 	}
 }
+
+func TestUpstreamSetResultAnswersAsGivenAndNilRestoresTheEcho(t *testing.T) {
+	u := fakes.StartUpstream(t, fakes.UpstreamOptions{Tools: fakes.Tools("a", "b")})
+	png := []byte("not-really-a-png")
+	u.SetResult("a", &mcp.CallToolResult{
+		Content:           []mcp.Content{&mcp.TextContent{Text: "hello"}, &mcp.ImageContent{Data: png, MIMEType: "image/png"}},
+		StructuredContent: map[string]any{"k": "v"},
+		IsError:           true,
+		Meta:              mcp.Meta{"vendor/trace": "t-1"},
+	})
+	sess := connect(t, u)
+	res, err := sess.CallTool(context.Background(), &mcp.CallToolParams{Name: "a", Arguments: map[string]any{"text": "ignored"}})
+	if err != nil {
+		t.Fatalf("call a: %v", err)
+	}
+	if !res.IsError || len(res.Content) != 2 || res.Meta["vendor/trace"] != "t-1" {
+		t.Fatalf("custom result: %+v", res)
+	}
+	if img, ok := res.Content[1].(*mcp.ImageContent); !ok || !bytes.Equal(img.Data, png) || img.MIMEType != "image/png" {
+		t.Fatalf("image block: %+v", res.Content[1])
+	}
+	if sc, _ := res.StructuredContent.(map[string]any); sc["k"] != "v" {
+		t.Fatalf("structuredContent: %v", res.StructuredContent)
+	}
+	// Another tool keeps echoing; the custom result is still recorded as a call.
+	other, err := sess.CallTool(context.Background(), &mcp.CallToolParams{Name: "b", Arguments: map[string]any{"text": "x"}})
+	if err != nil || other.IsError || other.Content[0].(*mcp.TextContent).Text != `{"text":"x"}` {
+		t.Fatalf("tool b: %+v %v", other, err)
+	}
+	if n := len(u.Calls()); n != 2 {
+		t.Fatalf("calls recorded: %d, want 2", n)
+	}
+	u.SetResult("a", nil)
+	back, err := sess.CallTool(context.Background(), &mcp.CallToolParams{Name: "a", Arguments: map[string]any{"text": "y"}})
+	if err != nil || back.IsError || back.Content[0].(*mcp.TextContent).Text != `{"text":"y"}` {
+		t.Fatalf("after nil: %+v %v", back, err)
+	}
+	u.SetResult("a", &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "again"}}})
+	u.Reset()
+	after, err := sess.CallTool(context.Background(), &mcp.CallToolParams{Name: "a", Arguments: map[string]any{"text": "z"}})
+	if err != nil || after.Content[0].(*mcp.TextContent).Text != `{"text":"z"}` {
+		t.Fatalf("Reset must clear custom results: %+v %v", after, err)
+	}
+}
+
+func TestUpstreamTakesLargeArguments(t *testing.T) {
+	u := fakes.StartUpstream(t, fakes.UpstreamOptions{Tools: fakes.Tools("echo")})
+	text := strings.Repeat("x", 6<<20) // above the SDK's own 4 MiB default
+	res, err := connect(t, u).CallTool(context.Background(), &mcp.CallToolParams{Name: "echo", Arguments: map[string]any{"text": text}})
+	if err != nil || res.IsError || len(res.Content[0].(*mcp.TextContent).Text) < 6<<20 {
+		t.Fatalf("a 6 MiB argument: %v", err)
+	}
+}

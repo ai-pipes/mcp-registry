@@ -525,7 +525,7 @@ func TestCatalogServers(t *testing.T) {
 		if got := catalogGet(t, admin, slug); got.ToolCount != 2 || got.syncedAt(t) != v.syncedAt(t) {
 			t.Fatalf("GET after create: toolCount %d, lastSyncAt %v vs %v", got.ToolCount, got.LastSyncAt, v.LastSyncAt)
 		}
-		entries := auditAll(t, admin)
+		entries := auditAll(t, s)
 		for _, action := range []string{"server.create", "server.sync"} {
 			if len(auditWhere(entries, action, func(e auditEntry) bool { return ptrIs(e.Target, slug) && ptrIs(e.ActorID, adminID) })) == 0 {
 				t.Errorf("no %s audit record for %s by the admin", action, slug)
@@ -1027,7 +1027,7 @@ func TestCatalogServers(t *testing.T) {
 		if v.LastSyncError == nil || *v.LastSyncError != catalogMsgUnreachable || v.LastSyncAt == nil || *v.LastSyncAt != *before.LastSyncAt || v.ToolCount != before.ToolCount {
 			t.Fatalf("an update touched the sync state: %+v vs %+v", v, before)
 		}
-		entries := auditWhere(auditAll(t, admin), "server.update", func(e auditEntry) bool { return ptrIs(e.Target, slug) })
+		entries := auditWhere(auditAll(t, s), "server.update", func(e auditEntry) bool { return ptrIs(e.Target, slug) })
 		if len(entries) != 1 || !ptrIs(entries[0].ActorID, adminID) {
 			t.Fatalf("server.update audit records: %+v", entries)
 		}

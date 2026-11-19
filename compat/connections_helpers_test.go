@@ -36,7 +36,6 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"net/url"
 	"slices"
@@ -101,7 +100,13 @@ func connLeakCheck(t *testing.T, s *harness.Stack, admin *harness.Client) {
 		if err := s.DB.QueryRow(context.Background(), "select coalesce(string_agg(action || ' ' || coalesce(target, '') || ' ' || coalesce(meta::text, ''), E'\\n'), '') from platform.audit_log").Scan(&table); err != nil {
 			t.Errorf("read audit_log: %v", err)
 		}
-		audit := table + mustJSON(t, auditAll(t, admin))
+		var page []auditEntry
+		if r := admin.Do(t, "GET", "/api/audit?limit=500", nil); r.Status == 200 {
+			r.JSON(t, "AuditList", &page)
+		} else {
+			t.Errorf("GET /api/audit: %d", r.Status)
+		}
+		audit := table + mustJSON(t, page)
 		for _, sec := range secrets {
 			if len(sec) < 6 {
 				t.Errorf("a noted secret is too short to be meaningful: %q", sec)
@@ -454,38 +459,11 @@ func connQuota(t *testing.T, s *harness.Stack, uid, slug string) int {
 	return countSQL(t, s, "select coalesce(sum(count), 0)::int from gateway.quota where user_id = $1::uuid and server = $2", uid, slug)
 }
 
-// connAudit returns the audit entries of the action about this person and server. It reads
-// platform.audit_log directly: GET /api/audit of the TypeScript image sorts by the text alias of
-// the id ("order by id" resolves to `id::text as id`), so beyond one page of 500 entries it
-// returns the wrong entries and skips others (see the report, finding "audit pagination"), and the
-// shared stack holds far more than 500 entries after a few runs. The shape of the API is
-// covered by the identity and catalog scenarios.
+// connAudit returns the audit entries of the action about this person and server, oldest first,
+// read through the shared auditRows (SQL; see auditAll for why not the API).
 func connAudit(t *testing.T, s *harness.Stack, action, uid, slug string) []auditEntry {
 	t.Helper()
-	rows, err := s.DB.Query(t.Context(), `select id::text, at::text, actor_id::text, action, target, meta::text
-		from platform.audit_log where action = $1 and actor_id = $2::uuid and target = $3 order by id`, action, uid, slug)
-	if err != nil {
-		t.Fatalf("select audit_log: %v", err)
-	}
-	defer rows.Close()
-	var out []auditEntry
-	for rows.Next() {
-		var e auditEntry
-		var meta *string
-		if err := rows.Scan(&e.ID, &e.At, &e.ActorID, &e.Action, &e.Target, &meta); err != nil {
-			t.Fatalf("scan audit_log: %v", err)
-		}
-		if meta != nil {
-			if err := json.Unmarshal([]byte(*meta), &e.Meta); err != nil {
-				t.Fatalf("audit meta %q: %v", *meta, err)
-			}
-		}
-		out = append(out, e)
-	}
-	if err := rows.Err(); err != nil {
-		t.Fatalf("audit_log rows: %v", err)
-	}
-	return out
+	return auditRows(t, s, "where action = $1 and actor_id = $2::uuid and target = $3 order by id", action, uid, slug)
 }
 
 func connExpectExpiredAudit(t *testing.T, s *harness.Stack, uid, slug, reason string, n int) {

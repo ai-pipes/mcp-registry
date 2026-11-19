@@ -362,7 +362,7 @@ func TestIdentityOIDC(t *testing.T) {
 	})
 
 	t.Run("a rejected code is invalid_state and audited; a provider outage is idp_unavailable and is not", func(t *testing.T) {
-		countFailed := func() int { return len(auditWhere(auditAll(t, admin), "auth.login_failed", nil)) }
+		countFailed := func() int { return len(auditWhere(auditAll(t, s), "auth.login_failed", nil)) }
 		before := countFailed()
 
 		// The provider answers the code exchange with an OAuth error (a code it never issued).
@@ -372,7 +372,7 @@ func TestIdentityOIDC(t *testing.T) {
 		q.Set("code", "forged-code")
 		u.RawQuery = q.Encode()
 		loginErr(t, a.Client.Do(t, "GET", u.String(), nil), "/?loginError=invalid_state")
-		failed := auditWhere(auditAll(t, admin), "auth.login_failed", func(e auditEntry) bool { return e.Meta["reason"] == "exchange_failed" })
+		failed := auditWhere(auditAll(t, s), "auth.login_failed", func(e auditEntry) bool { return e.Meta["reason"] == "exchange_failed" })
 		if len(failed) == 0 || failed[0].ActorID != nil || failed[0].Target != nil || len(failed[0].Meta) != 1 {
 			t.Fatalf("exchange_failed audit: %+v", failed)
 		}
@@ -445,7 +445,7 @@ func TestIdentityOIDC(t *testing.T) {
 		}
 		a := beginIDPLogin(t, s, idp, claims, "")
 		loginErr(t, a.callback(t), "/?loginError=disabled")
-		got := auditWhere(auditAll(t, admin), "auth.login_failed", func(e auditEntry) bool { return ptrIs(e.ActorID, id) })
+		got := auditWhere(auditAll(t, s), "auth.login_failed", func(e auditEntry) bool { return ptrIs(e.ActorID, id) })
 		if len(got) != 1 || got[0].Meta["reason"] != "disabled" || len(got[0].Meta) != 1 {
 			t.Fatalf("audit of the refused login: %+v", got)
 		}
@@ -472,7 +472,7 @@ func TestIdentityOIDC(t *testing.T) {
 		if r := c.Do(t, "GET", "/api/auth/me", nil); r.Status != 401 {
 			t.Fatalf("me after logout: %d", r.Status)
 		}
-		if got := auditWhere(auditAll(t, admin), "auth.logout", func(e auditEntry) bool { return ptrIs(e.ActorID, id) }); len(got) != 1 || got[0].Target != nil {
+		if got := auditWhere(auditAll(t, s), "auth.logout", func(e auditEntry) bool { return ptrIs(e.ActorID, id) }); len(got) != 1 || got[0].Target != nil {
 			t.Fatalf("logout audit: %+v", got)
 		}
 		if r := anon.Do(t, "POST", "/api/auth/logout", nil); r.Status != 204 {
@@ -501,7 +501,7 @@ func TestIdentityOIDC(t *testing.T) {
 
 	// Reads data produced by the earlier subtests: it must run as part of this parent test.
 	t.Run("the audit log has the documented login records and no secret", func(t *testing.T) {
-		entries := auditAll(t, admin)
+		entries := auditAll(t, s)
 		// OIDC logins carry the actor only; the admin of this test signed in with a link.
 		oidcLogins := auditWhere(entries, "auth.login", func(e auditEntry) bool { return e.Meta["via"] == nil })
 		if len(oidcLogins) == 0 {
@@ -821,7 +821,7 @@ func TestIdentityNoOIDC(t *testing.T) {
 	t.Run("a used, an expired, an unknown and a malformed code are indistinguishable", func(t *testing.T) {
 		sub := identityPerson(t, s, "indist")
 		id := identityUserID(t, s, sub)
-		failedBefore := len(auditWhere(auditAll(t, admin), "auth.login_failed", nil))
+		failedBefore := len(auditWhere(auditAll(t, s), "auth.login_failed", nil))
 
 		used := identityLinkFor(t, s, sub)
 		if r := identityPostLink(t, s.Anonymous(), used, identityForwarded(identityNextIP())); r.Status != 204 {
@@ -854,7 +854,7 @@ func TestIdentityNoOIDC(t *testing.T) {
 			}
 		}
 		// Only a link that was consumed and then refused (the expired one) is audited, with the person.
-		got := auditWhere(auditAll(t, admin), "auth.login_failed", nil)
+		got := auditWhere(auditAll(t, s), "auth.login_failed", nil)
 		if len(got) != failedBefore+1 || len(got) == 0 || got[0].Meta["reason"] != "invalid_link" || !ptrIs(got[0].ActorID, id) || got[0].Target != nil || len(got[0].Meta) != 1 {
 			t.Fatalf("audit of the refused links: %d records (before %d): %+v", len(got), failedBefore, got)
 		}
@@ -901,7 +901,7 @@ func TestIdentityNoOIDC(t *testing.T) {
 			t.Fatalf("another person's link: %d", r.Status)
 		}
 		leaked = append(leaked, otherCode)
-		if got := auditWhere(auditAll(t, admin), "auth.link_issued", func(e auditEntry) bool { return ptrIs(e.Target, id) }); len(got) != 3 || got[0].ActorID != nil || len(got[0].Meta) != 0 {
+		if got := auditWhere(auditAll(t, s), "auth.link_issued", func(e auditEntry) bool { return ptrIs(e.Target, id) }); len(got) != 3 || got[0].ActorID != nil || len(got[0].Meta) != 0 {
 			t.Fatalf("auth.link_issued records for the person: %+v", got)
 		}
 	})
@@ -916,7 +916,7 @@ func TestIdentityNoOIDC(t *testing.T) {
 		if r.Status != 403 || errorCode(t, r) != "disabled|account is disabled" || len(r.Header.Values("Set-Cookie")) != 0 {
 			t.Fatalf("disabled: %d %s", r.Status, r.Body)
 		}
-		got := auditWhere(auditAll(t, admin), "auth.login_failed", func(e auditEntry) bool { return ptrIs(e.ActorID, id) })
+		got := auditWhere(auditAll(t, s), "auth.login_failed", func(e auditEntry) bool { return ptrIs(e.ActorID, id) })
 		if len(got) != 1 || got[0].Meta["reason"] != "disabled" || len(got[0].Meta) != 1 {
 			t.Fatalf("audit: %+v", got)
 		}
@@ -1005,7 +1005,7 @@ func TestIdentityNoOIDC(t *testing.T) {
 			t.Fatalf("the new session is not bob's: %+v", me)
 		}
 		// The replaced session's end is a logout in the audit log.
-		if got := auditWhere(auditAll(t, admin), "auth.logout", func(e auditEntry) bool { return ptrIs(e.ActorID, identityUserID(t, s, ann)) }); len(got) != 1 {
+		if got := auditWhere(auditAll(t, s), "auth.logout", func(e auditEntry) bool { return ptrIs(e.ActorID, identityUserID(t, s, ann)) }); len(got) != 1 {
 			t.Fatalf("auth.logout records of the replaced session: %+v", got)
 		}
 	})
@@ -1210,11 +1210,11 @@ func TestIdentityNoOIDC(t *testing.T) {
 			t.Fatalf("revoking twice: %d", r.Status)
 		}
 		ownerID := identityUserID(t, s, ownerSub)
-		got := auditWhere(auditAll(t, admin), "token.revoke", func(e auditEntry) bool { return ptrIs(e.Target, id) })
+		got := auditWhere(auditAll(t, s), "token.revoke", func(e auditEntry) bool { return ptrIs(e.Target, id) })
 		if len(got) != 1 || !ptrIs(got[0].ActorID, ownerID) || len(got[0].Meta) != 0 {
 			t.Fatalf("token.revoke audit: %+v", got)
 		}
-		created := auditWhere(auditAll(t, admin), "token.create", func(e auditEntry) bool { return ptrIs(e.Target, id) })
+		created := auditWhere(auditAll(t, s), "token.create", func(e auditEntry) bool { return ptrIs(e.Target, id) })
 		if len(created) != 1 || !ptrIs(created[0].ActorID, ownerID) || len(created[0].Meta) != 2 || created[0].Meta["name"] != "laptop" || created[0].Meta["prefix"] != token[:10] {
 			t.Fatalf("token.create audit: %+v", created)
 		}
@@ -1284,7 +1284,7 @@ func TestIdentityNoOIDC(t *testing.T) {
 		if !listed {
 			t.Fatal("the person is not listed as disabled")
 		}
-		got := auditWhere(auditAll(t, admin), "user.disable", func(e auditEntry) bool { return ptrIs(e.Target, id) })
+		got := auditWhere(auditAll(t, s), "user.disable", func(e auditEntry) bool { return ptrIs(e.Target, id) })
 		if len(got) != 1 || got[0].ActorID == nil || got[0].Meta["disabled"] != true || len(got[0].Meta) != 1 {
 			t.Fatalf("user.disable audit: %+v", got)
 		}
@@ -1306,7 +1306,7 @@ func TestIdentityNoOIDC(t *testing.T) {
 		if me := whoami(t, fresh); me.UserID != id {
 			t.Fatalf("me: %+v", me)
 		}
-		again := auditWhere(auditAll(t, admin), "user.disable", func(e auditEntry) bool { return ptrIs(e.Target, id) && e.Meta["disabled"] == false })
+		again := auditWhere(auditAll(t, s), "user.disable", func(e auditEntry) bool { return ptrIs(e.Target, id) && e.Meta["disabled"] == false })
 		if len(again) != 1 {
 			t.Fatalf("the enabling is not audited: %+v", again)
 		}
@@ -1505,7 +1505,7 @@ func TestIdentityNoOIDC(t *testing.T) {
 
 	// Reads data produced by the earlier subtests: it must run as part of this parent test.
 	t.Run("the audit log and the app log hold no link code, token or session id", func(t *testing.T) {
-		entries := auditAll(t, admin)
+		entries := auditAll(t, s)
 		all := mustJSON(t, entries)
 		logs := s.Logs(t)
 		for _, secret := range leaked {

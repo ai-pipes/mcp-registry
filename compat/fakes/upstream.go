@@ -58,6 +58,7 @@ type Upstream struct {
 	rejectCode  int
 	rejectMsg   string
 	rejecting   bool
+	results     map[string]*mcp.CallToolResult
 	calls       []Call
 	requests    []Request
 	listReqs    int
@@ -69,8 +70,9 @@ func StartUpstream(t *testing.T, o UpstreamOptions) *Upstream {
 	t.Helper()
 	u := &Upstream{tools: append([]Tool(nil), o.Tools...), pageSize: o.PageSize, require: o.RequireHeader}
 	u.sdk = mcp.NewStreamableHTTPHandler(u.newServer, &mcp.StreamableHTTPOptions{
-		Stateless:                  true, // every request sees the current tools
-		DisableLocalhostProtection: true, // the Host is host.docker.internal
+		Stateless:                  true,           // every request sees the current tools
+		DisableLocalhostProtection: true,           // the Host is host.docker.internal
+		MaxRequestBodyBytes:        maxRequestBody, // large tool arguments are the gateway's to limit, not the fake's
 	})
 	port := serve(t, u)
 	u.URL = baseURL(port) + "/mcp"
@@ -112,6 +114,22 @@ func (u *Upstream) RejectCalls(code int, msg string) {
 	u.set(func() { u.rejecting, u.rejectCode, u.rejectMsg = true, code, msg })
 }
 
+// SetResult makes tools/call of the named tool answer with result as it is (content blocks,
+// structuredContent, isError, _meta) instead of echoing the arguments. A nil result restores the
+// echo. Reset clears every custom result.
+func (u *Upstream) SetResult(tool string, result *mcp.CallToolResult) {
+	u.set(func() {
+		if result == nil {
+			delete(u.results, tool)
+			return
+		}
+		if u.results == nil {
+			u.results = map[string]*mcp.CallToolResult{}
+		}
+		u.results[tool] = result
+	})
+}
+
 // Calls returns the tools/call requests received since the start or the last Reset.
 func (u *Upstream) Calls() []Call {
 	u.mu.Lock()
@@ -144,6 +162,7 @@ func (u *Upstream) Reset() {
 	u.set(func() {
 		u.failStatus, u.redirectTo, u.delay, u.respondSize, u.chunked = 0, "", 0, 0, false
 		u.rejecting, u.rejectCode, u.rejectMsg = false, 0, ""
+		u.results = nil
 		u.calls, u.requests, u.listReqs = nil, nil, 0
 	})
 }
@@ -290,6 +309,12 @@ func (u *Upstream) newServer(*http.Request) *mcp.Server {
 }
 
 func (u *Upstream) handleCall(_ context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	u.mu.Lock()
+	custom := u.results[req.Params.Name]
+	u.mu.Unlock()
+	if custom != nil {
+		return custom, nil
+	}
 	args := req.Params.Arguments
 	if len(args) == 0 {
 		args = json.RawMessage("{}")

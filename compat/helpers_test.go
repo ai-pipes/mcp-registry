@@ -160,28 +160,62 @@ type auditEntry struct {
 	Meta    map[string]any `json:"meta"`
 }
 
-// auditAll reads the whole audit log as admin (newest first), page by page.
-func auditAll(t *testing.T, admin *harness.Client) []auditEntry {
+// auditRows runs a select over platform.audit_log (id, at, actor_id, action, target, meta, in that
+// order) and returns the entries in the order of the query.
+func auditRows(t *testing.T, s *harness.Stack, tail string, args ...any) []auditEntry {
 	t.Helper()
-	var all []auditEntry
-	before := ""
-	for {
-		path := "/api/audit?limit=500"
-		if before != "" {
-			path += "&before=" + before
-		}
-		r := admin.Do(t, "GET", path, nil)
-		if r.Status != 200 {
-			t.Fatalf("GET %s: %d %s", path, r.Status, r.Body)
-		}
-		var page []auditEntry
-		r.JSON(t, "AuditList", &page)
-		all = append(all, page...)
-		if len(page) < 500 {
-			return all
-		}
-		before = page[len(page)-1].ID
+	rows, err := s.DB.Query(t.Context(), `select id::text, to_char(at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+		actor_id::text, action, target, meta::text from platform.audit_log `+tail, args...)
+	if err != nil {
+		t.Fatalf("select audit_log: %v", err)
 	}
+	defer rows.Close()
+	var out []auditEntry
+	for rows.Next() {
+		var e auditEntry
+		var meta *string
+		if err := rows.Scan(&e.ID, &e.At, &e.ActorID, &e.Action, &e.Target, &meta); err != nil {
+			t.Fatalf("scan audit_log: %v", err)
+		}
+		if meta != nil {
+			if err := json.Unmarshal([]byte(*meta), &e.Meta); err != nil {
+				t.Fatalf("audit meta %q: %v", *meta, err)
+			}
+		}
+		out = append(out, e)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("audit_log rows: %v", err)
+	}
+	return out
+}
+
+// auditAll returns the whole audit log, newest first. It reads platform.audit_log through SQL:
+// GET /api/audit of the TypeScript image sorts by the text form of the id, so once ids reach two
+// digits its order and paging are wrong (a defect of the image, not a contract; see the report of
+// gateway_test.go), and a scenario that needs completeness cannot rely on it. The shape and the
+// rules of the endpoint itself are covered by TestGatewayAuditAPI; auditViaAPI is for that test.
+func auditAll(t *testing.T, s *harness.Stack) []auditEntry {
+	t.Helper()
+	return auditRows(t, s, "order by id desc")
+}
+
+// auditViaAPI reads the audit log as admin through GET /api/audit?limit=500, one page. It is for
+// scenarios about the endpoint on a stack whose whole trail fits in one page: it fails when the
+// page is full, because then it could be incomplete. The order of the entries is the endpoint's
+// own and is never asserted on.
+func auditViaAPI(t *testing.T, admin *harness.Client) []auditEntry {
+	t.Helper()
+	r := admin.Do(t, "GET", "/api/audit?limit=500", nil)
+	if r.Status != 200 {
+		t.Fatalf("GET /api/audit?limit=500: %d %s", r.Status, r.Body)
+	}
+	var page []auditEntry
+	r.JSON(t, "AuditList", &page)
+	if len(page) >= 500 {
+		t.Fatal("the audit trail does not fit in one page of 500: use a fresh stack or auditAll")
+	}
+	return page
 }
 
 // auditWhere returns the entries with that action for which keep is true (nil keeps all).
