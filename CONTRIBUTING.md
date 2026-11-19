@@ -29,6 +29,23 @@ bash scripts/e2e-image.sh    # Playwright against the built image (pnpm exec pla
 - **Changelog.** A change an operator can see (a setting, a CLI command, an upgrade step, a changed default, a fix they would notice) adds a line to `CHANGELOG.md` in the same pull request.
 - Keep docs in step: a new module, term, command or environment variable updates `CLAUDE.md`, `README.md` and `.env.example` in the same PR.
 
+## Go rewrite and the compatibility suite
+
+The Go server is being built beside the TypeScript one; `compat/` is the Go black-box suite both must satisfy (details in [CLAUDE.md](./CLAUDE.md), "Go rewrite").
+
+```sh
+make go-verify              # Go lint, architecture rules, vet, unit tests (CI job `go`)
+make compat-image-ts        # builds mcp-registry:compat-ts from this tree
+make compat                 # the suite against that image (needs Docker, 7-8 minutes; CI job `compat`)
+make compat-selfcheck       # proves the suite fails on a deliberately broken image (daily in CI)
+```
+
+- Run against another image with `COMPAT_IMAGE` (and `COMPAT_CLI` for its CLI invocation). To keep the app log of failed tests, set `COMPAT_LOG_DIR=<dir>`; `COMPAT_APP_ENV=NAME=value,...` adds non-secret variables to the app container.
+- **A scenario changes only together with confirmation against the 1.0.0 TypeScript image.** Never edit a scenario or a golden to make the Go server pass; if the Go server differs, the Go server is wrong unless the owner decides otherwise.
+- Goldens are rewritten only against the TypeScript reference image: `COMPAT_REFERENCE=1 go test -tags compat ./compat/ -run '<the test that owns it>' -update` (`-update` is refused without `COMPAT_REFERENCE=1`, and it rewrites every golden of the tests it runs, so restrict it with `-run`).
+- The search golden is per architecture (`compat/golden/search-arm64.json`, `search-amd64.json`). `make compat-record-search` records the one for your machine; for the other architecture run the `compat-record` workflow (`gh workflow run compat-record`), download its artifact and commit the file. Until `search-amd64.json` exists, the amd64 entry of the CI job `compat` is skipped with a notice.
+- A new check in the suite should have a matching distortion in `compat/selfcheck` when it guards a property a broken server could plausibly lose.
+
 ## Releasing
 
 1. Rehearse: `gh workflow run release --ref <branch>` (once the workflow file with the `workflow_dispatch` trigger is on `main`) and wait for a green result. A pull request that touches the release path (workflow, Dockerfile, compose files, smoke scripts, lockfile, the version in `apps/server/package.json`, `CHANGELOG.md`) rehearses automatically. A rehearsal builds and tests everything (both architectures, both smoke tests) but never publishes and needs no secrets.

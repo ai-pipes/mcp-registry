@@ -61,6 +61,8 @@ type Options struct {
 	// the old image first). Empty = the environment variable, then the default.
 	Image string
 	CLI   string
+
+	testName string // set by Start, StartExpectingExit and Shared: names the log file of COMPAT_LOG_DIR
 }
 
 // Stack is a running app container with its Postgres.
@@ -84,11 +86,12 @@ type Stack struct {
 // removed through t.Cleanup, also when the boot fails.
 func Start(t *testing.T, o Options) *Stack {
 	t.Helper()
+	o.testName = t.Name()
 	s, err := boot(o, false)
 	if err != nil {
 		t.Fatalf("start stack: %v", err)
 	}
-	t.Cleanup(s.teardown)
+	t.Cleanup(func() { s.finish(t.Name(), t.Failed()) })
 	return s
 }
 
@@ -96,11 +99,12 @@ func Start(t *testing.T, o Options) *Stack {
 // healthy or keeps running. It returns the exit code and the container's logs, then cleans up.
 func StartExpectingExit(t *testing.T, o Options) (code int, logs string) {
 	t.Helper()
+	o.testName = t.Name()
 	s, err := boot(o, true)
 	if err != nil {
 		t.Fatalf("start stack: %v", err)
 	}
-	t.Cleanup(s.teardown)
+	t.Cleanup(func() { s.finish(t.Name(), t.Failed()) })
 	code, logs, err = s.awaitExit()
 	if err != nil {
 		t.Fatalf("expected the app to exit: %v", err)
@@ -124,7 +128,7 @@ func Shared(t *testing.T) *Stack {
 		t.Fatalf("shared stack failed to boot earlier: %v", sharedErr)
 	}
 	if sharedStack == nil {
-		s, err := boot(Options{}, false)
+		s, err := boot(Options{testName: t.Name()}, false)
 		if err != nil {
 			sharedErr = err
 			t.Fatalf("shared stack: %v", err)
@@ -141,7 +145,7 @@ func Main(m *testing.M) {
 	code := m.Run()
 	sharedMu.Lock()
 	if sharedStack != nil {
-		sharedStack.teardown()
+		sharedStack.finish("shared", code != 0)
 	}
 	sharedMu.Unlock()
 	removeByLabel("compat.session=" + session)
@@ -216,7 +220,7 @@ func boot(o Options, expectExit bool) (s *Stack, err error) {
 	s = &Stack{id: randomHex(4), cli: cli, image: image}
 	defer func() {
 		if err != nil {
-			s.teardown()
+			s.finish(o.testName, true) // a failed boot always keeps the app log (when COMPAT_LOG_DIR is set)
 		}
 	}()
 	if s.port, err = freePort(); err != nil {
@@ -244,6 +248,13 @@ func boot(o Options, expectExit bool) (s *Stack, err error) {
 	}
 	if o.OIDC != nil {
 		s.env["OIDC_ISSUER"], s.env["OIDC_CLIENT_ID"], s.env["OIDC_CLIENT_SECRET"] = o.OIDC.OIDCSettings()
+	}
+	extra, perr := appEnv()
+	if perr != nil {
+		return s, perr
+	}
+	for k, v := range extra {
+		s.env[k] = v
 	}
 	for k, v := range o.Env {
 		s.env[k] = v
@@ -518,6 +529,14 @@ func (s *Stack) Logs(t *testing.T) string {
 		t.Fatalf("docker logs: %v", err)
 	}
 	return out
+}
+
+// finish saves the app log when the test failed (see saveLog), then tears the stack down.
+func (s *Stack) finish(testName string, failed bool) {
+	if failed {
+		s.saveLog(testName)
+	}
+	s.teardown()
 }
 
 // teardown removes this stack's containers and network (by label) and closes the pool; it is
