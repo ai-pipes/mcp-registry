@@ -54,6 +54,10 @@ type TokenRequest struct {
 	Authorization string     // the Authorization header as sent
 	Form          url.Values // the parsed form body
 	Body          string     // the raw body
+	// AccessToken is the access token the answer to this request handed out ("" if it handed none:
+	// an error, a drop, a hang). Concurrent requests may be answered in any order, so a test reads
+	// the token that answered a request here instead of assuming it from the order.
+	AccessToken string
 }
 
 // BasicAuth decodes the Authorization header as RFC 6749 section 2.3.1 says (base64, split at the
@@ -232,6 +236,7 @@ func (p *OAuthProvider) token(w http.ResponseWriter, r *http.Request) {
 	req := TokenRequest{GrantType: form.Get("grant_type"), Authorization: r.Header.Get("Authorization"), Form: form, Body: raw}
 	p.mu.Lock()
 	p.requests = append(p.requests, req)
+	idx := len(p.requests) - 1
 	p.mu.Unlock()
 	if !p.clientOK(r) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid_client"})
@@ -241,7 +246,7 @@ func (p *OAuthProvider) token(w http.ResponseWriter, r *http.Request) {
 	case "authorization_code":
 		p.codeGrant(w, form)
 	case "refresh_token":
-		p.refreshGrant(w, r, form)
+		p.refreshGrant(w, r, form, idx)
 	default:
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported_grant_type"})
 	}
@@ -273,7 +278,7 @@ func (p *OAuthProvider) codeGrant(w http.ResponseWriter, form url.Values) {
 
 // refreshGrant checks that the presented refresh token is one this provider issued and that is
 // still current; only then a scripted step (if any) decides the answer.
-func (p *OAuthProvider) refreshGrant(w http.ResponseWriter, r *http.Request, form url.Values) {
+func (p *OAuthProvider) refreshGrant(w http.ResponseWriter, r *http.Request, form url.Values, idx int) {
 	presented := form.Get("refresh_token")
 	p.mu.Lock()
 	if !p.refreshes[presented] {
@@ -316,13 +321,15 @@ func (p *OAuthProvider) refreshGrant(w http.ResponseWriter, r *http.Request, for
 		}
 	case Drop:
 		conn, _, err := http.NewResponseController(w).Hijack()
-		if err == nil {
-			_ = conn.Close()
+		if err != nil {
+			// Without a hijack a plain return would send an empty 200: abort the connection instead.
+			panic(http.ErrAbortHandler)
 		}
+		_ = conn.Close()
 	case Ok:
-		p.hand(writeToken(w, s))
+		p.hand(idx, writeToken(w, s))
 	default:
-		p.hand(writeToken(w, Ok{}))
+		p.hand(idx, writeToken(w, Ok{}))
 	}
 }
 
@@ -339,10 +346,13 @@ func writeToken(w http.ResponseWriter, o Ok) []string {
 	return out
 }
 
-func (p *OAuthProvider) hand(tokens []string) {
+func (p *OAuthProvider) hand(idx int, tokens []string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.handed = append(p.handed, tokens...)
+	if len(tokens) > 0 {
+		p.requests[idx].AccessToken = tokens[0] // writeToken lists the access token first
+	}
 }
 
 func tokenBody(o Ok) map[string]any {

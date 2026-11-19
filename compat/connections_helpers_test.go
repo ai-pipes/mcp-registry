@@ -33,8 +33,10 @@ package compat_test
 //     rules are asserted through the text and outcome call_tool gives the agent.
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"slices"
@@ -94,7 +96,12 @@ func connLeakCheck(t *testing.T, s *harness.Stack, admin *harness.Client) {
 			return
 		}
 		logs := s.Logs(t)
-		audit := mustJSON(t, auditAll(t, admin))
+		// The whole table, read from the database (see connAudit), plus what the API shows.
+		var table string
+		if err := s.DB.QueryRow(context.Background(), "select coalesce(string_agg(action || ' ' || coalesce(target, '') || ' ' || coalesce(meta::text, ''), E'\\n'), '') from platform.audit_log").Scan(&table); err != nil {
+			t.Errorf("read audit_log: %v", err)
+		}
+		audit := table + mustJSON(t, auditAll(t, admin))
 		for _, sec := range secrets {
 			if len(sec) < 6 {
 				t.Errorf("a noted secret is too short to be meaningful: %q", sec)
@@ -447,15 +454,43 @@ func connQuota(t *testing.T, s *harness.Stack, uid, slug string) int {
 	return countSQL(t, s, "select coalesce(sum(count), 0)::int from gateway.quota where user_id = $1::uuid and server = $2", uid, slug)
 }
 
-// connAudit returns the audit entries of the action about this person and server.
-func connAudit(t *testing.T, admin *harness.Client, action, uid, slug string) []auditEntry {
+// connAudit returns the audit entries of the action about this person and server. It reads
+// platform.audit_log directly: GET /api/audit of the TypeScript image sorts by the text alias of
+// the id ("order by id" resolves to `id::text as id`), so beyond one page of 500 entries it
+// returns the wrong entries and skips others (see the report, finding "audit pagination"), and the
+// shared stack holds far more than 500 entries after a few runs. The shape of the API is
+// covered by the identity and catalog scenarios.
+func connAudit(t *testing.T, s *harness.Stack, action, uid, slug string) []auditEntry {
 	t.Helper()
-	return auditWhere(auditAll(t, admin), action, func(e auditEntry) bool { return ptrIs(e.ActorID, uid) && ptrIs(e.Target, slug) })
+	rows, err := s.DB.Query(t.Context(), `select id::text, at::text, actor_id::text, action, target, meta::text
+		from platform.audit_log where action = $1 and actor_id = $2::uuid and target = $3 order by id`, action, uid, slug)
+	if err != nil {
+		t.Fatalf("select audit_log: %v", err)
+	}
+	defer rows.Close()
+	var out []auditEntry
+	for rows.Next() {
+		var e auditEntry
+		var meta *string
+		if err := rows.Scan(&e.ID, &e.At, &e.ActorID, &e.Action, &e.Target, &meta); err != nil {
+			t.Fatalf("scan audit_log: %v", err)
+		}
+		if meta != nil {
+			if err := json.Unmarshal([]byte(*meta), &e.Meta); err != nil {
+				t.Fatalf("audit meta %q: %v", *meta, err)
+			}
+		}
+		out = append(out, e)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("audit_log rows: %v", err)
+	}
+	return out
 }
 
-func connExpectExpiredAudit(t *testing.T, admin *harness.Client, uid, slug, reason string, n int) {
+func connExpectExpiredAudit(t *testing.T, s *harness.Stack, uid, slug, reason string, n int) {
 	t.Helper()
-	got := connAudit(t, admin, "connection.expired", uid, slug)
+	got := connAudit(t, s, "connection.expired", uid, slug)
 	if len(got) != n {
 		t.Fatalf("connection.expired audit records for %s: %d, want %d (%+v)", slug, len(got), n, got)
 	}
@@ -494,11 +529,6 @@ func connAuths(up *fakes.Upstream, header string) []string {
 	return out
 }
 
-// connCallRequests is how many HTTP requests one successful call_tool makes at the upstream
-// (initialize, notifications/initialized, one request without a JSON-RPC method, tools/call). A
-// refused attempt is exactly one request: the 401 arrives at the session handshake.
-const connCallRequests = 4
-
 // connRequestHeaders returns the header of every HTTP request the upstream received, refused ones
 // included, oldest first and not folded: counts matter.
 func connRequestHeaders(up *fakes.Upstream, header string) []string {
@@ -509,29 +539,36 @@ func connRequestHeaders(up *fakes.Upstream, header string) []string {
 	return out
 }
 
-func connRepeat(v string, n int) []string {
-	out := make([]string, n)
-	for i := range out {
-		out[i] = v
+// connExpectOneCallWith asserts what any correct exchange with the upstream looks like, whatever
+// MCP client library makes it: at least one request, every request carries the credential, and
+// exactly one tools/call was made (a retry of a successful call, or a second attempt, would make two).
+// The number and the JSON-RPC methods of the other requests belong to the client library, not to
+// the product, and are never pinned.
+func connExpectOneCallWith(t *testing.T, what string, up *fakes.Upstream, header, want string) {
+	t.Helper()
+	connExpectEveryRequestWith(t, what, up, header, want)
+	if calls := connAuths(up, header); len(calls) != 1 || calls[0] != want {
+		t.Fatalf("%s: tools/call credentials %v, want exactly one carrying the credential", what, redactAll(calls))
 	}
-	return out
 }
 
-// connSuccessfulCall asserts that the upstream's requests since its Reset are exactly those of
-// the given credential values (each value for connCallRequests requests), in order.
-func connExpectCallsWith(t *testing.T, what string, up *fakes.Upstream, header string, values ...string) {
+// connExpectRefusedThenRefreshed asserts a refusal followed by one retry: the first request is the
+// refused attempt and carries the old credential (a 401 ends any client's exchange, so a refused
+// attempt is exactly one request); every later request carries the refreshed one (none the old
+// one, none without a credential); exactly one tools/call was made, with the refreshed credential.
+func connExpectRefusedThenRefreshed(t *testing.T, up *fakes.Upstream, header, old, fresh string) {
 	t.Helper()
-	var want []string
-	for _, v := range values {
-		want = append(want, connRepeat(v, connCallRequests)...)
+	got := connRequestHeaders(up, header)
+	if len(got) < 2 || got[0] != old {
+		t.Fatalf("requests carried %v, want the refused attempt with the old credential first and the retry after it", redactAll(got))
 	}
-	connEqual(t, what, connRequestHeaders(up, header), want)
-	methods := map[string]int{}
-	for _, r := range up.Requests() {
-		methods[r.Method]++
+	for i, v := range got[1:] {
+		if v != fresh {
+			t.Fatalf("request %d after the refusal carried %q, want the refreshed credential %q", i+1, harness.Redact(v), harness.Redact(fresh))
+		}
 	}
-	if methods["initialize"] != len(values) || methods["tools/call"] != len(values) {
-		t.Fatalf("%s: requests by method %v, want %d initialize and %d tools/call", what, methods, len(values), len(values))
+	if calls := connAuths(up, header); len(calls) != 1 || calls[0] != fresh {
+		t.Fatalf("tools/call credentials %v, want exactly one, with the refreshed credential", redactAll(calls))
 	}
 }
 

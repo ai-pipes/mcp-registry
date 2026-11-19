@@ -825,6 +825,10 @@ func TestOAuthProviderHandsOutRecordsEveryTokenAndDropClosesTheConnection(t *tes
 	if status, _ := refresh(t, p, "ref-1"); status != 503 {
 		t.Fatalf("the step after Drop: %d", status)
 	}
+	// The request records the access token that answered it (none for a drop or an error).
+	if reqs := p.Requests(); reqs[1].AccessToken != "acc-1" || reqs[2].AccessToken != "" || reqs[3].AccessToken != "" {
+		t.Fatalf("access tokens that answered the requests: %q %q %q", reqs[1].AccessToken, reqs[2].AccessToken, reqs[3].AccessToken)
+	}
 	got := p.HandedOut()
 	want := []string{issued.AccessToken, issued.RefreshToken, "acc-1", "ref-1"}
 	if len(got) != len(want) {

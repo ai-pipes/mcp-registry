@@ -113,7 +113,7 @@ func TestConnectionsRefresh(t *testing.T) {
 		if got := connStatus(t, p.c, env.slug); got != "expired" {
 			t.Fatalf("status: %q", got)
 		}
-		connExpectExpiredAudit(t, admin, p.id, env.slug, "token_expired", 1)
+		connExpectExpiredAudit(t, s, p.id, env.slug, "token_expired", 1)
 		if outcomes := connOutcomes(t, admin, p.id, env.slug); !slices.Equal(outcomes, []string{"ok", "denied:expired"}) {
 			t.Fatalf("call log: %v", outcomes)
 		}
@@ -137,7 +137,7 @@ func TestConnectionsRefresh(t *testing.T) {
 		if n := len(env.up.Requests()); n != 0 {
 			t.Fatalf("the upstream saw %d request(s) from an expired connection", n)
 		}
-		connExpectExpiredAudit(t, admin, p.id, env.slug, "refresh_rejected", 1)
+		connExpectExpiredAudit(t, s, p.id, env.slug, "refresh_rejected", 1)
 
 		// Reconnecting is what helps: a new row, ready, serving calls with the new token.
 		issued := connConnect(t, env, p.c)
@@ -185,7 +185,7 @@ func TestConnectionsRefreshFailures(t *testing.T) {
 			if outcomes := connOutcomes(t, admin, p.id, env.slug); !slices.Equal(outcomes, []string{"denied:expired"}) {
 				t.Fatalf("call log: %v", outcomes)
 			}
-			connExpectExpiredAudit(t, admin, p.id, env.slug, "refresh_rejected", 1)
+			connExpectExpiredAudit(t, s, p.id, env.slug, "refresh_rejected", 1)
 			// Not refreshed again.
 			n := len(env.provider.Requests())
 			connExpectText(t, "second call", p.call(t, env), connTextExpired(s, env.slug))
@@ -236,7 +236,7 @@ func TestConnectionsRefreshFailures(t *testing.T) {
 			if got := connStatus(t, p.c, env.slug); got != "ready" {
 				t.Fatalf("status: %q", got)
 			}
-			if n := len(connAudit(t, admin, "connection.expired", p.id, env.slug)); n != 0 {
+			if n := len(connAudit(t, s, "connection.expired", p.id, env.slug)); n != 0 {
 				t.Fatalf("%d connection.expired record(s) for an outage", n)
 			}
 			if outcomes := connOutcomes(t, admin, p.id, env.slug); !slices.Equal(outcomes, []string{"ok", "transport_error"}) {
@@ -283,7 +283,7 @@ func TestConnectionsRefreshFailures(t *testing.T) {
 			if got := connStatus(t, p.c, env.slug); got != "ready" {
 				t.Fatalf("status: %q", got)
 			}
-			if n := len(connAudit(t, admin, "connection.expired", p.id, env.slug)); n != 0 {
+			if n := len(connAudit(t, s, "connection.expired", p.id, env.slug)); n != 0 {
 				t.Fatalf("%d connection.expired record(s)", n)
 			}
 			if outcomes := connOutcomes(t, admin, p.id, env.slug); !slices.Equal(outcomes, []string{"transport_error"}) {
@@ -334,7 +334,7 @@ func TestConnectionsRefreshFailures(t *testing.T) {
 		if got := connStatus(t, p.c, env.slug); got != "ready" {
 			t.Fatalf("status: %q", got)
 		}
-		if n := len(connAudit(t, admin, "connection.expired", p.id, env.slug)); n != 0 {
+		if n := len(connAudit(t, s, "connection.expired", p.id, env.slug)); n != 0 {
 			t.Fatalf("%d connection.expired record(s) for a timeout", n)
 		}
 	})
@@ -432,21 +432,27 @@ func TestConnectionsSingleFlight(t *testing.T) {
 				t.Fatalf("token %s used %d times, want 7", harness.Redact(h), n)
 			}
 		}
-		// Attribution: each person's refresh got the token scripted for its place in the provider's
-		// order, and a sequential call per person now carries exactly that person's own token.
-		order := connRefreshTokens(env.provider)[before:]
+		// Attribution: the provider records which access token answered each refresh request (they
+		// may be answered in any order), and a sequential call per person now carries exactly the
+		// token that answered that person's own refresh.
+		answered := map[string]string{} // refresh token presented -> access token handed out
+		for _, r := range env.provider.Requests() {
+			if r.GrantType == "refresh_token" && slices.Contains(scripted, r.AccessToken) {
+				answered[r.Form.Get("refresh_token")] = r.AccessToken
+			}
+		}
 		for _, who := range []struct {
 			name    string
 			p       connPerson
 			refresh string
 		}{{"A", a, issuedA.RefreshToken}, {"B", b, issuedB.RefreshToken}, {"C", c, issuedC.RefreshToken}} {
-			i := slices.Index(order, who.refresh)
-			if i < 0 {
-				t.Fatalf("%s's refresh token was never presented", who.name)
+			tok, ok := answered[who.refresh]
+			if !ok {
+				t.Fatalf("%s's refresh token was never answered with a scripted token", who.name)
 			}
 			env.up.Reset()
 			connExpectOK(t, who.name+"'s sequential call", who.p.call(t, env))
-			connExpectCallsWith(t, who.name+"'s credential at the upstream", env.up, "Authorization", "Bearer "+scripted[i])
+			connExpectOneCallWith(t, who.name+"'s credential at the upstream", env.up, "Authorization", "Bearer "+tok)
 		}
 	})
 }
@@ -468,11 +474,7 @@ func TestConnectionsUpstreamRejectsTheToken(t *testing.T) {
 		requests := len(env.provider.Requests())
 
 		connExpectOK(t, "call", p.call(t, env))
-		// Raw request counts: a refused attempt is exactly one request (the 401 arrives at the
-		// handshake), so the old token was offered once, and the retry is exactly one successful call.
-		connEqual(t, "credentials the upstream was offered, one per request",
-			connRequestHeaders(env.up, "Authorization"),
-			append(connBearer(issued.AccessToken), connRepeat("Bearer acc-fresh-1", connCallRequests)...))
+		connExpectRefusedThenRefreshed(t, env.up, "Authorization", "Bearer "+issued.AccessToken, "Bearer acc-fresh-1")
 		reqs := env.provider.Requests()[requests:]
 		if len(reqs) != 1 || reqs[0].GrantType != "refresh_token" || reqs[0].Form.Get("refresh_token") != issued.RefreshToken {
 			t.Fatalf("token requests: %+v, want one refresh with the issued refresh token", reqs)
@@ -486,7 +488,7 @@ func TestConnectionsUpstreamRejectsTheToken(t *testing.T) {
 		// The refreshed token is now the one in use: no more refreshes.
 		env.up.Reset()
 		connExpectOK(t, "second call", p.call(t, env))
-		connExpectCallsWith(t, "second call credential", env.up, "Authorization", "Bearer acc-fresh-1")
+		connExpectOneCallWith(t, "second call credential", env.up, "Authorization", "Bearer acc-fresh-1")
 		if n := len(env.provider.Requests()) - requests; n != 1 {
 			t.Fatalf("%d token requests after two calls, want 1", n)
 		}
@@ -515,7 +517,7 @@ func TestConnectionsUpstreamRejectsTheToken(t *testing.T) {
 		if got := connStatus(t, p.c, env.slug); got != "expired" {
 			t.Fatalf("status: %q", got)
 		}
-		connExpectExpiredAudit(t, admin, p.id, env.slug, "rejected_upstream", 1)
+		connExpectExpiredAudit(t, s, p.id, env.slug, "rejected_upstream", 1)
 		if outcomes := connOutcomes(t, admin, p.id, env.slug); !slices.Equal(outcomes, []string{"denied:expired"}) {
 			t.Fatalf("call log: %v", outcomes)
 		}
@@ -540,7 +542,7 @@ func TestConnectionsUpstreamRejectsTheToken(t *testing.T) {
 		if got := connStatus(t, p.c, env.slug); got != "expired" {
 			t.Fatalf("status: %q", got)
 		}
-		connExpectExpiredAudit(t, admin, p.id, env.slug, "refresh_rejected", 1)
+		connExpectExpiredAudit(t, s, p.id, env.slug, "refresh_rejected", 1)
 	})
 
 	t.Run("a provider that is down during the forced refresh is unavailable, and the connection stays", func(t *testing.T) {
@@ -552,7 +554,7 @@ func TestConnectionsUpstreamRejectsTheToken(t *testing.T) {
 		if got := connStatus(t, p.c, env.slug); got != "ready" {
 			t.Fatalf("status: %q", got)
 		}
-		if n := len(connAudit(t, admin, "connection.expired", p.id, env.slug)); n != 0 {
+		if n := len(connAudit(t, s, "connection.expired", p.id, env.slug)); n != 0 {
 			t.Fatalf("%d connection.expired record(s) for an outage", n)
 		}
 		if outcomes := connOutcomes(t, admin, p.id, env.slug); !slices.Equal(outcomes, []string{"transport_error"}) {

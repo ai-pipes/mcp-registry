@@ -138,7 +138,7 @@ func TestConnectionsConnectFlow(t *testing.T) {
 	})
 
 	t.Run("the audit trail records the connect, with no token", func(t *testing.T) {
-		got := connAudit(t, admin, "connection.connect", p.id, env.slug)
+		got := connAudit(t, s, "connection.connect", p.id, env.slug)
 		if len(got) != 1 || len(got[0].Meta) != 0 {
 			t.Fatalf("connection.connect records: %+v, want one with no meta", got)
 		}
@@ -164,7 +164,7 @@ func TestConnectionsConnectFlow(t *testing.T) {
 		if got := connStatus(t, p.c, env.slug); got != "missing" {
 			t.Fatalf("status after disconnect: %q", got)
 		}
-		if got := connAudit(t, admin, "connection.disconnect", p.id, env.slug); len(got) != 1 || len(got[0].Meta) != 0 {
+		if got := connAudit(t, s, "connection.disconnect", p.id, env.slug); len(got) != 1 || len(got[0].Meta) != 0 {
 			t.Fatalf("connection.disconnect records: %+v", got)
 		}
 		// Nothing left to disconnect: no second revoke, no second audit record.
@@ -174,7 +174,7 @@ func TestConnectionsConnectFlow(t *testing.T) {
 		if n := len(env.provider.RevokeAttempts()); n != 1 {
 			t.Fatalf("%d revoke attempts after a second disconnect, want 1", n)
 		}
-		if got := connAudit(t, admin, "connection.disconnect", p.id, env.slug); len(got) != 1 {
+		if got := connAudit(t, s, "connection.disconnect", p.id, env.slug); len(got) != 1 {
 			t.Fatalf("a second disconnect wrote %d audit records in all", len(got))
 		}
 		// The deleted connection no longer serves calls.
@@ -430,7 +430,7 @@ func TestConnectionsPAT(t *testing.T) {
 			t.Fatalf("row: %+v (a pat has no refresh token, no expiry and nothing to revoke)", row)
 		}
 		connExpectSealed(t, "the stored pat", row.Access, "perm:abc.def-123")
-		got := connAudit(t, admin, "connection.pat_saved", p.id, env.slug)
+		got := connAudit(t, s, "connection.pat_saved", p.id, env.slug)
 		if len(got) != 1 || len(got[0].Meta) != 0 {
 			t.Fatalf("connection.pat_saved records: %+v", got)
 		}
@@ -440,7 +440,7 @@ func TestConnectionsPAT(t *testing.T) {
 		if len(calls) != 1 {
 			t.Fatalf("upstream calls: %d, want one", len(calls))
 		}
-		connExpectCallsWith(t, "the pat at the upstream", env.up, "X-Token", "pat perm:abc.def-123")
+		connExpectOneCallWith(t, "the pat at the upstream", env.up, "X-Token", "pat perm:abc.def-123")
 		if calls[0].Header.Get("Authorization") != "" {
 			t.Errorf("the credential also went out in Authorization: %q", harness.Redact(calls[0].Header.Get("Authorization")))
 		}
@@ -559,7 +559,7 @@ func TestConnectionsPAT(t *testing.T) {
 		if row := connRowOf(t, s, q2.id, env.slug); row.Status != "expired" {
 			t.Fatalf("row status %q", row.Status)
 		}
-		connExpectExpiredAudit(t, admin, q2.id, env.slug, "rejected_upstream", 1)
+		connExpectExpiredAudit(t, s, q2.id, env.slug, "rejected_upstream", 1)
 		if outcomes := connOutcomes(t, admin, q2.id, env.slug); !slices.Equal(outcomes, []string{"denied:expired"}) {
 			t.Fatalf("call log: %v", outcomes)
 		}
@@ -570,7 +570,7 @@ func TestConnectionsPAT(t *testing.T) {
 		if n := len(env.up.Requests()); n != 0 {
 			t.Fatalf("an expired connection reached the upstream %d time(s)", n)
 		}
-		connExpectExpiredAudit(t, admin, q2.id, env.slug, "rejected_upstream", 1) // not recorded twice
+		connExpectExpiredAudit(t, s, q2.id, env.slug, "rejected_upstream", 1) // not recorded twice
 
 		// Reconnecting (a new token) is what helps.
 		connNote("fresh-pat-3")
@@ -615,7 +615,7 @@ func TestConnectionsPAT(t *testing.T) {
 		if got := connStatus(t, p.c, env.slug); got != "missing" {
 			t.Fatalf("status: %q", got)
 		}
-		if got := connAudit(t, admin, "connection.disconnect", p.id, env.slug); len(got) != 1 {
+		if got := connAudit(t, s, "connection.disconnect", p.id, env.slug); len(got) != 1 {
 			t.Fatalf("connection.disconnect records: %d", len(got))
 		}
 	})

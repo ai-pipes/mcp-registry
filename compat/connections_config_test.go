@@ -54,7 +54,7 @@ func TestConnectionsConfigChange(t *testing.T) {
 			if row := connRowOf(t, s, p.id, env.slug); row.Status != "expired" {
 				t.Fatalf("row status %q", row.Status)
 			}
-			connExpectExpiredAudit(t, admin, p.id, env.slug, "config_changed", 1)
+			connExpectExpiredAudit(t, s, p.id, env.slug, "config_changed", 1)
 			if outcomes := connOutcomes(t, admin, p.id, env.slug); !slices.Equal(outcomes, []string{"ok", "denied:expired"}) {
 				t.Fatalf("call log: %v", outcomes)
 			}
@@ -127,7 +127,7 @@ func TestConnectionsConfigChange(t *testing.T) {
 			if got := connRefreshTokens(env.provider); len(got) == 0 || got[len(got)-1] != issued.RefreshToken {
 				t.Fatalf("%s: the refresh did not happen at the token endpoint", c.name)
 			}
-			if n := len(connAudit(t, admin, "connection.expired", p.id, env.slug)); n != 0 {
+			if n := len(connAudit(t, s, "connection.expired", p.id, env.slug)); n != 0 {
 				t.Fatalf("%s: connection.expired recorded", c.name)
 			}
 			otherBefore := len(otherProvider.RevokeAttempts())
