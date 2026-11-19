@@ -54,7 +54,7 @@ compat:
 # operations; TestPlaywrightArgs*: the arguments refused) run in go-verify too. Traces of a failed run: node_modules/.cache/playwright/flows-results
 # (or E2E_OUTPUT_DIR). E2E_PLAYWRIGHT_ARGS='03-tokens.spec.ts' runs one spec file (space-separated
 # arguments only: a test title with spaces cannot be passed, pass its file; --list and
-# --pass-with-no-tests are refused, as are -c and --config in any form).
+# --pass-with-no-tests are refused, as are --retries, -c and --config in any form).
 e2e-flows:
 	go test -tags "compat e2e" -count=1 -timeout 30m -v -run '^(TestBrowserFlows|TestControl)' ./compat/e2e/
 

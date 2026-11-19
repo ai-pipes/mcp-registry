@@ -109,10 +109,12 @@ func TestBrowserFlows(t *testing.T) {
 }
 
 // refusedPlaywrightArg reports whether an argument of E2E_PLAYWRIGHT_ARGS is refused: listing
-// instead of running, passing with no tests, another reporter, or another config (`-c path`,
-// `-cpath`, `-c=path`, `--config...`), which would run specs outside the guard's fixture.
+// instead of running, passing with no tests, retries (a retried failure counts as a "flaky" pass),
+// another reporter, or another config (`-c path`, `-cpath`, `-c=path`, `--config...`), which would
+// run specs outside the guard's fixture.
 func refusedPlaywrightArg(a string) bool {
 	return strings.HasPrefix(a, "--list") ||
+		strings.HasPrefix(a, "--retries") ||
 		strings.HasPrefix(a, "--pass-with-no-tests") ||
 		strings.HasPrefix(a, "--reporter") ||
 		strings.HasPrefix(a, "--config") ||

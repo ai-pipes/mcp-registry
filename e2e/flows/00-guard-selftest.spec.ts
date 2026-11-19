@@ -137,8 +137,8 @@ test('the guard excuses a refusal only for the page it was declared for', async 
 // app's CSP.
 const SECRET = 'a-secret-value-that-must-not-come-back';
 
-// A value of the generic sign-in link code shape (`ll_` and 20 or more characters).
-const LINK_SHAPED = 'll_abcdefghijklmnopqrstuvwxyz';
+// A value of the product's sign-in link code shape: `ll_` and the base64url of 32 bytes (43 characters).
+const LINK_SHAPED = `ll_${'abcdefghij'.repeat(4)}xyz`;
 
 interface Tiny {
   origin: string;
@@ -285,7 +285,7 @@ async function loseToNewDocument(page: Page, origin: string, target: string, met
 const lostLines = async (guard: { problems: () => Promise<string[]> }) =>
   (await guard.problems()).filter((p) => p.includes('was lost'));
 
-// --- T1, N1: the FIRST document and a subresource of a fresh page are scanned ----------------------
+// --- T1 first load: the FIRST document and a subresource of a fresh page are scanned ---------------
 test('T1 first load: a fresh page whose first document and subresource hold a secret is caught', async ({
   guard,
 }) => {
@@ -317,7 +317,7 @@ test('T1 first load: the page of the test is captured before its first request t
   });
 });
 
-// --- T1 (base64), N3 ---------------------------------------------------------------------------------
+// --- T1 base64 ---------------------------------------------------------------------------------------
 test('T1 base64: a body of a content type Chromium does not treat as text is decoded and scanned', async ({
   page,
   guard,
@@ -364,7 +364,7 @@ test('T3 a real binary asset is listed as not scanned, with its content type', a
   });
 });
 
-// --- T4 (the classification alone: a genuine cache-served read failure cannot be produced) -------
+// --- T4 (the classification, and a refused read of a really cache-served app asset) ----------------
 test('T4 a failed read of a cached asset on the app origin is listed, anywhere else it is a failure', () => {
   const facts = {
     navsThen: 1,
@@ -379,6 +379,31 @@ test('T4 a failed read of a cached asset on the app origin is listed, anywhere e
   });
   expect(classifyFailure({ ...facts, appOrigin: false }, 'x').kind).toBe('unreadable');
   expect(classifyFailure({ ...facts, cached: false }, 'x').kind).toBe('unreadable');
+});
+
+test('T4 a refused read of a cache-served app asset is settled at once, without waiting for a close', async ({
+  page,
+  guard,
+}) => {
+  const base = (await getStacks()).plain.baseURL;
+  await page.goto(`${base}/`);
+  await expect(page.getByRole('heading', { level: 1, name: strings.login.title })).toBeVisible();
+  // Every later read of a build asset is refused: the second load serves them from the cache.
+  guard.replaceBodyRead((cdp, requestId, _p, url) =>
+    new URL(url).pathname.startsWith('/assets/')
+      ? Promise.reject(new Error('refused by the self-test'))
+      : cdp.send('Network.getResponseBody', { requestId }),
+  );
+  await page.goto(`${base}/`);
+  await expect(page.getByRole('heading', { level: 1, name: strings.login.title })).toBeVisible();
+  await expect(page.getByText(strings.login.localHint)).toBeVisible();
+  const started = Date.now();
+  // A short verdict deadline: a read still waiting for a close would be reported as unfinished.
+  const verdict = await guard.settle(1000);
+  expect(Date.now() - started).toBeLessThan(2500);
+  expect(verdict.notScanned.join('\n')).toContain('cached asset (refused by the self-test)');
+  expect(verdict.problems).toEqual([]);
+  guard.reset();
 });
 
 // --- T5 ---------------------------------------------------------------------------------------------
@@ -484,6 +509,57 @@ test('T7 a body that cannot be read with no new document going on is a failure',
       .poll(async () => (await guard.problems()).join('\n'))
       .toContain(`unreadable: GET ${origin}/broken -> 200`);
     expect(await guard.notScanned()).toEqual([]);
+    guard.reset();
+  });
+});
+
+test('T7 a failed request stays unreadable when a new document commits right after it', async ({
+  page,
+  guard,
+}) => {
+  await withTiny(async ({ origin }) => {
+    await page.goto(`${origin}/ok`);
+    const answered = page.waitForResponse((r) => r.url() === `${origin}/hold`);
+    await page.evaluate(() => {
+      void fetch('/hold')
+        .then((r) => r.text())
+        .catch(() => 'cut');
+    });
+    await answered;
+    await fetchOf(page, '/release'); // the server drops the held connection: the request fails
+    await expect
+      .poll(async () => (await guard.problems()).join('\n'))
+      .toContain(`unreadable: GET ${origin}/hold -> 200`);
+    await page.goto(`${origin}/ok?next`); // a new document, well inside the grace
+    const verdict = await guard.settle(1000);
+    expect(verdict.problems.join('\n')).toContain(`unreadable: GET ${origin}/hold -> 200`);
+    expect(verdict.notScanned.join('\n')).not.toContain(`${origin}/hold`);
+    guard.reset();
+  });
+});
+
+test('T7 a refused read stays unreadable when a new document commits while the close is awaited', async ({
+  page,
+  guard,
+}) => {
+  await withTiny(async ({ origin }) => {
+    await page.goto(`${origin}/ok`);
+    let refused: () => void = nothing;
+    const wasRefused = new Promise<void>((resolve) => {
+      refused = resolve;
+    });
+    guard.replaceBodyRead((cdp, requestId, _p, url) => {
+      if (!url.endsWith('/ok?read')) return cdp.send('Network.getResponseBody', { requestId });
+      refused();
+      return Promise.reject(new Error('refused by the self-test'));
+    });
+    await fetchOf(page, '/ok?read');
+    await wasRefused; // the guard now awaits a close event for up to the grace
+    await page.goto(`${origin}/ok?next`); // a new document commits inside that wait
+    await expect
+      .poll(async () => (await guard.problems()).join('\n'), { timeout: 10_000 })
+      .toContain(`unreadable: GET ${origin}/ok?read -> 200 — refused by the self-test`);
+    expect((await guard.notScanned()).join('\n')).not.toContain('/ok?read');
     guard.reset();
   });
 });
@@ -802,8 +878,17 @@ test('no flow makes a page or a context behind the guard', () => {
   const self = path.basename(fileURLToPath(import.meta.url));
   const bypass =
     /(?<!guard)\.(?:newContext|newPage|launch|launchPersistentContext)\s*\(|(?<![.\w])(?:newContext|newPage)\s*\(/;
-  const offenders = readdirSync(dir)
-    .filter((f) => f.endsWith('.spec.ts') && f !== self)
-    .filter((f) => bypass.test(readFileSync(path.join(dir, f), 'utf8')));
-  expect(offenders, 'use guard.newPage() or guard.newTab() so the page is captured').toEqual([]);
+  // The guard's self-test hooks (forgetting, settling early, faking records, replacing reads) belong
+  // to this file only: in a flow they could clear or bend the verdict.
+  const testOnly = /\b(?:reset|settle|injectUncaptured|replaceBodyRead)\b/;
+  const specs = readdirSync(dir).filter((f) => f.endsWith('.spec.ts') && f !== self);
+  const read = (f: string) => readFileSync(path.join(dir, f), 'utf8');
+  expect(
+    specs.filter((f) => bypass.test(read(f))),
+    'use guard.newPage() or guard.newTab() so the page is captured',
+  ).toEqual([]);
+  expect(
+    specs.filter((f) => testOnly.test(read(f))),
+    'the guard self-test hooks are for 00-guard-selftest.spec.ts only',
+  ).toEqual([]);
 });

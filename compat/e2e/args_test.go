@@ -6,7 +6,7 @@ import "testing"
 
 func TestPlaywrightArgsRefusesWhatCouldPassWithoutTesting(t *testing.T) {
 	for _, a := range []string{
-		"--list", "--pass-with-no-tests", "--reporter=dot", "--reporter",
+		"--list", "--pass-with-no-tests", "--retries", "--retries=2", "--reporter=dot", "--reporter",
 		"-c", "-cother.config.ts", "-c=other.config.ts", "--config", "--config=other.config.ts",
 	} {
 		if !refusedPlaywrightArg(a) {

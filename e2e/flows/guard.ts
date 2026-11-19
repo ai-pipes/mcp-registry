@@ -17,10 +17,12 @@
 //     |       frame after the response ........................................... body not scanned, listed;
 //     |          a FAILURE if it is an /api/ body and a secret is registered, unless the flow declared
 //     |          exactly that loss (`allowLostBody`: page + method + path, and only for this cause)
-//     |-- T6  the read failed or never finished and its page was closed (also when Playwright's close
-//     |       event arrives after the failed read: it is awaited within the grace) .. same as T5, but no
+//     |-- T6  the read failed or never finished and its page was closed (after a REFUSED read that
+//     |       nothing else explains, Playwright's close event is awaited within the grace, and only the
+//     |       closed fact is re-read; the commit count stays frozen at the failure) .. same as T5, but no
 //     |                                                                            declaration excuses it
-//     |-- T7  the read failed with none of the above ............................ FAILURE (unreadable)
+//     |-- T7  the read failed with none of the above, judged on the facts AT the failure (a commit
+//     |       after it changes nothing) ........................................... FAILURE (unreadable)
 //     |-- T8  the read had not finished when the test ended (5 s grace) ......... T5/T6 when a new
 //     |       document or the close had affected it, otherwise a FAILURE naming the stage
 //     `-- T9  Playwright saw the response on a page and no record of that page exists .. FAILURE
@@ -44,8 +46,14 @@
 // and an /api/ one after a registered secret fails, so a flow has to let the page consume it first.
 import type { BrowserContext, CDPSession, Page } from '@playwright/test';
 
-const LINK_CODE = /\bll_[A-Za-z0-9_-]{20,}/;
-const API_TOKEN = /\bsk_[A-Za-z0-9_-]{20,}/;
+// The product's formats exactly: a prefix plus the base64url of 32 random bytes (43 characters),
+// apps/server/src/modules/identity/{application/tokens.ts,application/login-link.ts}. Anchored at both
+// ends, so a random base64url value (a session cookie: 43 characters, no prefix) cannot match unless
+// it is itself longer than 46 characters and holds the prefix after a word boundary followed by
+// exactly 43 base64url characters and then a non-base64url character. A server that issues another
+// length escapes these shape checks only; the registered secrets of the flows are still matched exactly.
+const LINK_CODE = /\bll_[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])/;
+const API_TOKEN = /\bsk_[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])/;
 
 /** The bounded wait for captures, reads in flight and a page's close event. */
 const GRACE_MS = 5000;
@@ -75,7 +83,11 @@ interface Rec {
   /** Cross-document commits of the frame when the response arrived (a document's own commit counts as the baseline). */
   navsThen: number;
   outcome: Outcome | null;
-  /** Set when a new document committed or the page closed while the read was in flight. */
+  /**
+   * Set when a new document committed or the page closed while the body was still OPEN (before the
+   * browser reported the request finished or failed). It decides only a read that never settles (T8,
+   * and the interim verdict); a read that settled is judged by `settleFailure` alone.
+   */
   affected: string | null;
   stage: string;
   done: Promise<void>;
@@ -137,6 +149,7 @@ export type BodyRead = (
   cdp: CDPSession,
   requestId: string,
   page: Page,
+  url: string,
 ) => Promise<{ body: string; base64Encoded: boolean }>;
 
 const cdpBodyRead: BodyRead = (cdp, requestId) =>
@@ -313,20 +326,38 @@ function failureFacts(w: Watched, st: PageState, rec: Rec): FailureFacts {
 }
 
 /**
- * Settles a read that failed. A new document's commit is known for certain when the failure arrives
- * (both travel on the same DevTools session, in order). Playwright's close event does not: it comes
- * on another channel and can arrive after the DevTools call was refused for the closing page. So a
- * failure that no commit explains waits, within the grace, for the close event before it is judged.
+ * Settles a read that failed. The facts are frozen when the failure arrives; only the page-closed
+ * fact may be refreshed afterwards.
+ *
+ * The commit count is taken at the failure, without a further round trip, because a commit that
+ * drops a body is reported before the failure: Chromium holds a `Network.getResponseBody` made
+ * while a navigation is under way and refuses it only after the commit, and `Page.frameNavigated`
+ * and that refusal travel on the same DevTools session in order (observed: frameNavigated, then the
+ * refusal, for a 200 document and for an error-page commit). A `Network.loadingFailed` is an event
+ * of the same session too. A later commit therefore never turns a failure into a loss.
+ *
+ * Playwright's close event, however, travels on another channel and can arrive after the DevTools
+ * call was refused for the closing page. So when a `readBody` call was REFUSED and nothing else
+ * decided the outcome (it would be T7), the close event is awaited within the grace and only
+ * `pageClosed` is re-read. A `loadingFailed`, or an outcome already decided (a commit, a close, a
+ * cached asset), is settled at once.
  */
-async function settleFailure(w: Watched, st: PageState, rec: Rec, why: string): Promise<void> {
-  const first = classifyFailure(failureFacts(w, st, rec), why);
-  if (first.kind === 'not-scanned' && first.cause !== 'cached') {
+async function settleFailure(
+  w: Watched,
+  st: PageState,
+  rec: Rec,
+  why: string,
+  refusedCall: boolean,
+): Promise<void> {
+  const facts = failureFacts(w, st, rec);
+  const first = classifyFailure(facts, why);
+  if (!refusedCall || first.kind !== 'unreadable') {
     rec.finish(first);
     return;
   }
-  rec.stage = `the read failed (${why}) and its page's close event was awaited`;
+  rec.stage = `the read was refused (${why}) and its page's close event was awaited`;
   await withDeadline(st.gone, GRACE_MS);
-  rec.finish(classifyFailure(failureFacts(w, st, rec), why));
+  rec.finish(classifyFailure({ ...facts, pageClosed: st.closed }, why));
 }
 
 /**
@@ -470,7 +501,7 @@ async function doAttach(context: BrowserContext, page: Page, w: Watched): Promis
     if (rec === undefined) return;
     st.open.delete(e.requestId);
     rec.stage = 'asked the browser for the body';
-    w.readBody(cdp, e.requestId, page).then(
+    w.readBody(cdp, e.requestId, page, rec.url).then(
       (r) => {
         // T1. A base64 body is a body Chromium does not treat as text: decoded and scanned all the same.
         const text = r.base64Encoded ? Buffer.from(r.body, 'base64').toString('latin1') : r.body;
@@ -478,7 +509,7 @@ async function doAttach(context: BrowserContext, page: Page, w: Watched): Promis
       },
       (err: unknown) => {
         const why = err instanceof Error ? (err.message.split('\n')[0] ?? '') : String(err);
-        void settleFailure(w, st, rec, why);
+        void settleFailure(w, st, rec, why, true);
       },
     );
   });
@@ -486,7 +517,7 @@ async function doAttach(context: BrowserContext, page: Page, w: Watched): Promis
     const rec = st.open.get(e.requestId);
     if (rec === undefined) return;
     st.open.delete(e.requestId);
-    void settleFailure(w, st, rec, `the request failed after its response: ${e.errorText}`);
+    void settleFailure(w, st, rec, `the request failed after its response: ${e.errorText}`, false);
   });
   await cdp.send('Network.enable');
   await cdp.send('Page.enable');
