@@ -74,16 +74,23 @@ export function CallsPage() {
   const users = useUsers();
   const calls = useInfiniteQuery({
     queryKey: ['calls', server, outcome],
-    initialPageParam: undefined as string | undefined,
+    initialPageParam: undefined as { before: string; beforeId: string } | undefined,
     queryFn: ({ pageParam }) => {
       const q = new URLSearchParams({ limit: String(DEFAULT_CALLS_LIMIT) });
       if (server) q.set('server', server);
       if (outcome) q.set('outcome', outcome);
-      if (pageParam) q.set('before', pageParam);
+      if (pageParam) {
+        q.set('before', pageParam.before);
+        q.set('beforeId', pageParam.beforeId);
+      }
       return api.get(`/api/calls?${q.toString()}`, CallList);
     },
-    getNextPageParam: (last) =>
-      last.length < DEFAULT_CALLS_LIMIT ? undefined : last[last.length - 1]?.startedAt,
+    getNextPageParam: (last) => {
+      const tail = last[last.length - 1];
+      return last.length < DEFAULT_CALLS_LIMIT || tail === undefined
+        ? undefined
+        : { before: tail.startedAt, beforeId: tail.id };
+    },
   });
   const names = new Map((users.data ?? []).map((u) => [u.id, u.name]));
   const rows = calls.data?.pages.flat() ?? [];

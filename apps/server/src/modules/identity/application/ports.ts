@@ -126,6 +126,8 @@ export interface IdentityDeps {
   sha256: Sha256;
   tokenLimiter: RateLimiter;
   linkLimiter: RateLimiter;
+  /** Counts failed OIDC code exchanges per client IP; only decides whether to audit one. */
+  callbackLimiter: RateLimiter;
   audit: AuditLog;
   clock: Clock;
   /** `n` random bytes as an unpadded base64url string. */

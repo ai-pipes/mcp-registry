@@ -207,6 +207,11 @@ export function makeDeps() {
       check: () => ({ allowed: true, retryAfterSec: 0 }),
       reset: () => undefined,
     },
+    callbackLimiter: {
+      hit: () => ({ allowed: true, retryAfterSec: 0 }),
+      check: () => ({ allowed: true, retryAfterSec: 0 }),
+      reset: () => undefined,
+    },
     audit: {
       record: (e) => {
         auditEntries.push(e);

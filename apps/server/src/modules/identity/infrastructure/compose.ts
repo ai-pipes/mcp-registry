@@ -8,6 +8,7 @@ import {
   PgTokenRepository,
   PgUserRepository,
 } from './pg-repositories.ts';
+import { FAILED_CALLBACK_AUDIT_LIMIT, FAILED_CALLBACK_WINDOW_SEC } from '../domain/login-flow.ts';
 import { InMemoryRateLimiter } from './rate-limiter.ts';
 
 /** Everything in IdentityDeps except the cross-cutting parts the container provides. */
@@ -24,5 +25,10 @@ export function createPgIdentity(sql: Sql): PgIdentity {
     random: cryptoRandom,
     tokenLimiter: new InMemoryRateLimiter(30, 60, 60),
     linkLimiter: new InMemoryRateLimiter(10, 60, 60),
+    callbackLimiter: new InMemoryRateLimiter(
+      FAILED_CALLBACK_AUDIT_LIMIT,
+      FAILED_CALLBACK_WINDOW_SEC,
+      FAILED_CALLBACK_WINDOW_SEC,
+    ),
   };
 }
