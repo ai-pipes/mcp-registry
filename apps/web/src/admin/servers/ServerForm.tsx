@@ -101,7 +101,14 @@ export function ServerForm({ server, onSaved }: ServerFormProps) {
     },
     onSuccess: async (saved, { secret }) => {
       // `saved` is the PUT's answer: a secret entered in the same save is set right after it.
-      setSecretCleared(editing && server.secretSet && !saved.secretSet && secret === undefined);
+      // (a change of auth kind has its own warning; this notice is about the address)
+      setSecretCleared(
+        editing &&
+          server.auth.kind === f.kind &&
+          server.secretSet &&
+          !saved.secretSet &&
+          secret === undefined,
+      );
       setF((prev) => ({ ...prev, secret: '' })); // a typed secret is never kept after saving
       await client.invalidateQueries({ queryKey: queryKeys.servers });
       await client.invalidateQueries({ queryKey: queryKeys.server(saved.slug) });

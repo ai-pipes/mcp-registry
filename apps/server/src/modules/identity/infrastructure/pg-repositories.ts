@@ -211,10 +211,12 @@ export class PgPendingLoginRepository implements PendingLoginRepository {
   constructor(private readonly sql: Sql) {}
 
   async insert(p: PendingLogin): Promise<void> {
-    // Expired attempts go on the way in (`oidc_pending_expires_idx`), so the table holds only
-    // what started in the last ten minutes. Unexpired rows are never removed: evicting them would
-    // let an anonymous caller cancel other people's logins.
-    await this.sql`delete from identity.oidc_pending where expires_at <= now()`;
+    // Attempts expired for over a minute go on the way in (`oidc_pending_expires_idx`); the minute
+    // absorbs a database clock ahead of the application's, and the use case's own expiry check
+    // stays the authority. Unexpired rows are never removed: evicting them would let an anonymous
+    // caller cancel other people's logins.
+    await this.sql`delete from identity.oidc_pending
+      where expires_at < now() - interval '1 minute'`;
     await this
       .sql`insert into identity.oidc_pending (state, code_verifier, nonce, return_to, expires_at)
       values (${p.state}, ${p.codeVerifier}, ${p.nonce}, ${p.returnTo}, ${p.expiresAt})`;

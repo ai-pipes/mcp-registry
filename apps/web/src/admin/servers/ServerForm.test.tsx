@@ -123,6 +123,23 @@ describe('ServerForm', () => {
     expect(await screen.findByText(/The stored secret was cleared/)).toBeTruthy();
   });
 
+  it('after an auth-kind change the "address changed" notice is not shown', async () => {
+    server.use(
+      http.put('/api/servers/gitea', () =>
+        HttpResponse.json(serverView({ ...oauthView(), secretSet: false })),
+      ),
+    );
+    const { user } = renderWithApp(<ServerForm server={sharedView()} onSaved={noop} />);
+    await user.click(screen.getByRole('radio', { name: 'User OAuth' }));
+    await user.type(screen.getByLabelText('Authorize URL'), 'https://idp.example/authorize');
+    await user.type(screen.getByLabelText('Token URL'), 'https://idp.example/token');
+    await user.type(screen.getByLabelText('Client ID'), 'cid');
+    await user.type(screen.getByLabelText('Scopes'), 'read');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    await screen.findByText('Server saved');
+    expect(screen.queryByText(/The stored secret was cleared/)).toBeNull();
+  });
+
   it('a secret entered with the address change is saved and no re-entry notice shows', async () => {
     server.use(
       http.put('/api/servers/gitea', () =>

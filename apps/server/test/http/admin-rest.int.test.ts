@@ -303,8 +303,16 @@ describe('PUT /api/servers/:slug', () => {
       const audit = AuditList.parse(await (await call(admin, 'GET', '/api/audit')).json());
       expect(audit.map((a) => a.action)).toContain('server.secret_clear');
 
-      await call(admin, 'POST', '/api/servers/gitea/sync');
-      expect(JSON.stringify(moved.requests)).not.toContain(SECRET);
+      const sync = await call(admin, 'POST', '/api/servers/gitea/sync');
+      expect(sync.status).toBe(502);
+      expect(
+        ServerView.parse(await (await call(admin, 'GET', '/api/servers/gitea')).json())
+          .lastSyncError,
+      ).toBe('The server secret is not set');
+      const failure =
+        await pg.sql`select last_sync_error from catalog.servers where slug = 'gitea'`;
+      expect(failure[0]?.['last_sync_error']).toBe('The server secret is not set');
+      expect(moved.requests).toHaveLength(0);
     } finally {
       await moved.close();
     }

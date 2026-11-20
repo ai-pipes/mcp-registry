@@ -592,22 +592,25 @@ const failedAudits = async () => {
 describe('anonymous callbacks cannot bloat the audit log', () => {
   it('the 21st failed exchange from one address in a minute writes no audit record; a valid code still signs in', async () => {
     container.identity.callbackLimiter.reset('192.0.2.1');
-    idp.tokenStatus = 400;
     try {
-      const results = await Promise.all(Array.from({ length: 21 }, () => signIn(member)));
-      for (const { callback } of results) {
-        expect(callback.headers.get('location')).toBe('/?loginError=invalid_state');
+      idp.tokenStatus = 400;
+      try {
+        const results = await Promise.all(Array.from({ length: 21 }, () => signIn(member)));
+        for (const { callback } of results) {
+          expect(callback.headers.get('location')).toBe('/?loginError=invalid_state');
+        }
+      } finally {
+        idp.tokenStatus = null;
       }
-    } finally {
-      idp.tokenStatus = null;
-    }
-    expect(await failedAudits()).toBe(20);
+      expect(await failedAudits()).toBe(20);
 
-    const { callback } = await signIn(member);
-    expect(callback.headers.get('location')).toBe('/servers');
-    expect(cookieOf(callback)).toMatch(/^mcp_session=/);
-    expect(await failedAudits()).toBe(20);
-    container.identity.callbackLimiter.reset('192.0.2.1');
+      const { callback } = await signIn(member);
+      expect(callback.headers.get('location')).toBe('/servers');
+      expect(cookieOf(callback)).toMatch(/^mcp_session=/);
+      expect(await failedAudits()).toBe(20);
+    } finally {
+      container.identity.callbackLimiter.reset('192.0.2.1');
+    }
   });
 
   it('refuses a pending login whose ten minutes are over', async () => {
@@ -650,10 +653,11 @@ describe('PgPendingLoginRepository keeps the table free of expired rows', () => 
     expect((await repo.consume('s0'))?.state).toBe('s0');
   });
 
-  it('drops expired rows on the next insert, not an hour later', async () => {
+  it('drops rows expired for over a minute on the next insert, keeps freshly expired ones (clock skew)', async () => {
     const repo = new PgPendingLoginRepository(pg.sql);
-    await repo.insert(pending('old', new Date(Date.now() - 60_000)));
+    await repo.insert(pending('old', new Date(Date.now() - 120_000)));
+    await repo.insert(pending('just', new Date(Date.now() - 20_000)));
     await repo.insert(pending('new', new Date(Date.now() + 600_000)));
-    expect(await states()).toEqual(['new']);
+    expect(await states()).toEqual(['just', 'new']);
   });
 });
