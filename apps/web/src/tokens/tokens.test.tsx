@@ -1,5 +1,5 @@
 import { screen, waitFor, within } from '@testing-library/react';
-import { HttpResponse, http } from 'msw';
+import { HttpResponse, delay, http } from 'msw';
 import { describe, expect, it } from 'vite-plus/test';
 import { server } from '../../test/msw/handlers.ts';
 import { renderWithApp } from '../../test/setup.ts';
@@ -45,6 +45,34 @@ describe('TokensPage', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Done' }));
     await waitFor(() => expect(screen.queryByDisplayValue('sk_abcdSECRETSECRET')).toBeNull());
     expect(await screen.findByText('sk_abcd…')).toBeTruthy();
+    expect(document.body.textContent).not.toContain('SECRETSECRET');
+  });
+
+  it('closes on Done while the list refresh is still pending', async () => {
+    let listCalls = 0;
+    server.use(
+      http.get('/api/tokens', async () => {
+        listCalls += 1;
+        if (listCalls > 1) await delay('infinite');
+        return HttpResponse.json([]);
+      }),
+      http.post('/api/tokens', () =>
+        HttpResponse.json(
+          { id: 't1', prefix: 'sk_abcd', token: 'sk_abcdSECRETSECRET' },
+          { status: 201 },
+        ),
+      ),
+    );
+    const { user } = renderWithApp(<TokensPage />, { route: '/tokens' });
+    await user.click(await screen.findByRole('button', { name: 'Create token' }));
+    const dialog = await screen.findByRole('dialog');
+    await user.type(within(dialog).getByLabelText('Name'), 'laptop');
+    await user.click(within(dialog).getByRole('button', { name: 'Create' }));
+    expect(await within(dialog).findByLabelText('Token')).toBeTruthy();
+    await waitFor(() => expect(listCalls).toBe(2));
+
+    await user.click(within(dialog).getByRole('button', { name: 'Done' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     expect(document.body.textContent).not.toContain('SECRETSECRET');
   });
 });

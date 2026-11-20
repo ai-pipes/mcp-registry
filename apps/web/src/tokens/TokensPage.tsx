@@ -52,7 +52,10 @@ function useCreateToken(onCreated: (created: CreateTokenResponse) => void) {
       onCreated(await api.post('/api/tokens', { name }, CreateTokenResponse));
     },
     gcTime: 0,
-    onSuccess: () => client.invalidateQueries({ queryKey: queryKeys.tokens }),
+    // Not returned: the list refresh must not keep the mutation pending (and the dialog stuck).
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: queryKeys.tokens });
+    },
   });
 }
 
@@ -88,7 +91,8 @@ function CreateTokenDialog({
   const create = useCreateToken(setCreated);
 
   function change(next: boolean) {
-    if (create.isPending) return;
+    // Only the request itself blocks closing: once the token is shown, Done always closes.
+    if (create.isPending && created === null) return;
     onOpenChange(next);
     if (!next) {
       // forget the plaintext token as soon as the dialog closes
