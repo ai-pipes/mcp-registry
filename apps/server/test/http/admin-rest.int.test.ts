@@ -278,6 +278,38 @@ describe('secrets never leave', () => {
 });
 
 describe('PUT /api/servers/:slug', () => {
+  it('changing the upstream URL of a shared_secret server clears the secret; a sync never sends it to the new address', async () => {
+    await create();
+    const moved = await startFakeUpstream([{ name: 'other_tool' }]);
+    try {
+      const put = (over: Record<string, unknown>) =>
+        call(admin, 'PUT', '/api/servers/gitea', {
+          name: 'Gitea',
+          description: 'Git hosting',
+          url: up.url,
+          auth: { kind: 'shared_secret', header: 'Authorization', template: 'Bearer {secret}' },
+          access: { kind: 'all' },
+          ...over,
+        });
+      // an unrelated change keeps the secret
+      const same = await put({ name: 'Gitea 2' });
+      expect(ServerView.parse(await same.json()).secretSet).toBe(true);
+
+      const res = await put({ url: moved.url });
+      expect(res.status).toBe(200);
+      expect(ServerView.parse(await res.json()).secretSet).toBe(false);
+      const stored = await pg.sql`select secret from catalog.servers where slug = 'gitea'`;
+      expect(stored[0]?.['secret']).toBeNull();
+      const audit = AuditList.parse(await (await call(admin, 'GET', '/api/audit')).json());
+      expect(audit.map((a) => a.action)).toContain('server.secret_clear');
+
+      await call(admin, 'POST', '/api/servers/gitea/sync');
+      expect(JSON.stringify(moved.requests)).not.toContain(SECRET);
+    } finally {
+      await moved.close();
+    }
+  });
+
   it('changing access emits catalog.server_changed and an audit record', async () => {
     await create();
     await pg.sql`delete from platform.outbox`;

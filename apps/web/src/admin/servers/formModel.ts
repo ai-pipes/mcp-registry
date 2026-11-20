@@ -102,6 +102,29 @@ export function initialState(server?: ServerView): FormState {
   };
 }
 
+/**
+ * Whether saving `f` over `server` moves the place its stored secret is sent to, which makes the
+ * server clear the secret: the URL of a shared-secret server, the token URL, revoke URL or client
+ * ID of an OAuth one. `null` when nothing is stored or nothing moved. A mirror of the server's
+ * rule, for the warning only (a change of auth kind has its own warning).
+ */
+export function secretResetReason(
+  server: ServerView | undefined,
+  f: FormState,
+): 'url' | 'oauth' | null {
+  if (!server?.secretSet || server.auth.kind !== f.kind) return null;
+  if (server.auth.kind === 'shared_secret') return server.url !== f.url.trim() ? 'url' : null;
+  if (server.auth.kind === 'oauth_user') {
+    const o = server.auth.oauth;
+    const moved =
+      o.tokenUrl !== f.tokenUrl.trim() ||
+      (o.revokeUrl ?? '') !== f.revokeUrl.trim() ||
+      o.clientId !== f.clientId.trim();
+    return moved ? 'oauth' : null;
+  }
+  return null;
+}
+
 const words = (s: string) => s.split(/[\s,]+/).filter((w) => w !== '');
 
 function authOf(f: FormState): unknown {

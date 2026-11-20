@@ -8,6 +8,27 @@ import { ServerForm } from './ServerForm.tsx';
 
 const noop = () => {};
 
+const sharedView = () =>
+  serverView({
+    auth: { kind: 'shared_secret', header: 'Authorization', template: 'Bearer {secret}' },
+    secretSet: true,
+  });
+const oauthView = () =>
+  serverView({
+    auth: {
+      kind: 'oauth_user',
+      header: 'Authorization',
+      template: 'Bearer {secret}',
+      oauth: {
+        authorizeUrl: 'https://idp.example/authorize',
+        tokenUrl: 'https://idp.example/token',
+        clientId: 'cid',
+        scopes: ['read'],
+      },
+    },
+    secretSet: true,
+  });
+
 describe('ServerForm', () => {
   it('auth kind decides the fields: oauth vs shared/pat vs none', async () => {
     const { user } = renderWithApp(<ServerForm onSaved={noop} />);
@@ -59,6 +80,64 @@ describe('ServerForm', () => {
     expect(screen.queryByText(/resets the stored secret/)).toBeNull();
     await user.click(screen.getByRole('radio', { name: 'No authorization' }));
     expect(screen.getByText(/resets the stored secret/)).toBeTruthy();
+  });
+
+  it('warns before saving that changing the URL of a shared-secret server clears the secret', async () => {
+    const { user } = renderWithApp(<ServerForm server={sharedView()} onSaved={noop} />);
+    expect(screen.queryByText(/clears the stored secret/)).toBeNull();
+    const url = screen.getByLabelText('URL');
+    await user.clear(url);
+    await user.type(url, 'https://new.example/mcp');
+    expect(screen.getByText(/Changing the URL clears the stored secret/)).toBeTruthy();
+    // typing the secret again in the same save keeps it: no warning then
+    await user.type(screen.getByLabelText('Secret value'), 'again');
+    expect(screen.queryByText(/clears the stored secret/)).toBeNull();
+  });
+
+  it('warns for the token URL, revoke URL or client ID of an OAuth server, not for other fields', async () => {
+    const { user } = renderWithApp(<ServerForm server={oauthView()} onSaved={noop} />);
+    await user.type(screen.getByLabelText('Name'), ' 2');
+    await user.type(screen.getByLabelText('Authorize URL'), '2');
+    await user.type(screen.getByLabelText('URL'), '2');
+    expect(screen.queryByText(/clears the stored client secret/)).toBeNull();
+    await user.type(screen.getByLabelText('Client ID'), '2');
+    expect(screen.getByText(/clears the stored client secret/)).toBeTruthy();
+  });
+
+  it('after saving a change that cleared the secret it says the secret must be entered again', async () => {
+    let saved = false;
+    server.use(
+      http.put('/api/servers/gitea', () => {
+        saved = true;
+        return HttpResponse.json(
+          serverView({ ...sharedView(), url: 'https://new.example/mcp', secretSet: false }),
+        );
+      }),
+    );
+    const { user } = renderWithApp(<ServerForm server={sharedView()} onSaved={noop} />);
+    const url = screen.getByLabelText('URL');
+    await user.clear(url);
+    await user.type(url, 'https://new.example/mcp');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(saved).toBe(true));
+    expect(await screen.findByText(/The stored secret was cleared/)).toBeTruthy();
+  });
+
+  it('a secret entered with the address change is saved and no re-entry notice shows', async () => {
+    server.use(
+      http.put('/api/servers/gitea', () =>
+        HttpResponse.json(serverView({ ...sharedView(), secretSet: false })),
+      ),
+      http.put('/api/servers/gitea/secret', () => new HttpResponse(null, { status: 204 })),
+    );
+    const { user } = renderWithApp(<ServerForm server={sharedView()} onSaved={noop} />);
+    const url = screen.getByLabelText('URL');
+    await user.clear(url);
+    await user.type(url, 'https://new.example/mcp');
+    await user.type(screen.getByLabelText('Secret value'), 'again');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    await screen.findByText('Server saved');
+    expect(screen.queryByText(/The stored secret was cleared/)).toBeNull();
   });
 
   it('client-side schema errors appear under the field', async () => {

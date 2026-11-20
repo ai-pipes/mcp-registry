@@ -63,6 +63,24 @@ function validate(f: Editable): Result<Editable, CatalogError> {
   });
 }
 
+/**
+ * Whether the stored secret would now be sent somewhere it was not stored for: another auth
+ * kind, for `shared_secret` another upstream URL (the key goes there), for `oauth_user` another
+ * token or revoke endpoint or client ID (the client secret goes to the token endpoint, and to
+ * revoke). Header, template, scopes, authorize URL and the upstream URL of an `oauth_user`
+ * server (it gets the person's token, not this secret) do not move the secret.
+ */
+function secretDestinationChanged(from: Editable, to: Editable): boolean {
+  if (from.auth.kind !== to.auth.kind) return true;
+  if (from.auth.kind === 'shared_secret') return from.url !== to.url;
+  if (from.auth.kind === 'oauth_user' && to.auth.kind === 'oauth_user') {
+    const a = from.auth.oauth;
+    const b = to.auth.oauth;
+    return a.tokenUrl !== b.tokenUrl || a.revokeUrl !== b.revokeUrl || a.clientId !== b.clientId;
+  }
+  return false;
+}
+
 export interface ServerState extends Editable {
   slug: string;
   /**
@@ -209,8 +227,8 @@ export class Server {
 
   /**
    * All-or-nothing edit of the given fields. A change of name, description or access tells the
-   * search index. A change of auth kind drops the stored secret (it belonged to the old mode);
-   * `secretCleared` says so, for the audit.
+   * search index. A change of auth kind, or of the place the secret is sent to
+   * (`secretDestinationChanged`), drops the stored secret; `secretCleared` says so, for the audit.
    */
   update(changes: Partial<Editable>, now: Date): Result<{ secretCleared: boolean }, CatalogError> {
     const v = validate({ ...this.s, ...changes });
@@ -219,7 +237,7 @@ export class Server {
       v.value.name !== this.s.name ||
       v.value.description !== this.s.description ||
       JSON.stringify(v.value.access) !== JSON.stringify(this.s.access);
-    const secretCleared = v.value.auth.kind !== this.s.auth.kind && this.s.sealedSecret !== null;
+    const secretCleared = this.s.sealedSecret !== null && secretDestinationChanged(this.s, v.value);
     this.s = {
       ...this.s,
       ...v.value,

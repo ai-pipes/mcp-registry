@@ -19,6 +19,7 @@ import {
   build,
   initialState,
   isAuthKind,
+  secretResetReason,
   serverErrorField,
   type FieldErrors,
   type FieldName,
@@ -79,6 +80,8 @@ export function ServerForm({ server, onSaved }: ServerFormProps) {
   const [f, setF] = useState<FormState>(() => initialState(server));
   const [errors, setErrors] = useState<FieldErrors>({});
   const [formError, setFormError] = useState<unknown>(null);
+  // Set after a save that made the server clear the stored secret: it must be entered again.
+  const [secretCleared, setSecretCleared] = useState(false);
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) =>
     setF((prev) => ({ ...prev, [key]: value }));
 
@@ -96,7 +99,9 @@ export function ServerForm({ server, onSaved }: ServerFormProps) {
       if (secret !== undefined) await api.put(`${base}/secret`, { secret });
       return updated;
     },
-    onSuccess: async (saved) => {
+    onSuccess: async (saved, { secret }) => {
+      // `saved` is the PUT's answer: a secret entered in the same save is set right after it.
+      setSecretCleared(editing && server.secretSet && !saved.secretSet && secret === undefined);
       setF((prev) => ({ ...prev, secret: '' })); // a typed secret is never kept after saving
       await client.invalidateQueries({ queryKey: queryKeys.servers });
       await client.invalidateQueries({ queryKey: queryKeys.server(saved.slug) });
@@ -127,6 +132,7 @@ export function ServerForm({ server, onSaved }: ServerFormProps) {
   function submit(e: FormEvent) {
     e.preventDefault();
     setFormError(null);
+    setSecretCleared(false);
     const built = build(f, editing ? 'edit' : 'create');
     if (!built.ok) {
       setErrors(built.errors);
@@ -140,6 +146,7 @@ export function ServerForm({ server, onSaved }: ServerFormProps) {
   const hasSecret = f.kind === 'shared_secret' || f.kind === 'oauth_user';
   const kindChanged = editing && server.auth.kind !== f.kind;
   const secretStored = editing && server.secretSet && !kindChanged;
+  const resetReason = f.secret === '' ? secretResetReason(server, f) : null;
   const text = (
     name: Exclude<keyof FormState, 'params' | 'kind' | 'accessKind'>,
     label: string,
@@ -303,6 +310,18 @@ export function ServerForm({ server, onSaved }: ServerFormProps) {
             </div>
           )}
         </Field>
+      )}
+      {hasSecret && resetReason !== null && (
+        <p role="status" className="flex items-start gap-2 text-sm text-destructive">
+          <TriangleAlertIcon aria-hidden className="mt-0.5 size-4 shrink-0" />
+          {resetReason === 'url' ? t.secretResetOnUrl : t.secretResetOnOauth}
+        </p>
+      )}
+      {hasSecret && secretCleared && (
+        <p role="status" className="flex items-start gap-2 text-sm text-destructive">
+          <TriangleAlertIcon aria-hidden className="mt-0.5 size-4 shrink-0" />
+          {t.secretClearedAfterSave}
+        </p>
       )}
 
       <fieldset className="flex flex-col gap-3">

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vite-plus/test';
+import type { AuthMode, OAuthClientConfig } from './auth-mode.ts';
 import { Server } from './server.ts';
 import { SyncRecord } from './sync.ts';
 
@@ -182,6 +183,104 @@ describe('Server secret', () => {
       ok: true,
       value: { secretCleared: false },
     });
+  });
+});
+
+const oauthOf = (
+  over: Partial<OAuthClientConfig> = {},
+  withRevoke = true,
+): Extract<AuthMode, { kind: 'oauth_user' }> => ({
+  kind: 'oauth_user',
+  header: 'Authorization',
+  template: 'Bearer {secret}',
+  oauth: {
+    authorizeUrl: 'https://idp.example/authorize',
+    tokenUrl: 'https://idp.example/token',
+    ...(withRevoke ? { revokeUrl: 'https://idp.example/revoke' } : {}),
+    clientId: 'client-1',
+    scopes: ['read'],
+    ...over,
+  },
+});
+
+function withSecret(auth: AuthMode): Server {
+  const s = make({ auth });
+  s.setSealedSecret(new Uint8Array([1]), t0);
+  return s;
+}
+
+describe('Server secret: reset when the place it is sent to changes', () => {
+  it('shared_secret: a changed upstream URL clears the secret and says so', () => {
+    const s = withSecret(shared);
+    const r = s.update({ url: 'https://elsewhere.example/mcp' }, t1);
+    expect(r).toEqual({ ok: true, value: { secretCleared: true } });
+    expect(s.secretSet).toBe(false);
+    expect(s.secretChanged).toBe(true);
+  });
+
+  it('shared_secret: the same URL, or other fields, keep the secret', () => {
+    const s = withSecret(shared);
+    expect(s.update({ url: s.url, name: 'Other', timeoutMs: 5, dailyLimit: 3 }, t1)).toEqual({
+      ok: true,
+      value: { secretCleared: false },
+    });
+    expect(s.update({ auth: { ...shared, header: 'X-Other' } }, t1).ok).toBe(true);
+    expect(s.secretSet).toBe(true);
+  });
+
+  it('shared_secret without a stored secret reports nothing cleared', () => {
+    const s = make({ auth: shared });
+    expect(s.update({ url: 'https://elsewhere.example/mcp' }, t1)).toEqual({
+      ok: true,
+      value: { secretCleared: false },
+    });
+  });
+
+  it('oauth_user: a changed tokenUrl, revokeUrl or clientId clears the client secret', () => {
+    const variants: AuthMode[] = [
+      oauthOf({ tokenUrl: 'https://evil.example/token' }),
+      oauthOf({ revokeUrl: 'https://evil.example/revoke' }),
+      oauthOf({ clientId: 'client-2' }),
+      oauthOf({}, false),
+    ];
+    for (const auth of variants) {
+      const s = withSecret(oauthOf());
+      const r = s.update({ auth }, t1);
+      expect(r, JSON.stringify(auth)).toEqual({ ok: true, value: { secretCleared: true } });
+      expect(s.secretSet).toBe(false);
+    }
+  });
+
+  it('oauth_user: authorize URL, scopes, header, template and the upstream URL keep the secret', () => {
+    const s = withSecret(oauthOf());
+    const r = s.update(
+      {
+        url: 'https://elsewhere.example/mcp',
+        auth: {
+          ...oauthOf({
+            authorizeUrl: 'https://idp.example/authorize2',
+            scopes: ['read', 'write'],
+          }),
+          header: 'X-Token',
+        },
+      },
+      t1,
+    );
+    expect(r).toEqual({ ok: true, value: { secretCleared: false } });
+    expect(s.secretSet).toBe(true);
+  });
+
+  it('a rejected edit changes nothing, the secret included', () => {
+    const s = withSecret(shared);
+    expect(s.update({ url: 'not a url' }, t1).ok).toBe(false);
+    expect(s.secretSet).toBe(true);
+  });
+
+  it('a secret set after the edit (same operation) is kept', () => {
+    const s = withSecret(shared);
+    s.update({ url: 'https://elsewhere.example/mcp' }, t1);
+    s.setSealedSecret(new Uint8Array([9]), t1);
+    expect(s.sealedSecret).toEqual(new Uint8Array([9]));
   });
 });
 
