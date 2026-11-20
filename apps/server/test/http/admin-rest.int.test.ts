@@ -426,6 +426,23 @@ describe('catalog, status, sync, tools', () => {
 
 const at = (m: number) => new Date(Date.UTC(2026, 9, 30, 12, m));
 
+const callsPage = async (query: string) => {
+  const res = await call(admin, 'GET', `/api/calls${query}`);
+  expect(res.status).toBe(200);
+  return CallList.parse(await res.json());
+};
+
+const walkCalls = async (extra: string): Promise<number[]> => {
+  const next = async (cursor: string): Promise<number[]> => {
+    const rows = await callsPage(`?limit=7${extra}${cursor}`);
+    const last = rows[rows.length - 1];
+    if (last === undefined) return [];
+    const more = await next(`&before=${encodeURIComponent(last.startedAt)}&beforeId=${last.id}`);
+    return [...rows.map((r) => Number(r.id)), ...more];
+  };
+  return next('');
+};
+
 describe('GET /api/calls', () => {
   it('lists newest first with filters, default limit 100, without arguments', async () => {
     await Promise.all(
@@ -457,6 +474,47 @@ describe('GET /api/calls', () => {
     expect(await list(`?before=${at(1).toISOString()}`)).toHaveLength(1);
     expect((await call(admin, 'GET', '/api/calls?outcome=bogus')).status).toBe(422);
     expect((await call(admin, 'GET', '/api/calls?limit=0')).status).toBe(422);
+  });
+
+  describe('paging with a (before, beforeId) cursor', () => {
+    const BASE = Date.parse('2026-10-30T10:00:00Z');
+    // ids 1..130 (crossing 9 -> 10 and 99 -> 100), 20 rows per start time: many ties
+    const startOf = (id: number) => new Date(BASE + Math.floor(id / 20) * 1000);
+    const expected = (ids: number[]) =>
+      ids.toSorted((a, b) => startOf(b).getTime() - startOf(a).getTime() || b - a);
+
+    beforeEach(async () => {
+      await pg.sql`insert into gateway.calls
+          (id, user_id, server, tool, started_at, duration_ms, outcome)
+        select g, ${member.id}::uuid, case when g % 2 = 0 then 'other' else 'gitea' end, 't',
+          ${new Date(BASE)}::timestamptz + (g / 20) * interval '1 second', 1, 'ok'
+        from generate_series(1, 130) g`;
+    });
+
+    it('returns every row exactly once, newest first, ties broken by the numeric id', async () => {
+      const seen = await walkCalls('');
+      expect(seen).toEqual(expected(Array.from({ length: 130 }, (_, i) => i + 1)));
+    });
+
+    it('works together with a filter', async () => {
+      const seen = await walkCalls('&server=other');
+      expect(seen).toEqual(expected(Array.from({ length: 65 }, (_, i) => (i + 1) * 2)));
+    });
+
+    it('with only before it is as before: strictly older timestamps', async () => {
+      const cut = startOf(100);
+      const rows = await callsPage(`?limit=500&before=${cut.toISOString()}`);
+      const want = Array.from({ length: 130 }, (_, i) => i + 1).filter(
+        (id) => startOf(id).getTime() < cut.getTime(),
+      );
+      expect(rows.map((r) => Number(r.id))).toEqual(expected(want));
+    });
+
+    it('refuses beforeId without before, and a non-numeric one', async () => {
+      expect((await call(admin, 'GET', '/api/calls?beforeId=5')).status).toBe(422);
+      const at0 = new Date(BASE).toISOString();
+      expect((await call(admin, 'GET', `/api/calls?before=${at0}&beforeId=x`)).status).toBe(422);
+    });
   });
 });
 

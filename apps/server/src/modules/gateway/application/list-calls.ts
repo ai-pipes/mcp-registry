@@ -13,6 +13,7 @@ export async function listCalls(
     server?: string;
     outcome?: CallOutcome;
     before?: Date;
+    beforeId?: string;
     limit?: number;
   },
 ): Promise<Result<(CallLogEntry & { id: string })[], DomainError>> {

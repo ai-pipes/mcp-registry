@@ -23,6 +23,7 @@ export function callRoutes(deps: Pick<GatewayDeps, 'callLog'>, identity: Identit
         ...(q.server === undefined ? {} : { server: q.server }),
         ...(q.outcome === undefined ? {} : { outcome: q.outcome }),
         ...(q.before === undefined ? {} : { before: new Date(q.before) }),
+        ...(q.beforeId === undefined ? {} : { beforeId: q.beforeId }),
         limit: q.limit,
       });
       if (!r.ok) throw r.error;

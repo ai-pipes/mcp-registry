@@ -63,12 +63,17 @@ export type CallLogFilter = {
   outcome?: CallOutcome;
   /** Only entries started strictly before this moment (paging back in time). */
   before?: Date;
+  /**
+   * With `before`: the id of the last entry of the previous page. The cursor is then the pair
+   * (start, id), so entries sharing the boundary start time are neither skipped nor repeated.
+   */
+  beforeId?: string;
   limit: number;
 };
 
 export interface CallLog {
   record(e: CallLogEntry): Promise<void>;
-  /** Newest first. */
+  /** Newest first: start time, then the numeric id. */
   list(filter: CallLogFilter): Promise<(CallLogEntry & { id: string })[]>;
   /** Deletes entries started before `d`; returns how many. */
   deleteOlderThan(d: Date): Promise<number>;

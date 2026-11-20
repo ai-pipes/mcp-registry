@@ -9,6 +9,7 @@ Patch release, no migrations. After you change a server's address or OAuth endpo
 ### Fixed
 
 - The audit page (`GET /api/audit`) sorted entries by the text of their id, so entry 99 appeared above entry 100 and paging with `before` skipped entries. It now sorts by the numeric id, newest first.
+- The call log page (`GET /api/calls`) broke ties between entries that started at the same moment by the text of their id and, with "Load more", skipped entries that shared the start time of the last entry on the previous page. It now sorts by start time and then by the numeric id, and pages with a (start time, id) cursor (new optional `beforeId` query parameter next to `before`).
 - The "Done" button of the new-token dialog did nothing when it was clicked right after the token was created, while the token list was still refreshing. It closes the dialog at once; the token is still shown only once.
 - `GET /` is answered with `Cache-Control: no-cache`, like the other pages of the web UI, so a browser does not keep an old page after an upgrade. Files under `/assets/` stay cached for a year.
 
