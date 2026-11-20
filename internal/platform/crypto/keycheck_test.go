@@ -73,13 +73,22 @@ func TestJudgeOpensTheValueSealedByTypeScript(t *testing.T) {
 	if err := json.Unmarshal(raw, &v); err != nil {
 		t.Fatal(err)
 	}
-	key, _ := base64.StdEncoding.DecodeString(v.KeyCheck.Key)
-	sealed, _ := base64.StdEncoding.DecodeString(v.KeyCheck.Sealed)
+	key, err := base64.StdEncoding.DecodeString(v.KeyCheck.Key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed, err := base64.StdEncoding.DecodeString(v.KeyCheck.Sealed)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if v.KeyCheck.Plain != checkPlain {
 		t.Fatalf("vector plain %q", v.KeyCheck.Plain)
 	}
 	if got := crypto.Judge(sealed, crypto.Keys{Current: key}); got != crypto.KeyCheckOK {
 		t.Fatalf("Judge = %q, want ok", got)
+	}
+	if got := crypto.Judge(sealed, crypto.Keys{Current: randKey(t)}); got != crypto.KeyCheckMismatch {
+		t.Fatalf("Judge with another key = %q, want mismatch", got)
 	}
 }
 
@@ -88,7 +97,7 @@ func TestCheckTextMatchesTypeScriptSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(src), "'"+checkPlain+"'") {
-		t.Fatalf("key-check.ts no longer holds the literal %q: the Go check text must change with it", checkPlain)
+	if !strings.Contains(string(src), "const PLAIN = '"+checkPlain+"';") {
+		t.Fatalf("key-check.ts no longer holds the declaration const PLAIN = %q: the Go check text must change with it", checkPlain)
 	}
 }

@@ -3,6 +3,7 @@ package crypto
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/ai-pipes/mcp-registry/internal/kernel"
 	"github.com/jackc/pgx/v5"
@@ -72,30 +73,30 @@ func readSealed(ctx context.Context, pool *pgxpool.Pool) ([]byte, error) {
 func Verify(ctx context.Context, pool *pgxpool.Pool, k Keys) (string, error) {
 	existing, err := readSealed(ctx, pool)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("key check: %w", err)
 	}
 	if existing != nil {
 		return settled(existing, k), nil
 	}
 	box, err := NewAESGCMBox(k.Current, nil)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("key check: %w", err)
 	}
 	sealed, err := box.Seal(keyCheckPlain)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("key check: %w", err)
 	}
 	tag, err := pool.Exec(ctx,
 		`insert into platform.key_check (sealed) values ($1) on conflict (id) do nothing`, sealed)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("key check: %w", err)
 	}
 	if tag.RowsAffected() > 0 {
 		return KeyCheckCreated, nil
 	}
 	stored, err := readSealed(ctx, pool)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("key check: %w", err)
 	}
 	return settled(stored, k), nil
 }
@@ -104,7 +105,7 @@ func Verify(ctx context.Context, pool *pgxpool.Pool, k Keys) (string, error) {
 func Inspect(ctx context.Context, pool *pgxpool.Pool, k Keys) (string, error) {
 	sealed, err := readSealed(ctx, pool)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("key check: %w", err)
 	}
 	return Judge(sealed, k), nil
 }
@@ -115,7 +116,7 @@ func Inspect(ctx context.Context, pool *pgxpool.Pool, k Keys) (string, error) {
 func ResealCheck(ctx context.Context, pool *pgxpool.Pool, k Keys) (string, error) {
 	existing, err := readSealed(ctx, pool)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("key check: %w", err)
 	}
 	if existing == nil {
 		return KeyCheckAbsent, nil
@@ -126,9 +127,13 @@ func ResealCheck(ctx context.Context, pool *pgxpool.Pool, k Keys) (string, error
 		}
 		return kernel.ResealUnreadable, nil
 	}
-	from, to, err := resealBoxes(k)
+	from, err := NewAESGCMBox(k.Previous, nil)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("key check: %w", err)
+	}
+	to, err := NewAESGCMBox(k.Current, nil)
+	if err != nil {
+		return "", fmt.Errorf("key check: %w", err)
 	}
 	r := kernel.Reseal(existing, from, to)
 	if r.Kind != kernel.ResealResealed {
@@ -137,7 +142,7 @@ func ResealCheck(ctx context.Context, pool *pgxpool.Pool, k Keys) (string, error
 	tag, err := pool.Exec(ctx,
 		`update platform.key_check set sealed = $1 where sealed = $2`, r.Sealed, existing)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("key check: %w", err)
 	}
 	if tag.RowsAffected() > 0 {
 		return kernel.ResealResealed, nil
@@ -150,19 +155,7 @@ func ResealCheck(ctx context.Context, pool *pgxpool.Pool, k Keys) (string, error
 func Remove(ctx context.Context, pool *pgxpool.Pool) (bool, error) {
 	tag, err := pool.Exec(ctx, `delete from platform.key_check`)
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("key check: %w", err)
 	}
 	return tag.RowsAffected() > 0, nil
-}
-
-// resealBoxes returns the boxes as the kernel's interface; go-arch-lint's deep scan reads a call
-// of a kernel function with concrete platform types as a platform-to-kernel injection.
-func resealBoxes(k Keys) (from, to kernel.SecretBox, err error) {
-	if from, err = NewAESGCMBox(k.Previous, nil); err != nil {
-		return nil, nil, err
-	}
-	if to, err = NewAESGCMBox(k.Current, nil); err != nil {
-		return nil, nil, err
-	}
-	return from, to, nil
 }
