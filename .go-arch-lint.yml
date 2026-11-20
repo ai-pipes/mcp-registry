@@ -16,6 +16,8 @@
 #   deps-only-in-infra      pgx, go-oidc, x/oauth2 and ONNX only in infra (and platform); the MCP
 #                           SDK also in http
 #   modules-via-index       another module is imported only by its root package
+#   migrations-only-platform  apps/server/migrations (the embedded SQL files) is imported only by
+#                           platform: no component lists it, platform may depend on anything
 version: 3
 workdir: internal
 allow:
@@ -43,6 +45,10 @@ components:
     in: kernel/**
   platform:
     in: platform/**
+  # The embedded SQL files live with the TypeScript server's migrations (one source of truth);
+  # only platform (internal/platform/migrate's caller, the composition root) may import them.
+  migrations:
+    in: ../apps/server/migrations
   identity-root:
     in: modules/identity
   identity-domain:

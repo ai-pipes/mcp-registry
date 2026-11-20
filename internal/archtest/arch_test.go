@@ -65,6 +65,8 @@ func copyTree(t *testing.T, src, dst string) {
 func skeleton(t *testing.T, dst string) {
 	t.Helper()
 	internal := filepath.Join(repoRoot, "internal")
+	// The migrations package sits outside internal/ but is a component of its own.
+	writeFile(t, filepath.Join(dst, "apps", "server", "migrations", "doc.go"), []byte("package migrations\n"))
 	err := filepath.WalkDir(internal, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -139,6 +141,7 @@ var archFixtures = []struct{ rule, fixture, component, badImport string }{
 	{"no-inward-infra", "no-inward-infra", "catalog-app", modPath + "modules/catalog/http"},
 	{"deps-only-in-infra (vendors)", "deps-only-in-infra", "catalog-app", "github.com/jackc/pgx/v5"},
 	{"modules-via-index", "modules-via-index", "gateway-infra", modPath + "modules/catalog/domain"},
+	{"migrations-only-platform", "migrations-only-platform", "catalog-infra", "github.com/ai-pipes/mcp-registry/apps/server/migrations"},
 }
 
 func TestEveryRuleHasAFailingFixture(t *testing.T) {

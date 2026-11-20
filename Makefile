@@ -3,7 +3,7 @@ GO_ARCH_LINT := github.com/fe3dback/go-arch-lint@v1.19.2
 GOFUMPT := mvdan.cc/gofumpt@v0.12.0
 VERSION := $(shell node -p "require('./apps/server/package.json').version")
 
-.PHONY: compat compat-selfcheck compat-schemas compat-image-ts e2e-flows go-lint go-lint-new go-fmt-check go-arch-lint go-verify go-build print-go-arch-lint print-golangci-lint
+.PHONY: compat compat-selfcheck compat-schemas compat-image-ts e2e-flows go-lint go-lint-new go-fmt-check go-arch-lint go-verify go-test-int go-build print-go-arch-lint print-golangci-lint
 
 go-lint:
 	go run $(GOLANGCI_LINT) run
@@ -28,8 +28,13 @@ print-golangci-lint:
 
 # The compat suite is built with -tags compat so that lint and vet see it; its tests need Docker
 # and minutes, so go-verify does not run them (make compat does).
+#
+# Integration tests (build tag integration) start a real Postgres through testcontainers and need
+# Docker, like `pnpm test:int`. They are vetted and linted with the tag (.golangci.yml build-tags)
+# and run by go-test-int, which go-verify includes.
 go-verify: go-lint go-arch-lint
 	go vet ./...
+	go vet -tags integration ./...
 	go vet -tags compat ./...
 	go vet -tags "compat selfcheck" ./compat/selfcheck/
 	go vet -tags "compat e2e" ./compat/e2e/
@@ -39,6 +44,12 @@ go-verify: go-lint go-arch-lint
 	go test -tags compat -count=1 -run '^(TestAppArgsPublishTheContainerPortAndKeepFileContentOffTheCommandLine|TestAppEnvReadsTheEnvironment|TestCheckUpdate|TestCheckUpdateAllowedReadsTheEnvironment|TestCLIResultStringMasksTokensAndLinkCodes|TestDefaultImageAndCLIFollowTheEnvironment|TestDoExpectingEarlyRefusalReturnsTheAnswerWhateverHappenedToTheWrite|TestErrorNamesSchemaAndPath|TestEveryContractHasASchema|TestEveryDeviationHasADescriptionAndIsUsedByAScenario|TestFinishSavesTheLogOnlyForAFailedTest|TestFixedFollowsTheEnvironment|TestListSuffixAndUnknownName|TestLogFileName|TestLoopbackHostResolution|TestOneOffCLIContainerNeverPutsAValueOnTheCommandLine|TestOtherFormatsAreAsserted|TestParseAppEnv|TestParseFixed|TestPortTakenRecognisesDockersMessages|TestPublicHostAndExtraHostsReachTheContainerArguments|TestRedactTruncates|TestResponseDecode|TestSaveLogDoesNothingWithoutADirectory|TestSchemaRejectsExtraAndMissingFields|TestScrubRemovesCredentialShapes|TestScrubRemovesTheContentOfSecretFiles|TestSecretValuesListTheBareDatabasePasswordToo|TestServerViewWithSecretFieldIsRejected|TestUpdateRefusesNonReferenceImage|TestURLFormatsAreAsserted|TestWriteLogScrubsAndCreatesTheDirectory)$$' ./compat/harness/
 	go test -tags compat -count=1 -run '^(TestAuditPagingProblem|TestCreateServerSyncFailureProblem|TestMCPReaderIsLenient|TestRetryAfterProblem|TestSearchReadyProblem)$$' ./compat/
 	go test ./...
+	$(MAKE) go-test-int
+
+# -p 1: every test binary starts its own Postgres container and the testcontainers reaper they
+# share fails when several binaries create it at once.
+go-test-int:
+	go test -tags integration -count=1 -p 1 ./internal/...
 
 # Regenerates compat/schemas from the zod contracts; CI fails when the committed files are stale.
 compat-schemas:
