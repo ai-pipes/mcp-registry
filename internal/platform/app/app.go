@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"path"
 	"strings"
 	"time"
 
@@ -65,14 +66,27 @@ func signalName(ctx context.Context) string {
 // (everything except /mcp, which has its own limit), client address, CSRF; then the routes.
 // pool may be nil (then /healthz answers 503).
 func handler(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, webRoot string, mount func(*http.ServeMux)) http.Handler {
-	mux := http.NewServeMux()
-	// Only GET (and HEAD) is the probe: other methods fall to the catch-all, a plain 404 like the
-	// TypeScript server's, and /healthz/x is not under it.
-	mux.Handle("GET /healthz", httpx.Healthz(pool))
+	health := httpx.Healthz(pool)
+	rest := httpx.Static(webRoot, httpx.SPAFallback(webRoot, httpx.NotFound()))
+	var extra *http.ServeMux
 	if mount != nil {
-		mount(mux)
+		extra = http.NewServeMux()
+		mount(extra)
 	}
-	mux.Handle("/", httpx.Static(webRoot, httpx.SPAFallback(webRoot, httpx.NotFound())))
+	// Dispatch by hand instead of registering patterns: ServeMux would answer 405 for another
+	// method on a known path and redirect non-clean paths (//x, /a/../b), where the TypeScript
+	// server answers its ordinary not-found. Only GET (and HEAD) /healthz is the probe.
+	mux := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := r.URL.Path
+		switch {
+		case p == "/healthz" && (r.Method == http.MethodGet || r.Method == http.MethodHead):
+			health.ServeHTTP(w, r)
+		case extra != nil && path.Clean(p) == p && routed(extra, r):
+			extra.ServeHTTP(w, r)
+		default:
+			rest.ServeHTTP(w, r)
+		}
+	})
 	return httpx.Chain(mux,
 		httpx.RequestID(logger),
 		httpx.SecurityHeaders(),
@@ -80,6 +94,12 @@ func handler(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, webRoot
 		httpx.ClientIP(cfg.TrustProxy, cfg.TrustProxyHops),
 		httpx.CSRF(cfg.PublicURL),
 	)
+}
+
+// routed reports whether mux has a route for r (a test seam; nothing else is registered in it).
+func routed(mux *http.ServeMux, r *http.Request) bool {
+	_, pattern := mux.Handler(r)
+	return pattern != ""
 }
 
 func isMCP(path string) bool { return path == "/mcp" || strings.HasPrefix(path, "/mcp/") }

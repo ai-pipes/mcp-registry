@@ -81,6 +81,19 @@ func TestHealthzIsGetOnly(t *testing.T) {
 	}
 }
 
+// Go's ServeMux would redirect these; the TypeScript server answers its not-found.
+func TestNonCleanPathsAreNotRedirected(t *testing.T) {
+	h := testHandler(t, nil)
+	for _, p := range []string{"//healthz", "/x/../healthz", "/healthz/.", "//"} {
+		r := httptest.NewRequest("GET", "/x", nil)
+		r.URL.Path = p
+		w := do(h, r)
+		if w.Code != 404 || w.Body.String() != "Not found" || w.Header().Get("Location") != "" {
+			t.Errorf("%s: %d %q Location=%q", p, w.Code, w.Body, w.Header().Get("Location"))
+		}
+	}
+}
+
 func TestEveryResponseCarriesTheChainsHeaders(t *testing.T) {
 	h := testHandler(t, nil)
 	w := do(h, httptest.NewRequest("GET", "/nope", nil))

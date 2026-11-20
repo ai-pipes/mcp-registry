@@ -35,12 +35,10 @@ func newStdoutLogger(level string) *slog.Logger { return logging.New(level, os.S
 // point cancels it with an app.Signal cause on SIGTERM or SIGINT). The result is the process exit
 // code: 0 after a clean stop, 1 when the start failed or the shutdown did not finish in time.
 //
-// Run calls slog.SetDefault with its logger: httpx.WriteDomainError logs through the default one.
 // The start itself (migrations, key check) is not interrupted by ctx: a signal that arrives
 // meanwhile is honoured as soon as the server is up, so a migration is never cut off half way.
 func Run(ctx context.Context, o Options) int {
 	logger := loggerOf(o)
-	slog.SetDefault(logger)
 	cfg := o.Config
 
 	// First record of every start: a failed start shows which version failed.
@@ -86,8 +84,8 @@ func Run(ctx context.Context, o Options) int {
 		Handler:           handler(cfg, logger, pool, webRootOf(o), o.mount),
 		ReadHeaderTimeout: readHeaderTimeout,
 		IdleTimeout:       idleTimeout,
-		// net/http's own messages would bypass the structured logger.
-		ErrorLog: slog.NewLogLogger(slog.DiscardHandler, slog.LevelError),
+		// net/http's own messages stay JSON lines of the platform logger.
+		ErrorLog: slog.NewLogLogger(logger.Handler(), slog.LevelError),
 	}
 	served := make(chan error, 1)
 	go func() { served <- srv.Serve(ln) }()
