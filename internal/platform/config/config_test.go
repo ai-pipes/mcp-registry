@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -208,8 +209,8 @@ func TestLoadRefused(t *testing.T) {
 		{name: "OIDC_SCOPES without openid, OIDC configured", env: set("OIDC_SCOPES", "profile,ZZ-scope", "OIDC_CLIENT_SECRET", "ZZ-oidc-secret-4"), vars: []string{"OIDC_SCOPES"}, values: []string{"ZZ-scope", "ZZ-oidc-secret-4"}},
 		{name: "OIDC_SCOPES without openid, OIDC half set", env: noOIDC("OIDC_ISSUER", idp, "OIDC_SCOPES", "profile"), vars: []string{"OIDC_SCOPES", "OIDC_CLIENT_ID", "OIDC_CLIENT_SECRET"}},
 
-		{name: "SECRETS_KEY together with SECRETS_KEY_FILE", env: set("SECRETS_KEY", key, "SECRETS_KEY_FILE", "/k"), files: map[string]string{"/k": key}, vars: []string{"SECRETS_KEY_FILE"}, values: []string{key}},
-		{name: "PGPASSWORD together with PGPASSWORD_FILE", env: set("PGPASSWORD", "ZZ-pg-secret", "PGPASSWORD_FILE", "/p"), files: map[string]string{"/p": "pw"}, vars: []string{"PGPASSWORD_FILE"}, values: []string{"ZZ-pg-secret"}},
+		{name: "SECRETS_KEY together with SECRETS_KEY_FILE", env: set("SECRETS_KEY", key, "SECRETS_KEY_FILE", "/k"), files: map[string]string{"/k": key}, vars: []string{"SECRETS_KEY_FILE"}, paths: []string{"/k"}, values: []string{key}},
+		{name: "PGPASSWORD together with PGPASSWORD_FILE", env: set("PGPASSWORD", "ZZ-pg-secret", "PGPASSWORD_FILE", "/p"), files: map[string]string{"/p": "pw"}, vars: []string{"PGPASSWORD_FILE"}, paths: []string{"/p"}, values: []string{"ZZ-pg-secret"}},
 		{name: "unreadable files", env: noKey("SECRETS_KEY_FILE", "/run/ZZ-missing/key", "PGPASSWORD_FILE", "/run/ZZ-missing/pw"), vars: []string{"SECRETS_KEY_FILE", "PGPASSWORD_FILE"}, paths: []string{"/run/ZZ-missing/key", "/run/ZZ-missing/pw"}},
 		{name: "empty files", env: noKey("SECRETS_KEY_FILE", "/k", "PGPASSWORD_FILE", "/p"), files: map[string]string{"/k": "", "/p": "  \n\t\n"}, vars: []string{"SECRETS_KEY_FILE", "PGPASSWORD_FILE"}, paths: []string{"/k", "/p"}},
 		{name: "a key file that holds no key", env: noKey("SECRETS_KEY_FILE", "/k"), files: map[string]string{"/k": "ZZ-key-file-content\n"}, vars: []string{"SECRETS_KEY_FILE"}, paths: []string{"/k"}, values: []string{"ZZ-key-file-content"}},
@@ -240,7 +241,20 @@ func TestLoadRefused(t *testing.T) {
 		{name: "PORT is not a number", env: set("PORT", "ZZ99"), vars: []string{"PORT"}, values: []string{"ZZ99"}},
 		{name: "PORT is above 65535", env: set("PORT", "65536"), vars: []string{"PORT"}},
 		{name: "PORT is fractional", env: set("PORT", "3000.5"), vars: []string{"PORT"}},
-		{name: "PORT is an exponent", env: set("PORT", "1e3"), vars: []string{"PORT"}},
+		{name: "PORT is whitespace only", env: set("PORT", "  "), vars: []string{"PORT"}},
+		{name: "PORT is 2^53+1", env: set("PORT", "9007199254740993"), vars: []string{"PORT"}},
+		{name: "PORT is Infinity", env: set("PORT", "Infinity"), vars: []string{"PORT"}},
+		{name: "PORT has a digit separator", env: set("PORT", "1_000"), vars: []string{"PORT"}},
+		{name: "PORT is a bare 0x", env: set("PORT", "0x"), vars: []string{"PORT"}},
+		{name: "PORT is -1", env: set("PORT", "-1"), vars: []string{"PORT"}},
+		{name: "PORT has a NEL, which JavaScript does not trim", env: set("PORT", "\u00853000"), vars: []string{"PORT"}},
+		{name: "SEARCH_MIN_SIMILARITY is Infinity", env: set("SEARCH_MIN_SIMILARITY", "Infinity"), vars: []string{"SEARCH_MIN_SIMILARITY"}},
+		{name: "SEARCH_MIN_SIMILARITY is a bare dot", env: set("SEARCH_MIN_SIMILARITY", "."), vars: []string{"SEARCH_MIN_SIMILARITY"}},
+		{name: "PUBLIC_URL is mailto (deliberately stricter than TypeScript)", env: set("PUBLIC_URL", "mailto:a@b"), vars: []string{"PUBLIC_URL"}},
+		{name: "PUBLIC_URL is file:///x (deliberately stricter than TypeScript)", env: set("PUBLIC_URL", "file:///x"), vars: []string{"PUBLIC_URL"}},
+		{name: "PUBLIC_URL is http:example.com (deliberately stricter than TypeScript)", env: set("PUBLIC_URL", "http:example.com"), vars: []string{"PUBLIC_URL"}},
+		{name: "PUBLIC_URL port above 65535", env: set("PUBLIC_URL", "http://x.example:70000"), vars: []string{"PUBLIC_URL"}},
+		{name: "SECRETS_KEY with a trailing space", env: set("SECRETS_KEY", " "+key), vars: []string{"SECRETS_KEY"}, values: []string{key}},
 		{name: "PORT overflows", env: set("PORT", "99999999999999999999999"), vars: []string{"PORT"}},
 		{name: "TRUST_PROXY_HOPS is 9", env: set("TRUST_PROXY_HOPS", "9"), vars: []string{"TRUST_PROXY_HOPS"}},
 		{name: "TRUST_PROXY_HOPS is 0", env: set("TRUST_PROXY_HOPS", "0"), vars: []string{"TRUST_PROXY_HOPS"}},
@@ -285,7 +299,7 @@ func TestLoadRefused(t *testing.T) {
 					t.Errorf("%s is not named with a reason:\n%s", v, msg)
 				}
 			}
-			if len(lines) != len(tc.vars) && tc.name != "OIDC_SCOPES without openid, OIDC half set" {
+			if len(lines) != len(tc.vars) {
 				t.Errorf("want %d lines, got %d:\n%s", len(tc.vars), len(lines), msg)
 			}
 			for _, p := range tc.paths {
@@ -320,21 +334,134 @@ func TestLoadOIDCScopesWithoutOpenidWithoutOIDC(t *testing.T) {
 
 func TestLoadURLs(t *testing.T) {
 	for _, tc := range []struct {
-		url string
-		ok  bool
+		url  string
+		ok   bool
+		want string
 	}{
-		{"not a url", false},
-		{"/relative", false},
-		{"http://", false},
-		{"https://ok.example", true},
-		{"http://localhost:3000", true},
-		{"example.com", false},
-		{"http://:80", false},
+		{"not a url", false, ""},
+		{"/relative", false, ""},
+		{"http://", false, ""},
+		{"https://ok.example", true, "https://ok.example"},
+		{"http://localhost:3000", true, "http://localhost:3000"},
+		{"example.com", false, ""},
+		{"http://:80", false, ""},
+		// zod's z.url() trims (JavaScript set) and drops tab, CR and LF anywhere; the cleaned value is stored.
+		{" https://x.example ", true, "https://x.example"},
+		{"\u00a0https://x.example\ufeff", true, "https://x.example"},
+		{"https://exa\tmple.com", true, "https://example.com"},
+		{"https://x\r\n.example/pa\tth\n", true, "https://x.example/path"},
+		{"HTTP://X.example", true, "HTTP://X.example"},
+		{"http://x.example:65535", true, "http://x.example:65535"},
+		{"http://x.example:70000", false, ""},
+		// Deliberately stricter than the TypeScript server: zod accepts these, but they cannot
+		// give a working gateway.
+		{"mailto:a@b", false, ""},
+		{"file:///x", false, ""},
+		{"http:example.com", false, ""},
 	} {
-		_, err := config.Load(baseEnv(t).with("PUBLIC_URL", tc.url), noFiles)
-		if (err == nil) != tc.ok {
-			t.Errorf("%q: ok=%v err=%v", tc.url, tc.ok, err)
+		c, err := config.Load(baseEnv(t).with("PUBLIC_URL", tc.url), noFiles)
+		if (err == nil) != tc.ok || (tc.ok && c.PublicURL != tc.want) {
+			t.Errorf("%q: ok=%v err=%v got=%q", tc.url, tc.ok, err, c.PublicURL)
 		}
+	}
+	c, err := config.Load(baseEnv(t).with("OIDC_ISSUER", " https://id.example\t.com\n", "EMBEDDER", "openai-compatible", "EMBEDDER_MODEL", "m", "EMBEDDER_URL", "\thttp://e/v1 "), noFiles)
+	if err != nil || c.OIDC.Issuer != "https://id.example.com" || c.EmbedderURL != "http://e/v1" {
+		t.Fatalf("cleaned issuer/embedder url: %v %+v", err, c)
+	}
+}
+
+// Numbers follow JavaScript Number() as z.coerce.number() does; every row was checked against
+// the real zod schema with a one-off probe (see the report).
+func TestLoadNumbersFollowJavaScript(t *testing.T) {
+	for _, tc := range []struct {
+		v    string
+		want int
+	}{
+		{" 3000 ", 3000},
+		{"3e3", 3000},
+		{"0x10", 16},
+		{"0X10", 16},
+		{"0b11", 3},
+		{"0o17", 15},
+		{"3000.0", 3000},
+		{"3000.", 3000},
+		{".5e4", 5000},
+		{"+3000", 3000},
+		{"\u00a03000\ufeff", 3000},
+		{"\u20283000\u2029", 3000},
+	} {
+		c, err := config.Load(baseEnv(t).with("PORT", tc.v), noFiles)
+		if err != nil || c.Port != tc.want {
+			t.Errorf("PORT=%q: %v %d, want %d", tc.v, err, c.Port, tc.want)
+		}
+	}
+	c, err := config.Load(baseEnv(t).with("PORT", ""), noFiles)
+	if err != nil || c.Port != 3000 {
+		t.Errorf("empty PORT: %v %d", err, c.Port)
+	}
+	c, err = config.Load(baseEnv(t).with("UPSTREAM_MAX_RESPONSE_BYTES", "2e7"), noFiles)
+	if err != nil || c.UpstreamMaxResponseBytes != 20000000 {
+		t.Errorf("2e7: %v %d", err, c.UpstreamMaxResponseBytes)
+	}
+	for _, tc := range []struct {
+		v    string
+		want float64
+	}{
+		{"8e-1", 0.8}, {" .83", 0.83}, {"  ", 0}, {"-0", 0}, {"1.0000", 1}, {"0x1", 1}, {"+.5", 0.5},
+	} {
+		c, err := config.Load(baseEnv(t).with("SEARCH_MIN_SIMILARITY", tc.v), noFiles)
+		if err != nil || c.SearchMinSimilarity != tc.want {
+			t.Errorf("SEARCH_MIN_SIMILARITY=%q: %v %v, want %v", tc.v, err, c.SearchMinSimilarity, tc.want)
+		}
+	}
+}
+
+// JavaScript's String.prototype.trim set, not Go's: a BOM is trimmed, NEL is not.
+func TestLoadTrimsWithTheJavaScriptSet(t *testing.T) {
+	key := b64(t, 32)
+	c, err := config.Load(baseEnv(t).without("SECRETS_KEY").with("SECRETS_KEY_FILE", "/k", "PGPASSWORD_FILE", "/p"),
+		files(map[string]string{"/k": "\ufeff" + key + "\n", "/p": "\ufeffpw\u00a0\n"}))
+	if err != nil || base64.StdEncoding.EncodeToString(c.SecretsKey) != key || c.DatabasePassword == nil || *c.DatabasePassword != "pw" {
+		t.Fatalf("BOM files: %v", err)
+	}
+	c, err = config.Load(baseEnv(t).with("PGPASSWORD_FILE", "/p"), files(map[string]string{"/p": "\u0085pw\u0085\u180e"}))
+	if err != nil || c.DatabasePassword == nil || *c.DatabasePassword != "\u0085pw\u0085\u180e" {
+		t.Fatalf("NEL and U+180E are not JavaScript whitespace: %v", err)
+	}
+	c, err = config.Load(baseEnv(t).with("ALLOWED_HOSTS", "\u00a0a.com\ufeff,\u2003b.com\u2028, \u0085c.com"), noFiles)
+	if err != nil || !slices.Equal(c.AllowedHosts, []string{"a.com", "b.com", "\u0085c.com"}) {
+		t.Fatalf("allowed hosts: %v %q", err, c.AllowedHosts)
+	}
+}
+
+// The shipped .env.example, filled in exactly as the TypeScript test does.
+func TestLoadAcceptsTheShippedEnvExample(t *testing.T) {
+	text, err := os.ReadFile("../../../.env.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := env{}
+	for _, raw := range strings.Split(string(text), "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		name, value, ok := strings.Cut(line, "=")
+		if !ok {
+			t.Fatalf("not a KEY=value line: %q", line)
+		}
+		e[strings.TrimSpace(name)] = strings.TrimSpace(value)
+	}
+	e = e.with(
+		"DATABASE_URL", "postgres://mcp@db:5432/mcp", "SECRETS_KEY", b64(t, 32),
+		"OIDC_ISSUER", "https://id.example.com", "OIDC_CLIENT_ID", "id", "OIDC_CLIENT_SECRET", "secret",
+	)
+	c, err := config.Load(e, noFiles)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Port != 3000 || c.OIDCLoginGroup != "mcp-users" {
+		t.Fatalf("%+v", c)
 	}
 }
 

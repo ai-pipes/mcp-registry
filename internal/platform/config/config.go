@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"fmt"
+	"math"
 	"net/url"
 	"regexp"
 	"slices"
@@ -58,10 +59,8 @@ type Config struct {
 }
 
 var (
-	intPattern   = regexp.MustCompile(`^[+-]?[0-9]+$`)
-	floatPattern = regexp.MustCompile(`^[+-]?([0-9]+(\.[0-9]*)?|\.[0-9]+)$`)
-	scopeSplit   = regexp.MustCompile(`[\s,]+`)
-	logLevels    = []string{"fatal", "error", "warn", "info", "debug", "trace", "silent"}
+	scopeSplit = regexp.MustCompile(`[\s,]+`)
+	logLevels  = []string{"fatal", "error", "warn", "info", "debug", "trace", "silent"}
 )
 
 // Load validates env (an empty value counts as unset) and returns the configuration, or an *Error
@@ -83,7 +82,7 @@ func Load(env map[string]string, readFile func(string) (string, error)) (Config,
 	}
 	cfg.PublicURL = urlVar(set, "PUBLIC_URL", true, &c)
 	for _, h := range strings.Split(set["ALLOWED_HOSTS"], ",") {
-		if h = strings.TrimSpace(h); h != "" {
+		if h = jsTrim(h); h != "" {
 			cfg.AllowedHosts = append(cfg.AllowedHosts, h)
 		}
 	}
@@ -225,8 +224,11 @@ func requiredVar(set map[string]string, name string, c *issues) string {
 	return v
 }
 
-// urlVar accepts an absolute URL with a scheme and a host (what z.url() guards in the TypeScript
-// server). An unset optional variable yields "".
+// urlVar cleans the value as zod's z.url() does (JavaScript trim, then tab, CR and LF removed
+// anywhere), stores the cleaned value, and requires a scheme, a host and a port of at most 65535.
+// Requiring a host is deliberately stricter than the TypeScript server, which also accepts
+// hostless forms (mailto:a@b, file:///x, http:example.com): they cannot give a working gateway.
+// An unset optional variable yields "".
 func urlVar(set map[string]string, name string, required bool, c *issues) string {
 	v, ok := set[name]
 	if !ok {
@@ -235,12 +237,17 @@ func urlVar(set map[string]string, name string, required bool, c *issues) string
 		}
 		return ""
 	}
+	v = strings.NewReplacer("\t", "", "\r", "", "\n", "").Replace(jsTrim(v))
 	u, err := url.Parse(v)
-	if err != nil || u.Scheme == "" || u.Hostname() == "" {
-		c.add(name, "must be an absolute URL with a scheme and a host, such as https://example.com")
-		return ""
+	if err == nil && u.Scheme != "" && u.Hostname() != "" {
+		if p := u.Port(); p == "" {
+			return v
+		} else if n, perr := strconv.Atoi(p); perr == nil && n <= 65535 {
+			return v
+		}
 	}
-	return v
+	c.add(name, "must be an absolute URL with a scheme, a host and a port of at most 65535, such as https://example.com")
+	return ""
 }
 
 func boolVar(set map[string]string, name string, fallback bool, c *issues) bool {
@@ -268,15 +275,15 @@ func enumVar(set map[string]string, name, fallback string, allowed []string, c *
 	return v
 }
 
-// intVar accepts plain decimal integers (optional sign, digits; no exponent, no hex, no fraction).
-// max <= 0 means no upper bound.
+// intVar parses like z.coerce.number().int(): JavaScript Number() syntax, finite, a safe integer,
+// then the bounds. maximum <= 0 means no upper bound.
 func intVar(set map[string]string, name string, fallback, minimum, maximum int, c *issues) int {
 	v, ok := set[name]
 	if !ok {
 		return fallback
 	}
-	n, err := strconv.ParseInt(v, 10, 64)
-	if !intPattern.MatchString(v) || err != nil || n < int64(minimum) || (maximum > 0 && n > int64(maximum)) {
+	f, valid := jsNumber(v)
+	if !valid || f != math.Trunc(f) || math.Abs(f) > maxSafeInteger || f < float64(minimum) || (maximum > 0 && f > float64(maximum)) {
 		if maximum > 0 {
 			c.add(name, fmt.Sprintf("must be an integer from %d to %d", minimum, maximum))
 		} else {
@@ -284,7 +291,7 @@ func intVar(set map[string]string, name string, fallback, minimum, maximum int, 
 		}
 		return fallback
 	}
-	return int(n)
+	return int(f)
 }
 
 func floatVar(set map[string]string, name string, fallback, minimum, maximum float64, c *issues) float64 {
@@ -292,8 +299,8 @@ func floatVar(set map[string]string, name string, fallback, minimum, maximum flo
 	if !ok {
 		return fallback
 	}
-	f, err := strconv.ParseFloat(v, 64)
-	if !floatPattern.MatchString(v) || err != nil || f < minimum || f > maximum {
+	f, valid := jsNumber(v)
+	if !valid || math.IsInf(f, 0) || f < minimum || f > maximum {
 		c.add(name, fmt.Sprintf("must be a number from %g to %g", minimum, maximum))
 		return fallback
 	}
