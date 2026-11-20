@@ -46,8 +46,8 @@ package compat_test
 //   - "create-server does not read stdin for a mode without ..."  TestCLIServers (none)
 //   - "create-server refuses invalid JSON input, an unset ..."    TestCLIServers (refusals)
 //   - "a failed first sync is reported, but the server is created" TestCLIServers (sync failed)
-//   - "sync re-reads the tools, as an admin or as the scheduler"  TestCLISync
-//   - "reindex rebuilds the search index and reports the count"   TestCLIReindex
+//   - "sync re-reads the tools, as an admin or as the scheduler"  TestCLIServers (sync)
+//   - "reindex rebuilds the search index and reports the count"   TestCLIServers (reindex), TestCLIReindexEmpty
 //   - rotate-secrets-key: "re-seals server secrets and connections", "re-seals the key check",
 //     "already current on a repeat", "fails naming the key check", "refuses to run without
 //     SECRETS_KEY_OLD", "fails and names what neither key opens"  TestCLIKeys (rotate)

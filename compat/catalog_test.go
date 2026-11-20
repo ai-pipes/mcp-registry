@@ -32,7 +32,7 @@ package compat_test
 //   - mcp-upstream-client.int.test.ts "returns an image block byte for byte": the fake upstream
 //     has no image mode and the pass-through of results is a gateway scenario.
 //   - "a JSON-RPC internal error ... is rejected too": its tools/call half is ported (-32603 in
-//     TestCatalogUpstreamCalls); the listTools half is not, the fake can only reject tools/call.
+//     TestCatalogServers, subtest "upstream calls"); the listTools half is not, the fake can only reject tools/call.
 
 import (
 	"bytes"

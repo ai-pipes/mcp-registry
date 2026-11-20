@@ -127,27 +127,6 @@ func gwTablesContaining(t *testing.T, s *harness.Stack, marker string) []string 
 	return found
 }
 
-// gwErrorRecords counts the records of the app log at error level or above, whether the level is
-// written as a number (>= 50, as pino does) or as a name (error, fatal, in either case).
-func gwErrorRecords(t *testing.T, s *harness.Stack) int {
-	t.Helper()
-	recs, _ := logRecords(t, s.Logs(t))
-	n := 0
-	for _, r := range recs {
-		switch lv := r["level"].(type) {
-		case float64:
-			if lv >= 50 {
-				n++
-			}
-		case string:
-			if l := strings.ToLower(lv); l == "error" || l == "fatal" {
-				n++
-			}
-		}
-	}
-	return n
-}
-
 // ---- TestGatewayCall ----
 
 func TestGatewayCall(t *testing.T) {
@@ -722,7 +701,7 @@ func TestGatewayFaults(t *testing.T) {
 	t.Run("an unexpected failure is Internal error. and the log keeps no arguments", func(t *testing.T) {
 		e := gwNewServer(t, led, admin, nil, "none", fakes.WithDailyLimit(5))
 		marker := "compat-fault-" + harness.Unique("a")
-		errorsBefore := gwErrorRecords(t, s)
+		errorsBefore := logCountFrom(t, s, "error")
 		restore := gwBlockWrites(t, s, "gateway.quota")
 		defer restore()
 		res := p.call(led, e.ref("echo"), map[string]any{"text": marker})
@@ -737,7 +716,7 @@ func TestGatewayFaults(t *testing.T) {
 		// Log messages and levels are not part of the stable surface: all that is pinned is that the
 		// failure is logged at error level or above and that no
 		// line of the log carries the arguments.
-		if n := gwErrorRecords(t, s); n <= errorsBefore {
+		if n := logCountFrom(t, s, "error"); n <= errorsBefore {
 			t.Fatalf("no error-level record for the failure (%d before, %d now)", errorsBefore, n)
 		}
 		if strings.Contains(s.Logs(t), marker) || strings.Contains(mustJSON(t, res), "blocked by the compat suite") {
@@ -756,7 +735,7 @@ func TestGatewayFaults(t *testing.T) {
 	t.Run("a failed call-log write never changes the agent's answer", func(t *testing.T) {
 		e := gwNewServer(t, led, admin, nil, "none")
 		marker := "compat-logfail-" + harness.Unique("a")
-		errorsBefore := gwErrorRecords(t, s)
+		errorsBefore := logCountFrom(t, s, "error")
 		restore := gwBlockWrites(t, s, "gateway.calls")
 		defer restore()
 		res := p.call(led, e.ref("echo"), map[string]any{"text": marker})
@@ -769,7 +748,7 @@ func TestGatewayFaults(t *testing.T) {
 		if n := len(gwRows(t, s, e.slug)); n != 0 {
 			t.Fatalf("%d rows were written although the table refuses writes", n)
 		}
-		if n := gwErrorRecords(t, s); n <= errorsBefore {
+		if n := logCountFrom(t, s, "error"); n <= errorsBefore {
 			t.Fatalf("the lost log entry left no error-level record (%d before, %d now)", errorsBefore, n)
 		}
 		if strings.Contains(s.Logs(t), marker) {

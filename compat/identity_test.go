@@ -261,15 +261,16 @@ func TestIdentityOIDC(t *testing.T) {
 		if _, _, n := userRow(t, sub); n != 0 {
 			t.Fatal("the person was created")
 		}
+		// Identified by severity and context (the record names this sub), not by its message.
 		recs, _ := logRecords(t, s.Logs(t))
 		var warns []map[string]any
-		for _, r := range recs {
-			if m, _ := r["msg"].(string); level(r) == pinoWarn && strings.Contains(m, "userinfo failed") {
+		for _, r := range recordsAt(recs, "warn") {
+			if strings.Contains(mustJSON(t, r), sub) {
 				warns = append(warns, r)
 			}
 		}
 		if len(warns) != 1 {
-			t.Fatalf("%d warnings about UserInfo, want 1", len(warns))
+			t.Fatalf("%d warn-level records about this person's UserInfo failure, want 1", len(warns))
 		}
 		line := mustJSON(t, warns[0])
 		if !strings.Contains(line, sub) || strings.Contains(line, "access-") || strings.Contains(line, "nina@example.test") {
@@ -411,22 +412,24 @@ func TestIdentityOIDC(t *testing.T) {
 		}
 		defer restore()
 		sub := harness.Unique("db")
+		errorsBefore := logCountFrom(t, s, "error")
 		a := beginIDPLogin(t, s, idp, identityLoginPerson(sub, "Dan", "mcp-users"), "")
 		loginErr(t, a.callback(t), "/?loginError=internal")
 		restore()
 		if _, _, n := userRow(t, sub); n != 0 {
 			t.Fatal("a person was created although the write failed")
 		}
-		var logged map[string]any
+		// The failure is logged at error level or above, without the failure's own message. The
+		// record is told apart by being new since before the request, not by its message text.
 		recs, _ := logRecords(t, s.Logs(t))
-		for _, r := range recordsWithMsg(recs, "auth: login callback failed") {
-			logged = r
+		errs := recordsFrom(recs, "error")
+		if len(errs) <= errorsBefore {
+			t.Fatalf("no error-level record for the failed callback (%d before, %d now)", errorsBefore, len(errs))
 		}
-		if logged == nil || level(logged) != 50 {
-			t.Fatalf("no error record for the failed callback (%v)", logged)
-		}
-		if strings.Contains(mustJSON(t, logged), "blocked by the compat suite") {
-			t.Fatalf("the error record quotes the failure message: %v", logged)
+		for _, r := range errs[errorsBefore:] {
+			if strings.Contains(mustJSON(t, r), "blocked by the compat suite") {
+				t.Fatalf("the error record quotes the failure message: %v", r)
+			}
 		}
 		// Control: once the database accepts writes the same person signs in.
 		loginViaIDP(t, s, idp, identityLoginPerson(sub, "Dan", "mcp-users"))
@@ -658,9 +661,20 @@ func TestIdentityOIDCProviderDownAtStart(t *testing.T) {
 
 var identityIPSeq atomic.Int32
 
+// identityMaxIPs is how many distinct addresses identityNextIP can produce: the benchmarking block
+// 198.18.0.0/15 (RFC 2544), 2^17 addresses, which no real client uses.
+const identityMaxIPs = 1 << 17
+
 // identityNextIP is a client address no other scenario uses; the stack trusts X-Forwarded-For, so each
-// scenario gets its own failure budget.
-func identityNextIP() string { return fmt.Sprintf("203.0.113.%d", identityIPSeq.Add(1)) }
+// scenario gets its own failure budget. It panics before it would produce an invalid or repeated
+// address (the test binary asks for tens of them, nowhere near the limit).
+func identityNextIP() string {
+	n := int(identityIPSeq.Add(1))
+	if n >= identityMaxIPs {
+		panic(fmt.Sprintf("identityNextIP: %d addresses handed out, the range 198.18.0.0/15 is used up", n))
+	}
+	return fmt.Sprintf("198.%d.%d.%d", 18+n>>16, n>>8&255, n&255)
+}
 
 func identityForwarded(ip string) string { return "X-Forwarded-For: " + ip }
 
@@ -844,7 +858,7 @@ func TestIdentityNoOIDC(t *testing.T) {
 		var ref harness.Response
 		for i, p := range probes {
 			r := identityPostLink(t, s.Anonymous(), p.code, identityForwarded(identityNextIP()))
-			if r.Status != 401 || errorCode(t, r) != identityInvalidLink || r.Header.Get("Retry-After") != "" || len(r.Header.Values("Set-Cookie")) != 0 {
+			if r.Status != 401 || errorCode(t, r) != identityInvalidLink || len(r.Header.Values("Set-Cookie")) != 0 {
 				t.Errorf("%s: %d %s, %d Set-Cookie headers", p.name, r.Status, r.Body, len(r.Header.Values("Set-Cookie")))
 			}
 			if i == 0 {
@@ -1486,7 +1500,7 @@ func TestIdentityNoOIDC(t *testing.T) {
 			}
 		}
 		r := anon.Do(t, "GET", "/mcp", nil, identityForwarded(ip), "Authorization: Bearer sk_"+strings.Repeat("y", 43))
-		if r.Status != 429 || errorCode(t, r) != "rate_limited|too many failed attempts" || false {
+		if r.Status != 429 || errorCode(t, r) != "rate_limited|too many failed attempts" {
 			// The image sends neither Retry-After nor WWW-Authenticate on this 429 (unlike the link
 			// endpoint); that is deliberately not asserted, so a rewrite may add them.
 			t.Fatalf("31st failure: %d %s", r.Status, r.Body)

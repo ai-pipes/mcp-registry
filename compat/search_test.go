@@ -180,7 +180,7 @@ func TestCatalogSearch(t *testing.T) {
 			}
 			for j := range w.Scores {
 				if math.Abs(w.Scores[j]-g.Scores[j]) > 1e-6 {
-					t.Errorf("%q: score of %s is %.9f, golden %.9f (tolerance 1e-6)", w.Query, w.Refs[j], g.Scores[j], w.Scores[j])
+					t.Errorf("%q: score of %s is %.9f, golden %.9f (rank-derived, tolerance 1e-6)", w.Query, w.Refs[j], g.Scores[j], w.Scores[j])
 				}
 			}
 		}
@@ -219,9 +219,7 @@ func TestCatalogSearch(t *testing.T) {
 		}
 		for _, bad := range []int{0, 26, -1} {
 			res := catalogCallMCP(t, c, "search_tools", map[string]any{"query": "issue", "limit": bad})
-			if !res.IsError || !strings.HasPrefix(catalogText(res), "Input validation error: Invalid arguments for tool search_tools: limit: ") {
-				t.Errorf("limit %d: isError %v %q", bad, res.IsError, catalogText(res))
-			}
+			catalogExpectInputError(t, fmt.Sprintf("limit %d", bad), res, "limit")
 		}
 	})
 
@@ -256,8 +254,11 @@ func TestCatalogSearch(t *testing.T) {
 			t.Fatalf("one unknown among known: isError %v %q", res.IsError, catalogText(res))
 		}
 		res = catalogCallMCP(t, c, "search_tools", catalogSearchArgs("issue", 0, []string{}))
-		if !res.IsError || catalogText(res) != "Input validation error: Invalid arguments for tool search_tools: servers: Too small: expected array to have >=1 items" {
-			t.Fatalf("empty filter: isError %v %q (the tool never returns [] for an empty list: its schema refuses it)", res.IsError, catalogText(res))
+		// The tool never returns [] for an empty list: its schema refuses it, as an input error that
+		// names the field (the validator's wording is not pinned).
+		catalogExpectInputError(t, "empty filter", res, "servers")
+		if t.Failed() {
+			t.FailNow()
 		}
 		// Control: the same query without a filter works.
 		if hits := catalogSearch(t, c, "create an issue in the tracker", 3, nil); len(hits) == 0 {
@@ -638,6 +639,16 @@ func catalogSearchAccess(t *testing.T, s *harness.Stack, admin *harness.Client) 
 			t.Fatal("the member's catalog still has the server after the access was closed")
 		}
 	})
+}
+
+// catalogExpectInputError checks that a tool result is an input-validation error naming the field
+// as a path token: an error that is neither a success nor the not_found text.
+func catalogExpectInputError(t *testing.T, what string, res *mcp.CallToolResult, field string) {
+	t.Helper()
+	text := catalogText(res)
+	if !res.IsError || text == "" || strings.Contains(text, "is not available") || !mcpFieldNamed(text, field) {
+		t.Errorf("%s: isError %v %q, want an input-validation error that names the field %q", what, res.IsError, text, field)
+	}
 }
 
 func slugOf(ref string) string {

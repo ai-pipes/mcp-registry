@@ -27,7 +27,8 @@ package compat_test
 //     same (a digest of every row, the embedding included): nothing was reindexed;
 //   - the call log, the quota counters and the audit rows of before are unchanged (a digest of every
 //     row), the quota counter goes on counting;
-//   - the pending link still signs in; schema_migrations and the key check are unchanged;
+//   - the pending link still signs in, a NEW sign-in works (the old web session is not asserted: sessions
+//     may be lost); schema_migrations and the key check are unchanged;
 //   - the other direction: a person, a token and a server created by the new image work.
 // The app re-synchronises every server at start; the scenario waits for that to finish (and for the
 // outbox to drain) before it compares the index, so a sync that rewrote documents would be seen.
@@ -233,7 +234,7 @@ func TestUpgradeKeepsEverything(t *testing.T) {
 	// ---- the swap ----
 	s.SwapImage(t, platformImage(), newCLI)
 
-	if n := gwErrorRecords(t, s); n != 0 {
+	if n := logCountFrom(t, s, "error"); n != 0 {
 		t.Fatalf("%d error-level or fatal records in the log after the swap", n)
 	}
 	if links := linkRecords(t, s.Logs(t)); len(links) != 0 {
@@ -267,9 +268,20 @@ func TestUpgradeKeepsEverything(t *testing.T) {
 				t.Errorf("list_servers: %s is %+v, want connection %s", slug, listed, want)
 			}
 		}
-		// Sessions are rows: the person's web session of before the swap still works.
-		if me := whoami(t, member.c); me.UserID != member.id {
-			t.Errorf("the old web session: %+v", me)
+		// A web session of before the swap may or may not survive (the compatibility requirements
+		// allow it to be lost, so it is not asserted); what must work is a NEW sign-in of the same person.
+		var sub string
+		if err := s.DB.QueryRow(t.Context(), `select oidc_sub from identity.users where id = $1::uuid`, member.id).Scan(&sub); err != nil {
+			t.Fatal(err)
+		}
+		code := identityLinkFor(t, s, sub)
+		led.note(code)
+		fresh := s.Anonymous()
+		if r := identityPostLink(t, fresh, code); r.Status != 204 {
+			t.Fatalf("a new sign-in after the swap: %d %s", r.Status, r.Body)
+		}
+		if me := whoami(t, fresh); me.UserID != member.id {
+			t.Errorf("the new session after the swap: %+v", me)
 		}
 		// Control: a token that never existed is refused.
 		if r := identityMCPInitialize(t, s.Anonymous(), "sk_"+strings.Repeat("A", 43)); r.Status != 401 {

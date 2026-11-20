@@ -10,10 +10,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"mime"
 	"net"
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -303,4 +305,109 @@ func cookieDesc(c *http.Cookie) string {
 		return "<none>"
 	}
 	return fmt.Sprintf("%s (value %d chars) path %q httpOnly %v secure %v sameSite %v maxAge %d", c.Name, len(c.Value), c.Path, c.HttpOnly, c.Secure, c.SameSite, c.MaxAge)
+}
+
+// ---- the application log, whatever the logger ----
+
+// logRecords parses the JSON lines of an app log; lines that are not JSON are returned apart.
+func logRecords(t *testing.T, logs string) (records []map[string]any, other []string) {
+	t.Helper()
+	for _, line := range strings.Split(logs, "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var rec map[string]any
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			other = append(other, line)
+			continue
+		}
+		records = append(records, rec)
+	}
+	return records, other
+}
+
+// logLevels is the order of severities; a record's level is read by logLevel whatever spelling the
+// logger uses.
+var logLevels = []string{"trace", "debug", "info", "warn", "error", "fatal"}
+
+// logLevel names the severity of a record: its "level" as a name (any case; "warning" is warn) or
+// as a number (the usual scale: >= 60 fatal, >= 50 error, >= 40 warn, >= 30 info, >= 20 debug,
+// below that trace). A record without a level is "".
+func logLevel(rec map[string]any) string {
+	switch lv := rec["level"].(type) {
+	case float64:
+		switch {
+		case lv >= 60:
+			return "fatal"
+		case lv >= 50:
+			return "error"
+		case lv >= 40:
+			return "warn"
+		case lv >= 30:
+			return "info"
+		case lv >= 20:
+			return "debug"
+		default:
+			return "trace"
+		}
+	case string:
+		name := strings.ToLower(lv)
+		if name == "warning" {
+			name = "warn"
+		}
+		if slices.Contains(logLevels, name) {
+			return name
+		}
+	}
+	return ""
+}
+
+func logRank(level string) int { return slices.Index(logLevels, level) }
+
+// recordsAt returns the records whose severity is exactly level.
+func recordsAt(recs []map[string]any, level string) []map[string]any {
+	return slices.DeleteFunc(slices.Clone(recs), func(r map[string]any) bool { return logLevel(r) != level })
+}
+
+// recordsFrom returns the records whose severity is level or higher.
+func recordsFrom(recs []map[string]any, level string) []map[string]any {
+	floor := logRank(level)
+	return slices.DeleteFunc(slices.Clone(recs), func(r map[string]any) bool {
+		rank := logRank(logLevel(r))
+		return rank < 0 || rank < floor
+	})
+}
+
+// logCountFrom counts the records of the whole app log at level or higher.
+func logCountFrom(t *testing.T, s *harness.Stack, level string) int {
+	t.Helper()
+	recs, _ := logRecords(t, s.Logs(t))
+	return len(recordsFrom(recs, level))
+}
+
+// recordsWithMsg returns the records with exactly that message. Use it only for the records an
+// operator is told to look for (the first-start link, the key-check records, the newer-database
+// fatal, starting/listening); any other event is identified by its context fields and severity.
+func recordsWithMsg(recs []map[string]any, msg string) []map[string]any {
+	var out []map[string]any
+	for _, r := range recs {
+		if m, _ := r["msg"].(string); m == msg {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// assertMediaType checks a media type compared as parsed: the type and the charset parameter are matched
+// case-insensitively (a server may write charset=UTF-8 or charset=utf-8), other parameters exactly.
+func assertMediaType(t *testing.T, what, got, wantType, wantCharset string) {
+	t.Helper()
+	typ, params, err := mime.ParseMediaType(got)
+	if err != nil {
+		t.Errorf("%s: Content-Type %q: %v", what, got, err)
+		return
+	}
+	if !strings.EqualFold(typ, wantType) || !strings.EqualFold(params["charset"], wantCharset) || len(params) > 1 {
+		t.Errorf("%s: Content-Type %q, want %s with charset %s (case-insensitive)", what, got, wantType, wantCharset)
+	}
 }

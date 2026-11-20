@@ -42,7 +42,7 @@ func TestCLIKeys(t *testing.T) {
 
 		r := s.CLI(t, "", "reset-key-check", "--yes")
 		cliGolden(t, s, "reset-key-check", r, 0)
-		if n := rowCount(t, s, "select count(*) from platform.key_check"); n != 0 {
+		if n := countSQL(t, s, "select count(*) from platform.key_check"); n != 0 {
 			t.Fatalf("key_check rows after the reset: %d", n)
 		}
 		resets := auditRows(t, s, "where action = 'secrets.key_check_reset' order by id")
@@ -57,7 +57,7 @@ func TestCLIKeys(t *testing.T) {
 		if silent.Code != 0 || silent.Stderr != "" {
 			t.Fatalf("a command with another key while no check is stored: %+v", silent)
 		}
-		if n := rowCount(t, s, "select count(*) from platform.key_check"); n != 0 {
+		if n := countSQL(t, s, "select count(*) from platform.key_check"); n != 0 {
 			t.Fatalf("a CLI command created the check (%d rows)", n)
 		}
 
@@ -79,7 +79,7 @@ func TestCLIKeys(t *testing.T) {
 		}
 		noneSubs := append(cliRotateSubs("server secrets", 0, secrets, "0", "<SECRETS>"), cliRotateSubs("connections", 0, conns, "0", "<CONNECTIONS>")...)
 		cliGolden(t, s, "rotate-secrets-key-none-stored", none, 0, noneSubs...)
-		if n := rowCount(t, s, "select count(*) from platform.key_check"); n != 0 {
+		if n := countSQL(t, s, "select count(*) from platform.key_check"); n != 0 {
 			t.Fatalf("rotate-secrets-key created the check (%d rows)", n)
 		}
 		rotations := auditRows(t, s, "where action = 'secrets.rotate' order by id")
@@ -89,7 +89,7 @@ func TestCLIKeys(t *testing.T) {
 		cliMetaIs(t, rotations[0], fmt.Sprintf(`{"connections":{"current":%d,"failed":0,"resealed":0},"keyCheck":"absent","servers":{"current":%d,"failed":0,"resealed":0},"via":"cli"}`, conns, secrets))
 
 		cliSwap(t, s, k1) // the next start records the configured key
-		if n := rowCount(t, s, "select count(*) from platform.key_check"); n != 1 {
+		if n := countSQL(t, s, "select count(*) from platform.key_check"); n != 1 {
 			t.Fatalf("key_check rows after the restart: %d", n)
 		}
 	})
@@ -190,7 +190,7 @@ func TestCLIKeys(t *testing.T) {
 
 	t.Run("a database from a newer version: the message and exit 1, nothing applied; --version still works", func(t *testing.T) {
 		sub := harness.Unique("cli-newer")
-		migrations := rowCount(t, s, "select count(*) from platform.schema_migrations")
+		migrations := countSQL(t, s, "select count(*) from platform.schema_migrations")
 		execSQL(t, s, `insert into platform.schema_migrations (name) values ($1)`, newerDBMigrName)
 		r := s.CLIWithEnv(t, nil, "", "create-user", "--sub", sub, "--name", "Newer")
 		cliGolden(t, s, "newer-database", r, 1)
@@ -201,7 +201,7 @@ func TestCLIKeys(t *testing.T) {
 			t.Errorf("--version with a newer database: %+v", v)
 		}
 		execSQL(t, s, `delete from platform.schema_migrations where name = $1`, newerDBMigrName)
-		if n := rowCount(t, s, "select count(*) from platform.schema_migrations"); n != migrations {
+		if n := countSQL(t, s, "select count(*) from platform.schema_migrations"); n != migrations {
 			t.Fatalf("migration rows %d, want %d", n, migrations)
 		}
 		// Control: without the unknown migration the same command works.
