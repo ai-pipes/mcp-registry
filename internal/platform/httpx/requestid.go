@@ -1,6 +1,7 @@
 package httpx
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -19,8 +20,9 @@ type ctxKey struct{}
 // outermost one after the inner ones have run, so the client address they resolve is passed back
 // through this pointer.
 type reqState struct {
-	id string
-	ip string
+	id     string
+	ip     string
+	logger *slog.Logger
 }
 
 func stateOf(r *http.Request) *reqState {
@@ -60,12 +62,12 @@ func peerAddr(r *http.Request) string {
 	return host
 }
 
-// recorder remembers the status of the response without buffering the body. Unwrap (and Flush)
-// keep streaming and http.ResponseController working for handlers further in.
+// recorder remembers the status of the response without buffering the body. Unwrap, Flush and
+// Hijack keep streaming, upgrades and http.ResponseController working for handlers further in.
 type recorder struct {
 	http.ResponseWriter
 	status int
-	wrote  bool
+	wrote  bool // a status has been sent (or the connection was taken over)
 }
 
 func (r *recorder) WriteHeader(code int) {
@@ -95,17 +97,30 @@ func (r *recorder) Flush() {
 	_ = http.NewResponseController(r.ResponseWriter).Flush()
 }
 
+// Hijack hands the connection over. net/http sees no status after that, so the access record
+// says status 0 unless the handler sent one before.
+func (r *recorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	conn, rw, err := http.NewResponseController(r.ResponseWriter).Hijack()
+	if err == nil && !r.wrote {
+		r.status, r.wrote = 0, true
+	}
+	return conn, rw, err
+}
+
 // Unwrap lets http.ResponseController reach the underlying writer.
 func (r *recorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
 
-// RequestID assigns each request a UUID (header X-Request-Id on every response, also refusals),
-// turns a panic in the handlers further in into a 500 "internal" answer, and writes one access
-// log record per request after the response: message "request", fields reqId, method, path
-// (URL path only), status, ms, ip. Headers, query strings and bodies never reach the log.
+// RequestID assigns each request a UUID (header X-Request-Id on every response, also refusals)
+// and writes one access log record per request after the response: message "request", fields
+// reqId, method, path (URL path only), status, ms, ip. Headers, query strings and bodies never
+// reach the log. A panic in the handlers further in is logged (by type, never the message) and
+// answered with a 500 "internal" carrying only the security headers and the request id; when the
+// response has already started the connection is aborted instead (a clean end would look like a
+// complete response). http.ErrAbortHandler is passed on as such, without an error record.
 func RequestID(logger *slog.Logger) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			st := &reqState{id: newRequestID(), ip: peerAddr(r)}
+			st := &reqState{id: newRequestID(), ip: peerAddr(r), logger: logger}
 			r = r.WithContext(context.WithValue(r.Context(), ctxKey{}, st))
 			w.Header().Set("X-Request-Id", st.id)
 			rec := &recorder{ResponseWriter: w, status: http.StatusOK}
@@ -113,14 +128,17 @@ func RequestID(logger *slog.Logger) Middleware {
 
 			defer func() {
 				v := recover()
-				if v != nil && v != http.ErrAbortHandler {
-					// The message may carry user input or secrets: log only what was thrown, by type.
+				abort := v == http.ErrAbortHandler
+				if v != nil && !abort {
 					if err, ok := v.(error); ok {
 						logger.Error("unhandled error", "reqId", st.id, logging.ErrAttr(err))
 					} else {
 						logger.Error("unhandled error", "reqId", st.id, "err", fmt.Sprintf("panic: %T", v))
 					}
-					if !rec.wrote {
+					if rec.wrote {
+						abort = true
+					} else {
+						dropHandlerHeaders(w.Header())
 						WriteError(rec, "internal", "Internal error")
 					}
 				}
@@ -132,12 +150,22 @@ func RequestID(logger *slog.Logger) Middleware {
 					"ms", int64(time.Since(start).Seconds()*1000+0.5),
 					"ip", st.ip,
 				)
-				if v == http.ErrAbortHandler {
-					panic(v)
+				if abort {
+					panic(http.ErrAbortHandler)
 				}
 			}()
 			next.ServeHTTP(rec, r)
 		})
+	}
+}
+
+// dropHandlerHeaders removes everything but the security headers and the request id: a leftover
+// Content-Encoding or Cache-Control would make the JSON 500 undecodable or cacheable.
+func dropHandlerHeaders(h http.Header) {
+	for k := range h {
+		if !keptOnPanic[http.CanonicalHeaderKey(k)] {
+			delete(h, k)
+		}
 	}
 }
 

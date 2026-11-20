@@ -7,6 +7,18 @@ import "net/http"
 // scripts or styles and no hashes; Server and X-Powered-By are never set.
 const csp = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; frame-ancestors 'none'"
 
+// keptOnPanic are the headers an answer to a panic keeps: the security headers and the request id.
+var keptOnPanic = map[string]bool{
+	"Content-Security-Policy":      true,
+	"Cross-Origin-Opener-Policy":   true,
+	"Cross-Origin-Resource-Policy": true,
+	"Referrer-Policy":              true,
+	"Strict-Transport-Security":    true,
+	"X-Content-Type-Options":       true,
+	"X-Frame-Options":              true,
+	"X-Request-Id":                 true,
+}
+
 // SecurityHeaders sets the seven required security headers on every response.
 func SecurityHeaders() Middleware {
 	return func(next http.Handler) http.Handler {

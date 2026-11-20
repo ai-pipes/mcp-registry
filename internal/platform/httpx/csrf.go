@@ -3,6 +3,7 @@ package httpx
 import (
 	"net/http"
 	"net/url"
+	"path"
 	"strings"
 )
 
@@ -39,7 +40,7 @@ func CSRF(publicURL string) Middleware {
 	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			p := r.URL.Path
+			p := path.Clean("/" + r.URL.Path) // so //api/x and /x/../api/x are covered
 			isAPI := p == "/api" || strings.HasPrefix(p, "/api/")
 			switch r.Method {
 			case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:

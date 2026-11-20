@@ -55,7 +55,11 @@ func contentTypeOf(name string) string {
 	if ct, ok := contentTypes[ext]; ok {
 		return ct
 	}
-	return mime.TypeByExtension(ext) // "" lets ServeContent sniff
+	if ct := mime.TypeByExtension(ext); ct != "" {
+		return ct
+	}
+	// Never sniffed: sniffing could turn an unknown file into text/html.
+	return "application/octet-stream"
 }
 
 // readable opens name (slash-separated, relative to webRoot) for reading. The open goes through
@@ -88,6 +92,18 @@ func hasDotDot(p string) bool {
 	return false
 }
 
+// hiddenSegment reports a path segment that starts with a dot. A built UI has none (Vite's output
+// is index.html, assets/ and public files); .well-known would be the first candidate if it were
+// ever needed, and is a miss for now.
+func hiddenSegment(clean string) bool {
+	for _, seg := range strings.Split(clean, "/") {
+		if strings.HasPrefix(seg, ".") {
+			return true
+		}
+	}
+	return false
+}
+
 func isRead(r *http.Request) bool {
 	return r.Method == http.MethodGet || r.Method == http.MethodHead
 }
@@ -99,12 +115,18 @@ func isRead(r *http.Request) bool {
 // are honoured.
 func Static(webRoot string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		p := r.URL.Path
-		if !isRead(r) || isReserved(p) || !strings.HasPrefix(p, "/") || hasDotDot(p) || strings.ContainsRune(p, 0) {
+		raw := r.URL.Path
+		if !isRead(r) || !strings.HasPrefix(raw, "/") || hasDotDot(raw) || strings.ContainsRune(raw, 0) {
 			next.ServeHTTP(w, r)
 			return
 		}
-		name := path.Clean(p)[1:]
+		// Every decision below is made on the cleaned path: //index.html and /./index.html are /index.html.
+		p := path.Clean(raw)
+		if isReserved(p) || hiddenSegment(p) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		name := p[1:]
 		if name == "" {
 			name = "index.html"
 		}
@@ -134,9 +156,9 @@ func Static(webRoot string, next http.Handler) http.Handler {
 // cached, so an upgrade shows at once.
 func SPAFallback(webRoot string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		p := r.URL.Path
+		p := path.Clean("/" + r.URL.Path)
 		last := p[strings.LastIndex(p, "/")+1:]
-		if !isRead(r) || isReserved(p) || strings.Contains(last, ".") ||
+		if !isRead(r) || isReserved(p) || hiddenSegment(p) || strings.Contains(last, ".") ||
 			!strings.Contains(r.Header.Get("Accept"), "text/html") {
 			next.ServeHTTP(w, r)
 			return

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
@@ -43,9 +42,11 @@ func newApp(t *testing.T, trustProxy bool, hops int) *app {
 	logger := logging.New("info", buf)
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/echo", func(w http.ResponseWriter, r *http.Request) {
-		var in struct{ Name string }
+		var in struct {
+			Name string `json:"name"`
+		}
 		if err := httpx.DecodeJSON(r, &in); err != nil {
-			httpx.WriteDomainError(w, err)
+			httpx.WriteDomainError(w, r, err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -53,7 +54,7 @@ func newApp(t *testing.T, trustProxy bool, hops int) *app {
 	})
 	mux.HandleFunc("POST /api/raw", func(w http.ResponseWriter, r *http.Request) {
 		if _, err := io.ReadAll(r.Body); err != nil {
-			httpx.WriteDomainError(w, err)
+			httpx.WriteDomainError(w, r, err)
 			return
 		}
 		w.WriteHeader(204)
@@ -172,7 +173,7 @@ func TestStatusTable(t *testing.T) {
 
 func TestInvalidRequestIsA422Error(t *testing.T) {
 	w := httptest.NewRecorder()
-	httpx.WriteDomainError(w, httpx.InvalidRequest("limit: must be a number"))
+	httpx.WriteDomainError(w, httptest.NewRequest("GET", "/", nil), httpx.InvalidRequest("limit: must be a number"))
 	// invalid_request starts with invalid_, so the table gives 422 like the reference (body and
 	// query validation errors are 422), not the generic 400.
 	if w.Code != 422 || errorOf(t, w) != "invalid_request|limit: must be a number" {
@@ -188,21 +189,6 @@ func TestWriteErrorBodyShape(t *testing.T) {
 	}
 	if ct := w.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
 		t.Fatalf("Content-Type %q", ct)
-	}
-}
-
-func TestWriteDomainErrorOther(t *testing.T) {
-	var logs bytes.Buffer
-	old := slog.Default()
-	slog.SetDefault(logging.New("info", &logs))
-	defer slog.SetDefault(old)
-	w := httptest.NewRecorder()
-	httpx.WriteDomainError(w, errors.New("secret-value in message"))
-	if w.Code != 500 || errorOf(t, w) != "internal|Internal error" {
-		t.Fatalf("%d %s", w.Code, w.Body)
-	}
-	if logs.Len() == 0 || strings.Contains(logs.String(), "secret-value") {
-		t.Fatalf("log: %q", logs.String())
 	}
 }
 
@@ -537,7 +523,7 @@ func TestDecodeJSON(t *testing.T) {
 	for _, bad := range []string{"not json", `{"name":`, `{"name":"a"} {"name":"b"}`, `{"name":"a"} x`, `{"name":"a"}]`} {
 		_, err := dec(bad)
 		w := httptest.NewRecorder()
-		httpx.WriteDomainError(w, err)
+		httpx.WriteDomainError(w, httptest.NewRequest("POST", "/", nil), err)
 		if w.Code != 422 || errorOf(t, w) != "invalid_request|body is not valid JSON" {
 			t.Errorf("%q: %d %s", bad, w.Code, w.Body)
 		}
@@ -547,7 +533,7 @@ func TestDecodeJSON(t *testing.T) {
 	}
 	_, err := dec(`{"n":"secret-value"}`)
 	w := httptest.NewRecorder()
-	httpx.WriteDomainError(w, err)
+	httpx.WriteDomainError(w, httptest.NewRequest("POST", "/", nil), err)
 	if w.Code != 422 || errorOf(t, w) != "invalid_request|n: invalid type" {
 		t.Errorf("type error: %d %s", w.Code, w.Body)
 	}

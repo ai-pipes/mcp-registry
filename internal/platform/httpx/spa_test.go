@@ -307,3 +307,62 @@ func TestShellMissingFromRootPassesOn(t *testing.T) {
 		t.Errorf("%d", w.Code)
 	}
 }
+
+// Item 7: dotfiles, the cache decision on the cleaned path, no content sniffing.
+func TestDotSegmentsAreMisses(t *testing.T) {
+	root := site(t)
+	for _, f := range []string{".env", ".git/config", "assets/.hidden", ".well-known/x"} {
+		p := filepath.Join(root, f)
+		if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("DOTFILE"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h := handler(root)
+	for _, target := range []string{"/.env", "/.git/config", "/assets/.hidden", "/.well-known/x", "/.git/"} {
+		for _, accept := range [][]string{nil, {html}} {
+			w := get(h, "GET", target, accept...)
+			if w.Code == 200 || strings.Contains(w.Body.String(), "DOTFILE") || strings.Contains(w.Body.String(), `<div id="root">`) {
+				t.Errorf("%s %v: %d %.40s", target, accept, w.Code, w.Body)
+			}
+		}
+	}
+}
+
+func TestCacheDecisionUsesTheCleanedPath(t *testing.T) {
+	h := handler(site(t))
+	for target, want := range map[string]string{
+		"//index.html":         "no-cache",
+		"/./index.html":        "no-cache",
+		"/.":                   "no-cache",
+		"//":                   "no-cache",
+		"/assets/./app-abc.js": "public, max-age=31536000, immutable",
+		"//assets/app-abc.js":  "public, max-age=31536000, immutable",
+	} {
+		w := get(h, "GET", target)
+		if w.Code != 200 || w.Header().Get("Cache-Control") != want {
+			t.Errorf("%s: %d Cache-Control %q, want %q", target, w.Code, w.Header().Get("Cache-Control"), want)
+		}
+	}
+	if w := get(h, "GET", "//api/x.js"); w.Code != 404 {
+		t.Errorf("//api/x.js: %d", w.Code)
+	}
+}
+
+func TestUnknownExtensionsAreOctetStreamNeverSniffed(t *testing.T) {
+	root := site(t)
+	for name, body := range map[string]string{"assets/blob.zzqq": "<html><script>alert(1)</script>", "assets/NOEXT": "<html>"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h := handler(root)
+	for _, p := range []string{"/assets/blob.zzqq", "/assets/NOEXT"} {
+		w := get(h, "GET", p)
+		if w.Code != 200 || w.Header().Get("Content-Type") != "application/octet-stream" {
+			t.Errorf("%s: %d %q", p, w.Code, w.Header().Get("Content-Type"))
+		}
+	}
+}

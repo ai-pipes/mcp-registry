@@ -58,9 +58,10 @@ func WriteError(w http.ResponseWriter, code, message string) {
 
 // WriteDomainError answers a DomainError with its code and message. A body cut by BodyLimit
 // (*http.MaxBytesError anywhere in the chain) is the same 413 limit_exceeded answer. Anything
-// else is a 500 "internal" / "Internal error" and a log record without the error's text (it may
-// quote user input or secrets), written to slog's default logger, which the composition root sets.
-func WriteDomainError(w http.ResponseWriter, err error) {
+// else is a 500 "internal" / "Internal error" and a log record "unhandled error" with the
+// request id and without the error's text (it may quote user input or secrets), written to the
+// logger RequestID was built with; without that middleware, to slog's default logger.
+func WriteDomainError(w http.ResponseWriter, r *http.Request, err error) {
 	if de, ok := kernel.AsDomainError(err); ok {
 		WriteError(w, de.Code, de.Message)
 		return
@@ -70,11 +71,18 @@ func WriteDomainError(w http.ResponseWriter, err error) {
 		WriteError(w, "limit_exceeded", errBodyTooLarge)
 		return
 	}
-	slog.Error("unhandled error", logging.ErrAttr(err))
+	logger, id := slog.Default(), ""
+	if r != nil {
+		if s := stateOf(r); s != nil {
+			logger, id = s.logger, s.id
+		}
+	}
+	logger.Error("unhandled error", "reqId", id, logging.ErrAttr(err))
 	WriteError(w, "internal", "Internal error")
 }
 
-// InvalidRequest is the error of a malformed request (code invalid_request, status 400):
+// InvalidRequest is the error of a malformed request (code invalid_request, status 422, like every
+// invalid_* code):
 // the one query and body handlers of modules return for input they cannot use.
 func InvalidRequest(message string) error {
 	return kernel.NewDomainError("invalid_request", message)
