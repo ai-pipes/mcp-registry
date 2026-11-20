@@ -62,6 +62,7 @@ make e2e-flows              # the web UI's browser flows (Playwright, Chromium) 
 | `audit-login-via`         | an OIDC sign-in writes `auth.login` with empty meta                                                                                   | `meta.via` is `oidc`                                                                                                      |
 | `token-429-retry-after`   | the 429 for failed token checks on `/mcp` has no `Retry-After`                                                                        | it carries `Retry-After` with a positive integer                                                                          |
 
+- How the fixed branches were proven: a `COMPAT_FIXED=all` run against the reference image fails exactly at the deviation sites (each failure carries that deviation's own reason, nothing else fails); that run, with `COMPAT_LOG_DIR` set, is how to check a new deviation (and its fixed branch must fail against 1.0.0 before it counts).
 - Run a subset: `make compat COMPAT_ARGS='-run ^TestPlatform'`. The `-run` patterns per area:
 
   | Area                                                                       | `-run` pattern                                             |

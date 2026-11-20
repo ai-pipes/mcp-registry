@@ -64,9 +64,9 @@ func platformImage() string { return harness.DefaultImage() }
 // this value (the owner's decision; the Go server must send the same). The reference image sends
 // five more that hono's secureHeaders() adds by default and that are NOT required any more (and
 // not asserted absent): Origin-Agent-Cluster, X-Dns-Prefetch-Control, X-Download-Options,
-// X-Permitted-Cross-Domain-Policies and X-Xss-Protection. `Server` and `X-Powered-By` are not sent
-// by the image either, but that is a framework default, not a documented product choice, so their
-// absence is not asserted.
+// X-Permitted-Cross-Domain-Policies and X-Xss-Protection. `Server` and `X-Powered-By` must be
+// absent (assertSecurityHeaders): a deliberate product security requirement, since they disclose
+// the stack.
 var securityHeaders = map[string]string{
 	"Content-Security-Policy":      strictCSP,
 	"Cross-Origin-Opener-Policy":   "same-origin",
@@ -88,6 +88,12 @@ func assertSecurityHeaders(t *testing.T, what string, r harness.Response, wantRe
 	}
 	if got := r.Header.Get("Content-Security-Policy"); strings.Contains(got, "style-src-elem") || strings.Contains(got, "sha256-") || strings.Contains(got, "unsafe-") {
 		t.Errorf("%s: CSP is relaxed: %q", what, got)
+	}
+	// A product security requirement (they disclose the stack), not a "helpful header" absence.
+	for _, name := range []string{"Server", "X-Powered-By"} {
+		if got := r.Header.Values(name); len(got) != 0 {
+			t.Errorf("%s: header %s = %q, must not be sent", what, name, got)
+		}
 	}
 	id := r.Header.Get("X-Request-Id")
 	if wantRequestID && !requestID.MatchString(id) {
@@ -126,6 +132,9 @@ func TestPlatformSecurityHeaders(t *testing.T) {
 		noRequestID bool
 	}{
 		{"index", func() harness.Response { return index }, 200, false},
+		// /healthz is asserted here again: the admin above is signed in before the table runs, so a
+		// stall right after the boot has ended (the same mitigation as TestPlatformHealthz).
+		{"healthz", func() harness.Response { return anon.Do(t, "GET", "/healthz", nil) }, 200, false},
 		{"api public 200", func() harness.Response { return anon.Do(t, "GET", "/api/auth/methods", nil) }, 200, false},
 		{"api 401", func() harness.Response { return anon.Do(t, "GET", "/api/auth/me", nil) }, 401, false},
 		{"api 200", func() harness.Response { return admin.Do(t, "GET", "/api/auth/me", nil) }, 200, false},
@@ -160,8 +169,8 @@ func TestPlatformSecurityHeaders(t *testing.T) {
 	})
 }
 
-// TestPlatformHealthz is the one scenario that asserts /healthz itself (the self-check canary
-// distorts it). It runs on the shared stack, which an earlier test of the package has booted long
+// TestPlatformHealthz is the canary scenario for /healthz (the self-check distorts it); the
+// security-headers table and the ready-before-serving branch assert it too. It runs on the shared stack, which an earlier test of the package has booted long
 // before in a full run; with -run on this test alone the stack may have just started, and the
 // reference image can then answer 503 for a moment (decision ready-before-serving). No other
 // scenario asserts /healthz right after a start: they use Stack.Answers.

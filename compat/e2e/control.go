@@ -509,7 +509,7 @@ func (s *Stack) signInControlAdmin() (*http.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	client := &http.Client{Jar: jar, Timeout: 60 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	client := harness.NewHTTPClient(jar) // idle-connection timeout of the harness, 60 s timeout, no redirects
 	status, resp, err := s.doJSON(client, http.MethodPost, "/api/auth/link", map[string]string{"code": code})
 	if err != nil {
 		return nil, err

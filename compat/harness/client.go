@@ -67,6 +67,10 @@ func newTransport(idle time.Duration) *http.Transport {
 	}
 }
 
+// NewHTTPClient is newHTTPClient for the control API of compat/e2e, which also talks to the app
+// and must not hold an idle connection past idleConnTimeout either.
+func NewHTTPClient(jar http.CookieJar) *http.Client { return newHTTPClient(jar) }
+
 // newHTTPClient builds a client that maps host.docker.internal to the loopback interface, so the
 // URLs the container uses to reach test fakes also work from the test process. Idle connections
 // are dropped after idleConnTimeout (the MCP sessions use this client too).

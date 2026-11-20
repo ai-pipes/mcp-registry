@@ -504,18 +504,19 @@ func TestIdentityOIDC(t *testing.T) {
 	t.Run("the audit log has the documented login records and no secret", func(t *testing.T) {
 		entries := auditAll(t, s)
 		// The admin of this test signed in with a link. 1.0.0: an OIDC login carries the actor only
-		// (empty meta). Decided (audit-login-via): its meta is exactly {via: "oidc"}.
-		wantVia, wantMeta := any(nil), 0
-		if s.Fixed(harness.DevAuditLoginVia) {
-			wantVia, wantMeta = "oidc", 1
+		// (empty meta). Decided (audit-login-via): its meta.via is "oidc" (other keys are not judged).
+		fixed := s.Fixed(harness.DevAuditLoginVia)
+		var wantVia any
+		if fixed {
+			wantVia = "oidc"
 		}
 		oidcLogins := auditWhere(entries, "auth.login", func(e auditEntry) bool { return e.Meta["via"] == wantVia })
 		if len(oidcLogins) == 0 {
 			t.Fatal("no auth.login record of an OIDC login")
 		}
 		for _, e := range oidcLogins {
-			if e.ActorID == nil || e.Target != nil || len(e.Meta) != wantMeta {
-				t.Errorf("an OIDC login is recorded with the actor and meta via=%v only: %+v", wantVia, e)
+			if e.ActorID == nil || e.Target != nil || (!fixed && len(e.Meta) != 0) || e.Meta["via"] != wantVia {
+				t.Errorf("an OIDC login is recorded with the actor and meta.via=%v: %+v", wantVia, e)
 			}
 		}
 		if links := auditWhere(entries, "auth.login", func(e auditEntry) bool { return e.Meta["via"] == "link" }); len(links) != 1 {

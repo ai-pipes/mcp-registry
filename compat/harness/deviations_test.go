@@ -83,8 +83,9 @@ func TestEveryDeviationHasADescriptionAndIsUsedByAScenario(t *testing.T) {
 	}
 	for _, d := range AllDeviations {
 		name := constantNameOf(t, string(src), d.ID)
-		if !strings.Contains(corpus.String(), "harness."+name) {
-			t.Errorf("deviation %s (harness.%s) is listed but no compat/*_test.go scenario uses it", d.ID, name)
+		// The call, not a mention in a comment or a description.
+		if !strings.Contains(corpus.String(), "Fixed(harness."+name+")") {
+			t.Errorf("deviation %s is listed but no compat/*_test.go scenario calls Fixed(harness.%s)", d.ID, name)
 		}
 	}
 }
