@@ -1,4 +1,8 @@
 // Package logging writes pino-compatible JSON log lines on top of log/slog.
+//
+// Attribute keys: a top-level "level" or "time" given by the caller is renamed to "fields.level"
+// or "fields.time" so the built-in keys stay unique. "msg" cannot be told apart from the message
+// in ReplaceAttr, so it must not be used as an attribute key.
 package logging
 
 import (
@@ -6,8 +10,6 @@ import (
 	"io"
 	"log/slog"
 	"strings"
-
-	"github.com/ai-pipes/mcp-registry/internal/kernel"
 )
 
 // Levels pino has and slog lacks.
@@ -33,13 +35,11 @@ func Fatal(l *slog.Logger, msg string, args ...any) {
 	l.Log(context.Background(), LevelFatal, msg, args...)
 }
 
-// ErrAttr describes an error without its message, which may quote values: the dynamic type name
-// and kernel.ErrorLabel (type name plus a short code when the error carries one).
-func ErrAttr(err error) slog.Attr {
-	label := kernel.ErrorLabel(err)
-	typ, _, _ := strings.Cut(label, ": ")
-	return slog.Group("err", slog.String("type", typ), slog.String("label", label))
-}
+// ErrAttr describes an error without its message, which may quote values: "type" is the part of
+// kernel.ErrorLabel before ": " (for a wrapped error that carries a code, the coded error's type,
+// not the outer one) and "label" is the whole kernel.ErrorLabel. Any other attribute whose value
+// is an error is written the same way.
+func ErrAttr(err error) slog.Attr { return errAttr("err", err) }
 
 func parseLevel(name string) slog.Level {
 	switch strings.ToLower(strings.TrimSpace(name)) {

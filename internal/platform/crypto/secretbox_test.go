@@ -96,7 +96,10 @@ func TestRoundTripAndLayout(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		b, _ := box.Seal(plain)
+		b, err := box.Seal(plain)
+		if err != nil {
+			t.Fatal(err)
+		}
 		if len(a) != 12+16+len(plain) {
 			t.Errorf("layout length %d for %q", len(a), plain)
 		}
@@ -112,14 +115,29 @@ func TestRoundTripAndLayout(t *testing.T) {
 
 func TestSealsWithCurrentKeyOnly(t *testing.T) {
 	oldKey, newKey := key(t), key(t)
-	box, _ := crypto.NewAESGCMBox(newKey, oldKey)
-	sealed, _ := box.Seal("x")
-	onlyNew, _ := crypto.NewAESGCMBox(newKey, nil)
+	box, err := crypto.NewAESGCMBox(newKey, oldKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed, err := box.Seal("x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	onlyNew, err := crypto.NewAESGCMBox(newKey, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := onlyNew.Open(sealed); err != nil {
 		t.Fatalf("new key must open what the box seals: %v", err)
 	}
-	old, _ := crypto.NewAESGCMBox(oldKey, nil)
-	oldSealed, _ := old.Seal("legacy")
+	old, err := crypto.NewAESGCMBox(oldKey, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldSealed, err := old.Seal("legacy")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if got, err := box.Open(oldSealed); err != nil || got != "legacy" {
 		t.Fatalf("previous key: %q, %v", got, err)
 	}
@@ -129,22 +147,34 @@ func TestSealsWithCurrentKeyOnly(t *testing.T) {
 }
 
 func TestTruncatedIsAnErrorNotAPanic(t *testing.T) {
-	box, _ := crypto.NewAESGCMBox(key(t), nil)
+	box, err := crypto.NewAESGCMBox(key(t), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, n := range []int{0, 1, 27} {
 		if _, err := box.Open(make([]byte, n)); err == nil {
 			t.Errorf("%d bytes must fail", n)
 		}
 	}
-	sealed, _ := box.Seal("abc")
+	sealed, err := box.Seal("abc")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := box.Open(sealed[:len(sealed)-1]); err == nil {
 		t.Error("cut ciphertext must fail")
 	}
 }
 
 func TestTamperedIsRejected(t *testing.T) {
-	box, _ := crypto.NewAESGCMBox(key(t), nil)
+	box, err := crypto.NewAESGCMBox(key(t), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, idx := range []int{0, 12, 28} { // iv, tag, ciphertext
-		sealed, _ := box.Seal("abcdef")
+		sealed, err := box.Seal("abcdef")
+		if err != nil {
+			t.Fatal(err)
+		}
 		sealed[idx] ^= 1
 		if _, err := box.Open(sealed); err == nil {
 			t.Errorf("flipped byte %d was accepted", idx)

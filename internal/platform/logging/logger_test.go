@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"log/slog"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -122,5 +124,103 @@ func TestErrAttrHasNoMessage(t *testing.T) {
 	e := records(t, &buf)[0]["err"].(map[string]any)
 	if e["type"] != "errors.errorString" || e["label"] != kernel.ErrorLabel(err) {
 		t.Fatalf("err = %v", e)
+	}
+}
+
+type tagged struct {
+	Password string `json:"password"`
+	Name     string `json:"name"`
+}
+
+type untagged struct {
+	Token string
+	Name  string
+}
+
+type tokenValuer struct{}
+
+func (tokenValuer) LogValue() slog.Value {
+	return slog.GroupValue(slog.String("value", "VALUER-SECRET"))
+}
+
+type unmarshalable struct{ C chan int }
+
+func TestRedactionReachesEveryValueType(t *testing.T) {
+	hdr := http.Header{"Authorization": {"HDR-SECRET"}, "Cookie": {"COOKIE-SECRET"}, "Accept": {"text/plain"}}
+	m := map[string]any{"password": "PTR-SECRET"}
+	cases := map[string]struct {
+		secret string
+		log    func(l *slog.Logger)
+	}{
+		"http.Header":       {"HDR-SECRET", func(l *slog.Logger) { l.Info("x", "req", map[string]any{"headers": hdr}) }},
+		"cookie":            {"COOKIE-SECRET", func(l *slog.Logger) { l.Info("x", "headers", hdr) }},
+		"map[string]string": {"MSS-SECRET", func(l *slog.Logger) { l.Info("x", "m", map[string]string{"token": "MSS-SECRET"}) }},
+		"[]map":             {"SLM-SECRET", func(l *slog.Logger) { l.Info("x", "m", []map[string]any{{"password": "SLM-SECRET"}}) }},
+		"pointer to map":    {"PTR-SECRET", func(l *slog.Logger) { l.Info("x", "m", &m) }},
+		"tagged struct":     {"TAG-SECRET", func(l *slog.Logger) { l.Info("x", "s", tagged{Password: "TAG-SECRET", Name: "n"}) }},
+		"untagged struct":   {"UNT-SECRET", func(l *slog.Logger) { l.Info("x", "s", &untagged{Token: "UNT-SECRET"}) }},
+		"group under token": {"GRP-SECRET", func(l *slog.Logger) { l.Info("x", slog.Group("token", slog.String("value", "GRP-SECRET"))) }},
+		"WithGroup":         {"WG-SECRET", func(l *slog.Logger) { l.WithGroup("password").Info("x", "v", "WG-SECRET") }},
+		"WithGroup case":    {"WGC-SECRET", func(l *slog.Logger) { l.WithGroup("Authorization").Info("x", "v", "WGC-SECRET") }},
+		"LogValuer group":   {"VALUER-SECRET", func(l *slog.Logger) { l.Info("x", "token", tokenValuer{}) }},
+		"unmarshalable":     {"UNM-SECRET", func(l *slog.Logger) { l.Info("x", "u", unmarshalable{}, "password", "UNM-SECRET") }},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			var buf bytes.Buffer
+			c.log(logging.New("info", &buf))
+			raw := buf.String()
+			if strings.Contains(raw, c.secret) {
+				t.Errorf("secret leaked: %s", raw)
+			}
+			if name != "unmarshalable" && !strings.Contains(raw, "[Redacted]") {
+				t.Errorf("no [Redacted]: %s", raw)
+			}
+		})
+	}
+}
+
+func TestNonRedactedStructFieldsSurvive(t *testing.T) {
+	var buf bytes.Buffer
+	logging.New("info", &buf).Info("x", "s", tagged{Password: "P", Name: "visible"})
+	if !strings.Contains(buf.String(), "visible") {
+		t.Fatalf("%s", buf.String())
+	}
+}
+
+func TestUnmarshalableValueIsMarkedNotWritten(t *testing.T) {
+	var buf bytes.Buffer
+	logging.New("info", &buf).Info("x", "u", unmarshalable{C: make(chan int)})
+	r := records(t, &buf)[0]
+	if r["u"] != "[Unloggable]" {
+		t.Fatalf("got %v", r["u"])
+	}
+}
+
+func TestRawErrorAttributeHasNoMessage(t *testing.T) {
+	var buf bytes.Buffer
+	err := errors.New("MSG-SECRET")
+	logging.New("info", &buf).Error("failed", "err", err, "cause", err)
+	if strings.Contains(buf.String(), "MSG-SECRET") {
+		t.Fatalf("message leaked: %s", buf.String())
+	}
+	r := records(t, &buf)[0]
+	for _, k := range []string{"err", "cause"} {
+		e, ok := r[k].(map[string]any)
+		if !ok || e["type"] != "errors.errorString" || e["label"] != kernel.ErrorLabel(err) {
+			t.Errorf("%s = %v", k, r[k])
+		}
+	}
+}
+
+func TestCallerLevelAndTimeAreRenamed(t *testing.T) {
+	var buf bytes.Buffer
+	logging.New("info", &buf).Info("x", "level", "custom", "time", "yesterday")
+	if strings.Count(buf.String(), `"level"`) != 1 || strings.Count(buf.String(), `"time"`) != 1 {
+		t.Fatalf("duplicate built-in keys: %s", buf.String())
+	}
+	r := records(t, &buf)[0]
+	if r["fields.level"] != "custom" || r["fields.time"] != "yesterday" || r["level"] != float64(30) {
+		t.Fatalf("%v", r)
 	}
 }
