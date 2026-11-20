@@ -30,7 +30,7 @@ func browser() *http.Client {
 	dialer := &net.Dialer{Timeout: 5 * time.Second}
 	return &http.Client{
 		Timeout: 30 * time.Second,
-		Transport: &http.Transport{DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+		Transport: &http.Transport{IdleConnTimeout: time.Second, DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 			if host, port, err := net.SplitHostPort(addr); err == nil && host == "host.docker.internal" {
 				addr = net.JoinHostPort("127.0.0.1", port)
 			}
@@ -409,5 +409,27 @@ func assertMediaType(t *testing.T, what, got, wantType, wantCharset string) {
 	}
 	if !strings.EqualFold(typ, wantType) || !strings.EqualFold(params["charset"], wantCharset) || len(params) > 1 {
 		t.Errorf("%s: Content-Type %q, want %s with charset %s (case-insensitive)", what, got, wantType, wantCharset)
+	}
+}
+
+// assertHostRefused judges the refusal of a foreign Host on /mcp: status 403 and nothing served
+// (no JSON-RPC result, none of the four meta-tools). The refusal's body text is the MCP SDK's
+// wording, not product text, and is not asserted.
+func assertHostRefused(t *testing.T, what string, r harness.Response) {
+	t.Helper()
+	if r.Status != 403 {
+		t.Errorf("%s: status %d (%.200s), want 403", what, r.Status, r.Body)
+		return
+	}
+	var msg map[string]json.RawMessage
+	if json.Unmarshal(r.Body, &msg) == nil {
+		if _, ok := msg["result"]; ok {
+			t.Errorf("%s: the refusal carries a JSON-RPC result: %.200s", what, r.Body)
+		}
+	}
+	for _, tool := range []string{"list_servers", "search_tools", "describe_tool", "call_tool"} {
+		if strings.Contains(string(r.Body), tool) {
+			t.Errorf("%s: the refusal lists the tool %s: %.200s", what, tool, r.Body)
+		}
 	}
 }

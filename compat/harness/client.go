@@ -45,21 +45,36 @@ func loopbackHost(host string) bool {
 	return host == fakesHost || strings.HasSuffix(host, ".compat.test")
 }
 
-// newHTTPClient builds a client that maps host.docker.internal to the loopback interface, so the
-// URLs the container uses to reach test fakes also work from the test process.
-func newHTTPClient(jar http.CookieJar) *http.Client {
+// idleConnTimeout is how long the harness keeps an idle connection for reuse. A server closes an
+// idle keep-alive connection after its own timeout (Node's default is 5 s); a request that goes out
+// on a connection the server is closing at that very moment dies with EOF, and Go never retries a
+// non-idempotent request (a POST) on such a connection. One second is far below any server's
+// keep-alive, so a connection reused after a pause is always a fresh one. See
+// TestIdleConnectionsOutliveNoServerKeepAlive.
+const idleConnTimeout = time.Second
+
+// newTransport builds the transport of the harness's clients; idle is the idle-connection timeout.
+func newTransport(idle time.Duration) *http.Transport {
 	dialer := &net.Dialer{Timeout: 10 * time.Second}
-	return &http.Client{
-		Jar:     jar,
-		Timeout: 60 * time.Second,
-		Transport: &http.Transport{
-			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-				if host, port, err := net.SplitHostPort(addr); err == nil && loopbackHost(host) {
-					addr = net.JoinHostPort("127.0.0.1", port)
-				}
-				return dialer.DialContext(ctx, network, addr)
-			},
+	return &http.Transport{
+		IdleConnTimeout: idle,
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			if host, port, err := net.SplitHostPort(addr); err == nil && loopbackHost(host) {
+				addr = net.JoinHostPort("127.0.0.1", port)
+			}
+			return dialer.DialContext(ctx, network, addr)
 		},
+	}
+}
+
+// newHTTPClient builds a client that maps host.docker.internal to the loopback interface, so the
+// URLs the container uses to reach test fakes also work from the test process. Idle connections
+// are dropped after idleConnTimeout (the MCP sessions use this client too).
+func newHTTPClient(jar http.CookieJar) *http.Client {
+	return &http.Client{
+		Jar:           jar,
+		Timeout:       60 * time.Second,
+		Transport:     newTransport(idleConnTimeout),
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
 }
@@ -169,6 +184,20 @@ func (c *Client) Do(t *testing.T, method, path string, body any, hdr ...string) 
 		t.Fatalf("%s %s: read body: %v", method, path, err)
 	}
 	return Response{Status: resp.StatusCode, Header: resp.Header, Body: data, Sent: req.Header.Clone()}
+}
+
+// Answers fails the test unless the app answers a request that touches neither the database nor
+// the embedding model: GET /api/auth/methods, 200. It is the liveness probe for right after a
+// start or a restart. /healthz is not: it runs a database query against a 1.5 s timer, and the
+// reference image blocks its event loop while it loads its embedding model right after it first
+// answers healthy, so under load /healthz can answer 503 while the database is fine (decision
+// ready-before-serving, see deviations.go). Start, SwapImage and the boot helpers have already
+// proven health once.
+func (s *Stack) Answers(t *testing.T) {
+	t.Helper()
+	if r := s.Anonymous().Do(t, "GET", "/api/auth/methods", nil); r.Status != http.StatusOK {
+		t.Fatalf("GET /api/auth/methods: %d %.200q", r.Status, r.Body)
+	}
 }
 
 // Token creates an API token for the signed-in person and returns the sk_ value.

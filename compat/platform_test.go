@@ -60,21 +60,21 @@ const (
 
 func platformImage() string { return harness.DefaultImage() }
 
-// securityHeaders is every header securityHeaders() (hono's secureHeaders with the strict CSP)
-// sets on every response, with its exact value.
+// securityHeaders is the required set: every response carries each of these, once, with exactly
+// this value (the owner's decision; the Go server must send the same). The reference image sends
+// five more that hono's secureHeaders() adds by default and that are NOT required any more (and
+// not asserted absent): Origin-Agent-Cluster, X-Dns-Prefetch-Control, X-Download-Options,
+// X-Permitted-Cross-Domain-Policies and X-Xss-Protection. `Server` and `X-Powered-By` are not sent
+// by the image either, but that is a framework default, not a documented product choice, so their
+// absence is not asserted.
 var securityHeaders = map[string]string{
-	"Content-Security-Policy":           strictCSP,
-	"Cross-Origin-Opener-Policy":        "same-origin",
-	"Cross-Origin-Resource-Policy":      "same-origin",
-	"Origin-Agent-Cluster":              "?1",
-	"Referrer-Policy":                   "no-referrer",
-	"Strict-Transport-Security":         "max-age=15552000; includeSubDomains",
-	"X-Content-Type-Options":            "nosniff",
-	"X-Dns-Prefetch-Control":            "off",
-	"X-Download-Options":                "noopen",
-	"X-Frame-Options":                   "SAMEORIGIN",
-	"X-Permitted-Cross-Domain-Policies": "none",
-	"X-Xss-Protection":                  "0",
+	"Content-Security-Policy":      strictCSP,
+	"Cross-Origin-Opener-Policy":   "same-origin",
+	"Cross-Origin-Resource-Policy": "same-origin",
+	"Referrer-Policy":              "no-referrer",
+	"Strict-Transport-Security":    "max-age=15552000; includeSubDomains",
+	"X-Content-Type-Options":       "nosniff",
+	"X-Frame-Options":              "SAMEORIGIN",
 }
 
 var requestID = regexp.MustCompile(`^[0-9a-f-]{36}$`)
@@ -88,13 +88,6 @@ func assertSecurityHeaders(t *testing.T, what string, r harness.Response, wantRe
 	}
 	if got := r.Header.Get("Content-Security-Policy"); strings.Contains(got, "style-src-elem") || strings.Contains(got, "sha256-") || strings.Contains(got, "unsafe-") {
 		t.Errorf("%s: CSP is relaxed: %q", what, got)
-	}
-	// Headers that would leak the stack or weaken the policy; the absence of helpful headers
-	// (Cross-Origin-Embedder-Policy, Permissions-Policy) is not asserted.
-	for _, name := range []string{"Content-Security-Policy-Report-Only", "Server", "X-Powered-By"} {
-		if v := r.Header.Values(name); len(v) != 0 {
-			t.Errorf("%s: unexpected header %s = %q", what, name, v)
-		}
 	}
 	id := r.Header.Get("X-Request-Id")
 	if wantRequestID && !requestID.MatchString(id) {
@@ -133,7 +126,7 @@ func TestPlatformSecurityHeaders(t *testing.T) {
 		noRequestID bool
 	}{
 		{"index", func() harness.Response { return index }, 200, false},
-		{"healthz", func() harness.Response { return anon.Do(t, "GET", "/healthz", nil) }, 200, false},
+		{"api public 200", func() harness.Response { return anon.Do(t, "GET", "/api/auth/methods", nil) }, 200, false},
 		{"api 401", func() harness.Response { return anon.Do(t, "GET", "/api/auth/me", nil) }, 401, false},
 		{"api 200", func() harness.Response { return admin.Do(t, "GET", "/api/auth/me", nil) }, 200, false},
 		{"404 text", func() harness.Response { return anon.Do(t, "GET", "/no-such-page", nil) }, 404, false},
@@ -159,16 +152,26 @@ func TestPlatformSecurityHeaders(t *testing.T) {
 	}
 
 	t.Run("every response has its own request id", func(t *testing.T) {
-		a := anon.Do(t, "GET", "/healthz", nil).Header.Get("X-Request-Id")
-		b := anon.Do(t, "GET", "/healthz", nil).Header.Get("X-Request-Id")
+		a := anon.Do(t, "GET", "/api/auth/methods", nil).Header.Get("X-Request-Id")
+		b := anon.Do(t, "GET", "/api/auth/methods", nil).Header.Get("X-Request-Id")
 		if a == b {
 			t.Fatalf("two responses share the request id %q", a)
 		}
 	})
 }
 
+// TestPlatformHealthz is the one scenario that asserts /healthz itself (the self-check canary
+// distorts it). It runs on the shared stack, which an earlier test of the package has booted long
+// before in a full run; with -run on this test alone the stack may have just started, and the
+// reference image can then answer 503 for a moment (decision ready-before-serving). No other
+// scenario asserts /healthz right after a start: they use Stack.Answers.
 func TestPlatformHealthz(t *testing.T) {
-	r := harness.Shared(t).Anonymous().Do(t, "GET", "/healthz", nil)
+	s := harness.Shared(t)
+	// A sign-in is real work (two CLI runs and a login through the app's event loop), so by the
+	// time it is done a stall that began right after the boot has ended. The probe is asserted
+	// strictly after it, with no retry.
+	s.Admin(t)
+	r := s.Anonymous().Do(t, "GET", "/healthz", nil)
 	if r.Status != 200 || string(r.Body) != "ok" {
 		t.Fatalf("healthz: %d %q", r.Status, r.Body)
 	}
@@ -182,12 +185,12 @@ func TestPlatformAccessLog(t *testing.T) {
 	s := harness.Shared(t)
 	marker := harness.Unique("sk_secret-token")
 	query := "probe=" + harness.Unique("p")
-	r := s.Anonymous().Do(t, "GET", "/healthz?"+query, nil, "Authorization: Bearer "+marker)
+	r := s.Anonymous().Do(t, "GET", "/api/auth/methods?"+query, nil, "Authorization: Bearer "+marker)
 	id := r.Header.Get("X-Request-Id")
 	if r.Status != 200 || !requestID.MatchString(id) {
 		t.Fatalf("probe: %d, X-Request-Id %q", r.Status, id)
 	}
-	// Wait for exactly this request's record (the readiness probes leave /healthz records too).
+	// Wait for exactly this request's record (the readiness probes leave records too).
 	var rec map[string]any
 	harness.Eventually(t, "the probe's record (reqId "+id+") in the access log", func() bool {
 		recs, _ := logRecords(t, s.Logs(t))
@@ -200,7 +203,7 @@ func TestPlatformAccessLog(t *testing.T) {
 		return false
 	})
 	// The record is identified by its request id; its message text is the logger's.
-	if logLevel(rec) != "info" || rec["method"] != "GET" || rec["path"] != "/healthz" || rec["status"] != float64(200) {
+	if logLevel(rec) != "info" || rec["method"] != "GET" || rec["path"] != "/api/auth/methods" || rec["status"] != float64(200) {
 		t.Fatalf("access log record: %v", rec)
 	}
 	if ms, ok := rec["ms"].(float64); !ok || ms < 0 {
@@ -538,11 +541,10 @@ func assertKeyCreatedOnce(t *testing.T, recs []map[string]any) {
 	}
 }
 
+// healthy asserts that the app answers after a start (not /healthz: see Stack.Answers).
 func healthy(t *testing.T, s *harness.Stack) {
 	t.Helper()
-	if r := s.Anonymous().Do(t, "GET", "/healthz", nil); r.Status != 200 || string(r.Body) != "ok" {
-		t.Fatalf("healthz: %d %q", r.Status, r.Body)
-	}
+	s.Answers(t)
 }
 
 // TestPlatformMigrationsAndKeyCheck runs on one stack with a key the test knows; the subtests

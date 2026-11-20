@@ -246,9 +246,7 @@ func TestConfigRefused(t *testing.T) {
 	// Control: the stack's own configuration is valid. Without it every refusal above could be a
 	// stack that never starts.
 	s.SwapImage(t, image, "")
-	if r := s.Anonymous().Do(t, "GET", "/healthz", nil); r.Status != 200 {
-		t.Fatalf("healthz after the refused starts: %d", r.Status)
-	}
+	s.Answers(t)
 }
 
 func TestConfigEmptyMeansUnset(t *testing.T) {
@@ -299,9 +297,7 @@ func TestConfigSecretsFromFiles(t *testing.T) {
 	led.note(s.SecretValues()...)
 
 	t.Run("the app is healthy and a sealed secret round-trips", func(t *testing.T) {
-		if r := s.Anonymous().Do(t, "GET", "/healthz", nil); r.Status != 200 {
-			t.Fatalf("healthz: %d", r.Status)
-		}
+		s.Answers(t)
 		secret := "config-file-key-" + harness.Unique("s")
 		led.note(secret)
 		e := gwNewServer(t, led, admin, nil, "shared_secret", fakes.WithSecret(secret))
@@ -360,9 +356,7 @@ func TestConfigSecretsFromFiles(t *testing.T) {
 		}
 		assertNoKey(t, logs, other)
 		s.SwapImage(t, image, "")
-		if r := s.Anonymous().Do(t, "GET", "/healthz", nil); r.Status != 200 {
-			t.Fatalf("healthz after the right files are back: %d", r.Status)
-		}
+		s.Answers(t)
 		// The secret stored before still opens with the file's key.
 		sess := led.session(admin.Token(t, "config-files-2"))
 		if len(catalogListServers(t, sess)) == 0 {
@@ -371,14 +365,15 @@ func TestConfigSecretsFromFiles(t *testing.T) {
 	})
 }
 
-// configXFFRecordIP sends GET /healthz with X-Forwarded-For and returns the "ip" of its access-log
-// record (found by the request id the response carries).
+// configXFFRecordIP sends GET /api/auth/methods (no database, no model: see Stack.Answers) with
+// X-Forwarded-For and returns the "ip" of its access-log record (found by the request id the
+// response carries).
 func configXFFRecordIP(t *testing.T, s *harness.Stack, xff string) string {
 	t.Helper()
-	r := s.Anonymous().Do(t, "GET", "/healthz", nil, "X-Forwarded-For: "+xff)
+	r := s.Anonymous().Do(t, "GET", "/api/auth/methods", nil, "X-Forwarded-For: "+xff)
 	id := r.Header.Get("X-Request-Id")
 	if r.Status != 200 || id == "" {
-		t.Fatalf("GET /healthz: %d, X-Request-Id %q", r.Status, id)
+		t.Fatalf("GET /api/auth/methods: %d, X-Request-Id %q", r.Status, id)
 	}
 	var ip string
 	harness.Eventually(t, "the access-log record of request "+id, func() bool {
@@ -413,9 +408,7 @@ func TestConfigNetworkAndRetention(t *testing.T) {
 
 	t.Run("PORT: the app answers on the port it was told to listen on", func(t *testing.T) {
 		// Start waited for /healthz on the published port, which maps to 8123 inside the container.
-		if r := anon.Do(t, "GET", "/healthz", nil); r.Status != 200 || string(r.Body) != "ok" {
-			t.Fatalf("healthz: %d %q", r.Status, r.Body)
-		}
+		s.Answers(t)
 		if r := admin.Do(t, "GET", "/api/auth/me", nil); r.Status != 200 {
 			t.Fatalf("the admin session on the other port: %d", r.Status)
 		}
@@ -432,9 +425,7 @@ func TestConfigNetworkAndRetention(t *testing.T) {
 		}
 		for _, host := range []string{"unlisted.compat.test", "extra.compat.test.evil.example", "xextra.compat.test"} {
 			r := anon.Do(t, "POST", "/mcp", listBody, mcpJSON, mcpAccept, "Authorization: Bearer "+token, "Host: "+host)
-			if r.Status != 403 || !strings.Contains(string(r.Body), "Invalid Host: "+host) {
-				t.Errorf("Host %s: %d %.200s, want 403 `Invalid Host: %s`", host, r.Status, r.Body, host)
-			}
+			assertHostRefused(t, "Host "+host, r)
 		}
 		// The default hosts stay served: the public address and loopback.
 		if r := mcpPost(t, led, anon, token, listBody, "Host: localhost"); r.Status != 200 {
@@ -445,9 +436,7 @@ func TestConfigNetworkAndRetention(t *testing.T) {
 	t.Run("ALLOWED_HOSTS: without it the same host is refused (control)", func(t *testing.T) {
 		s.SwapImage(t, image, "", map[string]string{"ALLOWED_HOSTS": ""})
 		r := anon.Do(t, "POST", "/mcp", listBody, mcpJSON, mcpAccept, "Authorization: Bearer "+token, "Host: extra.compat.test")
-		if r.Status != 403 || !strings.Contains(string(r.Body), "Invalid Host: extra.compat.test") {
-			t.Errorf("Host extra.compat.test without ALLOWED_HOSTS: %d %.200s, want 403", r.Status, r.Body)
-		}
+		assertHostRefused(t, "Host extra.compat.test without ALLOWED_HOSTS", r)
 		s.SwapImage(t, image, "")
 	})
 

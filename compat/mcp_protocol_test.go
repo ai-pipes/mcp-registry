@@ -427,10 +427,8 @@ func TestMCPGuards(t *testing.T) {
 			{"without a token", nil},
 		} {
 			r := anon.Do(t, "POST", "/mcp", listBody, append([]string{mcpJSON, mcpAccept, "Host: evil.example"}, c.hdr...)...)
-			// The Host refusal is the transport's (not the product's Origin body): its text names the host.
-			if r.Status != 403 || !strings.Contains(string(r.Body), "Invalid Host: evil.example") {
-				t.Errorf("%s: %d %.200s, want 403 `Invalid Host: evil.example`", c.name, r.Status, r.Body)
-			}
+			// The refusal's text is the transport library's, not the product's: status and "nothing served".
+			assertHostRefused(t, c.name, r)
 		}
 		port := s.BaseURL[strings.LastIndex(s.BaseURL, ":")+1:]
 		for _, host := range []string{"localhost", "localhost:" + port, "127.0.0.1:" + port} {

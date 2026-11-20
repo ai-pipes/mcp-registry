@@ -391,9 +391,7 @@ func TestIdentityOIDC(t *testing.T) {
 			t.Fatalf("an outage was audited as a failed login (%d records)", countFailed())
 		}
 		// The server itself is fine, and sign-in works again.
-		if r := anon.Do(t, "GET", "/healthz", nil); r.Status != 200 {
-			t.Fatalf("healthz during the outage: %d", r.Status)
-		}
+		s.Answers(t)
 		loginViaIDP(t, s, idp, identityLoginPerson(harness.Unique("back"), "Ann", "mcp-users"))
 	})
 
@@ -568,9 +566,7 @@ func TestIdentityOIDCProviderDownAtStart(t *testing.T) {
 	anon := s.Anonymous()
 
 	t.Run("the server works without the provider: health, MCP with a token", func(t *testing.T) {
-		if r := anon.Do(t, "GET", "/healthz", nil); r.Status != 200 {
-			t.Fatalf("healthz: %d", r.Status)
-		}
+		s.Answers(t)
 		token := identityCLIToken(t, s, harness.Unique("ops"))
 		tools, err := s.MCP(t, token).ListTools(t.Context(), nil)
 		if err != nil || len(tools.Tools) != 4 {
@@ -1589,6 +1585,11 @@ func TestIdentityNoOIDC(t *testing.T) {
 	})
 }
 
+// rawLinkClient is the client of rawPostLink. Its idle connections are dropped after a second, as
+// those of the harness's clients are (a server closes an idle keep-alive connection by itself, and
+// a POST that goes out on a connection being closed is never retried by net/http).
+var rawLinkClient = &http.Client{Transport: &http.Transport{IdleConnTimeout: time.Second}}
+
 // rawPostLink posts a link code with plain net/http, safe to call from goroutines (it never calls
 // t.Fatalf). It returns the status.
 func rawPostLink(base, code, ip string) (int, error) {
@@ -1599,7 +1600,7 @@ func rawPostLink(base, code, ip string) (int, error) {
 	req.Header.Set("Origin", base)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Forwarded-For", ip)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := rawLinkClient.Do(req)
 	if err != nil {
 		return 0, err
 	}

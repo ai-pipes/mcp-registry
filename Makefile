@@ -45,9 +45,12 @@ compat-image-ts:
 
 # COMPAT_ARGS adds go test arguments, e.g. make compat COMPAT_ARGS='-run ^TestPlatform' (the -run
 # patterns per area are in CONTRIBUTING.md). Nothing here sets COMPAT_REFERENCE: it matters only
-# for -update, which the harness allows only for the reference image.
+# for -update, which the harness allows only for the reference image. -p 1 runs the test packages
+# (compat, compat/harness, compat/fakes) one after another: concurrent stacks on one machine stall
+# the app's event loop (it loads its embedding model right after it first answers healthy), and a
+# stalled app turns into flaky timeouts.
 compat:
-	go test -tags compat -count=1 -timeout 30m $(COMPAT_ARGS) ./compat/...
+	go test -tags compat -count=1 -p 1 -timeout 30m $(COMPAT_ARGS) ./compat/...
 
 # The browser flows (e2e/flows, Playwright with Chromium) against the image COMPAT_IMAGE (default
 # mcp-registry:compat-ts, see compat-image-ts), orchestrated from Go so that the same flows judge the

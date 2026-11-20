@@ -220,7 +220,7 @@ func TestPublicHostBootsAStackThatAnswersOnItsPublicName(t *testing.T) {
 	}
 	// The test process resolves *.compat.test itself, so a client of the stack works.
 	c := &Client{base: s.BaseURL, http: newHTTPClient(nil)}
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, c.base+"/healthz", nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, c.base+"/api/auth/methods", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,7 +230,7 @@ func TestPublicHostBootsAStackThatAnswersOnItsPublicName(t *testing.T) {
 	}
 	_ = resp.Body.Close()
 	if resp.StatusCode != 200 {
-		t.Fatalf("healthz through the public name: %d", resp.StatusCode)
+		t.Fatalf("GET /api/auth/methods through the public name: %d", resp.StatusCode)
 	}
 	out, err := dockerErr("exec", s.app, "sh", "-c", "getent hosts idp.compat.test")
 	if err != nil || !strings.Contains(out, "idp.compat.test") {
@@ -328,9 +328,7 @@ func TestFilesAreInTheContainerBeforeTheAppStarts(t *testing.T) {
 		PasswordFile:   "/tmp/harness-pw",
 		Files:          map[string][]byte{"/tmp/harness-extra": []byte("extra\n")},
 	})
-	if r := s.Anonymous().Do(t, "GET", "/healthz", nil); r.Status != 200 {
-		t.Fatalf("healthz: %d", r.Status)
-	}
+	s.Answers(t)
 	env, err := dockerErr("inspect", "-f", "{{range .Config.Env}}{{println .}}{{end}}", s.app)
 	if err != nil {
 		t.Fatal(err)

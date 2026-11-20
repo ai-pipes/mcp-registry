@@ -18,9 +18,7 @@ func TestMain(m *testing.M) { harness.Main(m) }
 
 func TestStackBootsAndIsReachableBothWays(t *testing.T) {
 	s := harness.Start(t, harness.Options{})
-	if r := s.Anonymous().Do(t, "GET", "/healthz", nil); r.Status != 200 || string(r.Body) != "ok" {
-		t.Fatalf("healthz: %d %q", r.Status, r.Body)
-	}
+	s.Answers(t)
 	if v := s.CLI(t, "", "--version"); v.Code != 0 || strings.TrimSpace(v.Stdout) == "" {
 		t.Fatalf("cli --version: %+v", v)
 	}
@@ -113,7 +111,8 @@ func TestMCPRefusesAForeignHost(t *testing.T) {
 		t.Fatalf("own Host: %d %.200s", r.Status, r.Body)
 	}
 	r := s.Anonymous().Do(t, "POST", "/mcp", call, append(hdr, "Host: evil.example")...)
-	if r.Status != 403 || !strings.Contains(string(r.Body), "Invalid Host: evil.example") {
+	// The body text is the MCP SDK's wording: status 403 and nothing served is what is judged.
+	if r.Status != 403 || strings.Contains(string(r.Body), `"result"`) || strings.Contains(string(r.Body), "search_tools") {
 		t.Fatalf("foreign Host: %d %s", r.Status, r.Body)
 	}
 }
@@ -144,9 +143,7 @@ func TestSwapImageExpectingExitThenRecovers(t *testing.T) {
 		t.Fatalf("exit %d, logs %q", code, logs)
 	}
 	s.SwapImage(t, testImage(), "") // the override was for one run only
-	if r := s.Anonymous().Do(t, "GET", "/healthz", nil); r.Status != 200 {
-		t.Fatalf("healthz: %d", r.Status)
-	}
+	s.Answers(t)
 }
 
 func TestUnsetRemovesADefault(t *testing.T) {
@@ -191,9 +188,7 @@ func TestSwapImageKeepsTheDatabase(t *testing.T) {
 		t.Fatal("user row missing before the swap")
 	}
 	s.SwapImage(t, testImage(), "")
-	if r := s.Anonymous().Do(t, "GET", "/healthz", nil); r.Status != 200 || string(r.Body) != "ok" {
-		t.Fatalf("healthz after swap: %d %q", r.Status, r.Body)
-	}
+	s.Answers(t)
 	if count() != 1 {
 		t.Fatal("user row lost by the swap")
 	}
@@ -302,7 +297,5 @@ func TestCLIWithEnvRunsWhileTheAppIsDown(t *testing.T) {
 // and the published port maps to it.
 func TestContainerPortMovesWhatTheAppListensOn(t *testing.T) {
 	s := harness.Start(t, harness.Options{ContainerPort: 8123})
-	if r := s.Anonymous().Do(t, "GET", "/healthz", nil); r.Status != 200 || string(r.Body) != "ok" {
-		t.Fatalf("healthz on a non-default port: %d %q", r.Status, r.Body)
-	}
+	s.Answers(t)
 }
