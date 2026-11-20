@@ -8,7 +8,9 @@ import (
 	"io/fs"
 	"regexp"
 	"slices"
+	"time"
 
+	"github.com/ai-pipes/mcp-registry/internal/kernel"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -26,6 +28,20 @@ type NewerDatabaseError struct{ Migration string }
 func (e *NewerDatabaseError) Error() string {
 	return fmt.Sprintf("the database was migrated by a newer version of mcp-registry (unknown migration: %s); start that version or restore the backup taken before the upgrade", e.Migration)
 }
+
+// MigrationError is a failed migration step. Its text names the file and the content-free label
+// of the cause (type and SQLSTATE), never the driver's message, which can quote data; Unwrap
+// reaches the driver error.
+type MigrationError struct {
+	File string
+	Err  error
+}
+
+func (e *MigrationError) Error() string {
+	return "migration " + e.File + " failed (" + kernel.ErrorLabel(e.Err) + ")"
+}
+
+func (e *MigrationError) Unwrap() error { return e.Err }
 
 // Run applies every migration file of files (read at its root) that platform.schema_migrations
 // does not list, in name order, and returns the names it applied. A session advisory lock on one
@@ -47,40 +63,44 @@ func Run(ctx context.Context, pool *pgxpool.Pool, files fs.FS) (applied []string
 
 	conn, err := pool.Acquire(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("acquire a migration connection: %w", err)
+		return nil, &MigrationError{File: "(connection)", Err: err}
 	}
 	// A connection whose lock could not be released must not go back to the pool still holding it.
 	release := func() { conn.Release() }
 	defer func() { release() }()
 
 	if _, err := conn.Exec(ctx, `select pg_advisory_lock($1)`, int64(lockKey)); err != nil {
-		return nil, fmt.Errorf("take the migration lock: %w", err)
+		return nil, &MigrationError{File: "(bookkeeping)", Err: err}
 	}
 	defer func() {
-		if _, uerr := conn.Exec(context.WithoutCancel(ctx), `select pg_advisory_unlock($1)`, int64(lockKey)); uerr != nil {
+		uctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		if _, uerr := conn.Exec(uctx, `select pg_advisory_unlock($1)`, int64(lockKey)); uerr != nil {
 			release = func() { _ = conn.Hijack().Close(context.WithoutCancel(ctx)) }
 		}
 	}()
 
 	if _, err := conn.Exec(ctx, `create schema if not exists platform`); err != nil {
-		return nil, fmt.Errorf("create schema platform: %w", err)
+		return nil, &MigrationError{File: "(bookkeeping)", Err: err}
 	}
 	if _, err := conn.Exec(ctx, `create table if not exists platform.schema_migrations (
 		name text primary key,
 		applied_at timestamptz not null default now()
 	)`); err != nil {
-		return nil, fmt.Errorf("create platform.schema_migrations: %w", err)
+		return nil, &MigrationError{File: "(bookkeeping)", Err: err}
 	}
 
-	rows, err := conn.Query(ctx, `select name from platform.schema_migrations order by name`)
+	rows, err := conn.Query(ctx, `select name from platform.schema_migrations`)
 	if err != nil {
-		return nil, fmt.Errorf("read platform.schema_migrations: %w", err)
+		return nil, &MigrationError{File: "(bookkeeping)", Err: err}
 	}
 	done, err := pgx.CollectRows(rows, pgx.RowTo[string])
 	if err != nil {
-		return nil, fmt.Errorf("read platform.schema_migrations: %w", err)
+		return nil, &MigrationError{File: "(bookkeeping)", Err: err}
 	}
-	for _, name := range done { // sorted by the query
+	// Sorted here, not by the database: its collation is not byte order.
+	slices.Sort(done)
+	for _, name := range done {
 		if !slices.Contains(names, name) {
 			return nil, &NewerDatabaseError{Migration: name}
 		}
@@ -107,18 +127,18 @@ func Run(ctx context.Context, pool *pgxpool.Pool, files fs.FS) (applied []string
 func apply(ctx context.Context, conn *pgxpool.Conn, name, text string) error {
 	tx, err := conn.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("migration %s: begin: %w", name, err)
+		return &MigrationError{File: name, Err: err}
 	}
 	if _, err := tx.Exec(ctx, text); err != nil {
 		_ = tx.Rollback(context.WithoutCancel(ctx))
-		return fmt.Errorf("migration %s: %w", name, err)
+		return &MigrationError{File: name, Err: err}
 	}
 	if _, err := tx.Exec(ctx, `insert into platform.schema_migrations (name) values ($1)`, name); err != nil {
 		_ = tx.Rollback(context.WithoutCancel(ctx))
-		return fmt.Errorf("migration %s: record: %w", name, err)
+		return &MigrationError{File: name, Err: err}
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("migration %s: commit: %w", name, err)
+		return &MigrationError{File: name, Err: err}
 	}
 	return nil
 }

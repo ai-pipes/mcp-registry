@@ -1,3 +1,5 @@
+//go:build integration
+
 // Package pgtest starts a throwaway Postgres for integration tests.
 package pgtest
 

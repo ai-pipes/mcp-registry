@@ -4,9 +4,13 @@ package db_test
 
 import (
 	"context"
+	"fmt"
+	"net"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ai-pipes/mcp-registry/internal/platform/db"
 	"github.com/ai-pipes/mcp-registry/internal/platform/pgtest"
@@ -102,5 +106,32 @@ func TestOpenConnectionErrorHasNoAddressOrPassword(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "28P01") {
 		t.Fatalf("the label should carry the SQLSTATE: %q", err)
+	}
+}
+
+func TestOpenClassifiesARefusedConnection(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	_ = l.Close() // nothing listens there now
+	_, err = db.Open(context.Background(), fmt.Sprintf("postgres://hidden_user:hidden_pw@127.0.0.1:%d/hidden_db?sslmode=disable", port), nil)
+	if err == nil || !strings.Contains(err.Error(), "refused") {
+		t.Fatalf("want a refused classification, got %v", err)
+	}
+	for _, leak := range []string{"hidden_user", "hidden_pw", "hidden_db", "127.0.0.1", strconv.Itoa(port)} {
+		if strings.Contains(err.Error(), leak) {
+			t.Fatalf("error %q contains %q", err, leak)
+		}
+	}
+}
+
+func TestOpenClassifiesAnExceededDeadline(t *testing.T) {
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	_, err := db.Open(ctx, pgtest.StartURL(t), nil)
+	if err == nil || !strings.Contains(err.Error(), "timeout") {
+		t.Fatalf("want a timeout classification, got %v", err)
 	}
 }

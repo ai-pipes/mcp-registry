@@ -46,10 +46,10 @@ go-verify: go-lint go-arch-lint
 	go test ./...
 	$(MAKE) go-test-int
 
-# -p 1: every test binary starts its own Postgres container and the testcontainers reaper they
-# share fails when several binaries create it at once.
+# Only internal/platform has integration tests. -p 1: testcontainers derives its session from the
+# parent test process, so parallel test binaries race to create the shared reaper and some fail.
 go-test-int:
-	go test -tags integration -count=1 -p 1 ./internal/...
+	go test -tags integration -count=1 -p 1 ./internal/platform/...
 
 # Regenerates compat/schemas from the zod contracts; CI fails when the committed files are stale.
 compat-schemas:
