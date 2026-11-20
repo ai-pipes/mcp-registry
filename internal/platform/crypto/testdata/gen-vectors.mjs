@@ -5,7 +5,7 @@
 //   node internal/platform/crypto/testdata/gen-vectors.mjs
 //
 // The keys are random test keys made here on every run and are never real keys. The output is
-// an object with named sections ("secretbox" today); add a new section by adding a key to
+// an object with named sections ("secretbox", "keyCheck"); add a new section by adding a key to
 // `sections` below, existing sections are kept as they are when the file already has them.
 import { randomBytes } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -38,9 +38,22 @@ function secretboxSection() {
   };
 }
 
+// The check text of apps/server/src/platform/crypto/key-check.ts (PLAIN, not exported there). The
+// Go test keycheck_test.go reads that source file and asserts the same literal is in it.
+const KEY_CHECK_PLAIN = 'mcp-registry key check v1';
+
+function keyCheckSection() {
+  const key = randomBytes(32);
+  return {
+    key: b64(key),
+    plain: KEY_CHECK_PLAIN,
+    sealed: b64(new AesGcmSecretBox(key).seal(KEY_CHECK_PLAIN)),
+  };
+}
+
 // Named sections. Keep an existing section unless it is regenerated explicitly by name:
 //   node gen-vectors.mjs secretbox
-const sections = { secretbox: secretboxSection };
+const sections = { secretbox: secretboxSection, keyCheck: keyCheckSection };
 
 let existing = {};
 try {

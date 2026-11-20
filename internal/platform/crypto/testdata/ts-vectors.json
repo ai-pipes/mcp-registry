@@ -29,5 +29,10 @@
       "plain": "sealed with the previous key",
       "sealed": "O3+aMPfJAuJJKxa0h1AHl6DlhIJ+jXCQ1+11CUTVhFBBfLNhHfCVmrphyOY07tbgSPlyoXw9mxA="
     }
+  },
+  "keyCheck": {
+    "key": "ijmG3B41bZIgESDcrTikbKgLq+4gVwHoOeEnlJcYeYw=",
+    "plain": "mcp-registry key check v1",
+    "sealed": "ue4W83q23WM+ZUzgUiZih2zevTYe+Zs0kyUcVanX1BOTDMQ3ACxW9CCwZ7AAWONiv29IR30="
   }
 }
