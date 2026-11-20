@@ -22,7 +22,7 @@ const referenceImageVar = "COMPAT_REFERENCE_IMAGE"
 // CheckUpdateAllowed refuses -update unless COMPAT_REFERENCE=1 AND the image under test (see
 // DefaultImage) is the reference image: the built-in default tag, or exactly the value of
 // COMPAT_REFERENCE_IMAGE when that is set. Without the second condition `COMPAT_IMAGE=<go image>
-// make compat-record-search` would rewrite the goldens from the server they are meant to judge.
+// make compat` with -update would rewrite the goldens from the server they are meant to judge.
 func CheckUpdateAllowed(update bool) error {
 	return checkUpdate(update, os.Getenv("COMPAT_REFERENCE"), os.Getenv(referenceImageVar), DefaultImage())
 }

@@ -3,7 +3,7 @@ GO_ARCH_LINT := github.com/fe3dback/go-arch-lint@v1.14.0
 GOFUMPT := mvdan.cc/gofumpt@v0.12.0
 VERSION := $(shell node -p "require('./apps/server/package.json').version")
 
-.PHONY: compat compat-record-search compat-selfcheck compat-schemas compat-image-ts e2e-flows go-lint go-lint-new go-fmt-check go-arch-lint go-verify go-build print-go-arch-lint print-golangci-lint
+.PHONY: compat compat-selfcheck compat-schemas compat-image-ts e2e-flows go-lint go-lint-new go-fmt-check go-arch-lint go-verify go-build print-go-arch-lint print-golangci-lint
 
 go-lint:
 	go run $(GOLANGCI_LINT) run
@@ -68,14 +68,6 @@ compat:
 # --only-changed, -c and --config in any form).
 e2e-flows:
 	go test -tags "compat e2e" -count=1 -timeout 30m -v -run '^(TestBrowserFlows|TestControl)' ./compat/e2e/
-
-# Records compat/golden/search-<arch>.json for the architecture of this machine, from the reference
-# image only (the one test that writes it; -update would rewrite other goldens if it ran them). It is
-# the only golden that is recorded: the stored vectors are compared with embeddings-<arch>.json,
-# which comes from compat/golden/gen-embeddings.mjs. The harness refuses -update unless the image
-# under test is the reference (the default tag, or COMPAT_REFERENCE_IMAGE).
-compat-record-search:
-	COMPAT_REFERENCE=1 go test -tags compat -count=1 -timeout 30m -run '^TestCatalogSearch$$/^the_recorded_queries$$' ./compat/ -update
 
 # Proves the suite can fail: runs named scenarios against the reference image behind a distorting
 # proxy (compat/selfcheck). Slow; CI runs it daily (compat-selfcheck.yml), not on pull requests.

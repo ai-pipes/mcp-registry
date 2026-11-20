@@ -3,7 +3,7 @@
 # (Playwright in Chromium against the same built image; all three engines nightly in
 # e2e-browsers.yml), go (the Go rewrite's lint, architecture rules and unit tests) and compat (the Go
 # black-box suite against the image built from this tree, on amd64 and arm64; its self-check runs
-# daily in compat-selfcheck.yml and the amd64 search golden is recorded by compat-record.yml) and
+# daily in compat-selfcheck.yml) and
 # e2e-flows (the browser flows of the web UI, e2e/flows, against that same image, orchestrated by Go).
 #
 # Moving to another CI inside the perimeter: the same two commands on a runner with
@@ -110,11 +110,8 @@ jobs:
       - run: make go-verify
 
   # The Go compatibility suite (compat/, tag compat) against the image built from this tree, on both
-  # architectures. The search golden is per architecture. When compat/golden/search-amd64.json is not
-  # committed yet, the amd64 entry records it first (make compat-record-search: the reference image,
-  # the one golden), uploads it as an artifact, warns that it must be committed and then runs the
-  # whole suite, so everything else is verified on amd64 either way. The stored vectors are compared
-  # with compat/golden/embeddings-<arch>.json, which is committed for both architectures.
+  # architectures. Vectors and rankings are compared with the reference image (the image built by
+  # make compat-image-ts) on the same runner, so both entries run the same steps.
   compat:
     needs: [go]
     name: compat (${{ matrix.arch }})
@@ -137,29 +134,6 @@ jobs:
         with:
           node-version: 22
       - run: make compat-image-ts
-      # Decided before recording: the later steps would see the file the record step has just written.
-      - name: Is the amd64 search golden committed?
-        id: golden
-        run: |
-          if [ "${{ matrix.arch }}" = amd64 ] && [ ! -f compat/golden/search-amd64.json ]; then
-            echo "record=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "record=false" >> "$GITHUB_OUTPUT"
-          fi
-      - name: Record the amd64 search golden (not committed yet)
-        if: steps.golden.outputs.record == 'true'
-        run: make compat-record-search
-      - name: Upload the recorded golden
-        if: steps.golden.outputs.record == 'true'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: search-amd64
-          path: compat/golden/search-amd64.json
-          if-no-files-found: error
-          retention-days: 14
-      - name: Say that the golden was recorded in this run
-        if: steps.golden.outputs.record == 'true'
-        run: echo "::warning::compat/golden/search-amd64.json was not committed, so this run recorded it from the reference image (artifact search-amd64). Download and commit it; until then the amd64 search check compares the image with itself."
       - run: make compat
         env:
           COMPAT_LOG_DIR: ${{ runner.temp }}/compat-logs

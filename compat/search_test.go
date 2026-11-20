@@ -3,7 +3,8 @@
 package compat_test
 
 // Search scenarios: the index follows the catalog (search.documents, the outbox), the recorded
-// queries (compat/golden/search-<arch>.json), limits and filters, access by groups, and the
+// queries (compared with the reference image on the same machine, see "the recorded queries"),
+// limits and filters, access by groups, and the
 // reindex command. Everything is reached through MCP (search_tools, describe_tool, list_servers,
 // call_tool), REST, SQL and the CLI.
 //
@@ -14,17 +15,12 @@ package compat_test
 //   - search.int.test.ts uses a bag-of-tokens fake embedder at similarity 0.2; the scenarios
 //     here use the real model and the default threshold, so their queries and expected values
 //     differ (stated at each case).
-//   - embedder.int.test.ts: the embedder itself; judged by compat/golden/embeddings-*.json in
-//     milestone 4.
+//   - embedder.int.test.ts: the embedder itself; judged by TestSearchStoredVectors
+//     (the stored vectors against transformers.js on the same machine) and, later, by Go unit tests.
 
 import (
-	"encoding/json"
-	"errors"
-	"flag"
 	"fmt"
 	"math"
-	"os"
-	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -39,26 +35,13 @@ import (
 
 // ---- search ----
 
-// catalogGoldenQuery is one recorded search.
-type catalogGoldenQuery struct {
-	Query   string    `json:"query"`
-	Servers []string  `json:"servers"`
-	Limit   int       `json:"limit"`
-	Refs    []string  `json:"refs"`
-	Scores  []float64 `json:"scores"`
-}
-
-type catalogGoldenFile struct {
-	Arch    string               `json:"arch"`
-	Queries []catalogGoldenQuery `json:"queries"`
-}
-
-func catalogUpdating() bool {
-	f := flag.Lookup("update")
-	return f != nil && f.Value.String() == "true"
-}
-
-// catalogSearchQueries is the fixed list recorded in compat/golden/search-<arch>.json.
+// catalogSearchQueries is the fixed list asked of the stack under test and of the reference image.
+// relevant is a literal expectation about the first hit, kept only for queries whose first hit was
+// identical in the arm64 golden recorded on an Apple Silicon Mac, in the GitHub arm64 runner's log
+// and in the GitHub amd64 run (the CPU-dependent ones, such as "get the contents of a file in a
+// repository" and "issue", differ between machines and are only compared with the reference
+// image). Literals keep the comparison honest when the reference and the server under test are
+// both broken the same way. nothing: no tool at all may be returned.
 var catalogSearchQueries = []struct {
 	query    string
 	relevant string // the ref that must rank first, "" for none
@@ -66,16 +49,16 @@ var catalogSearchQueries = []struct {
 }{
 	{"create an issue in the tracker", "youtrack.create_issue", false},
 	{"list pull requests in a repository", "gitea.list_pull_requests", false},
-	{"add a comment to an issue", "", false},
-	{"find issues by a search query", "", false},
-	{"create a new branch", "", false},
+	{"add a comment to an issue", "youtrack.add_issue_comment", false},
+	{"find issues by a search query", "youtrack.search_issues", false},
+	{"create a new branch", "gitea.create_branch", false},
 	{"get the contents of a file in a repository", "", false},
-	{"создать задачу в трекере", "", false},
+	{"создать задачу в трекере", "youtrack.create_issue", false},
 	{"найти задачу по номеру", "", false},
-	{"показать список pull request", "", false},
+	{"показать список pull request", "gitea.list_pull_requests", false},
 	{"создать ветку в репозитории", "", false},
 	{"issue", "", false},
-	{"comment", "", false},
+	{"comment", "youtrack.add_issue_comment", false},
 	{"search", "", false},
 	{"weather in Berlin", "", true},
 	{"book a flight to Tokyo", "", true},
@@ -83,8 +66,6 @@ var catalogSearchQueries = []struct {
 	{"borscht recipe", "", true},
 	{"прогноз погоды на завтра", "", true},
 }
-
-func catalogGoldenPath(arch string) string { return filepath.Join("golden", "search-"+arch+".json") }
 
 func TestCatalogSearch(t *testing.T) {
 	s := harness.Start(t, harness.Options{})
@@ -109,17 +90,29 @@ func TestCatalogSearch(t *testing.T) {
 		}
 	})
 
+	// The queries are asked of the stack under test and of a second stack booted from the reference
+	// image on the same machine (the same fixtures, the same default floor): the refs and the order
+	// must be equal and the scores equal within 1e-6 (a score is a pure function of the rank, so
+	// equal refs imply equal scores; the scores are compared anyway as the server's own number).
+	// q8 vectors differ between CPUs of the same architecture by up to about 0.015, which moves
+	// ranks, so no ranking is committed. When the image under test IS the reference image this is a
+	// determinism check between two instances; for another image (the Go server) it is the real
+	// comparison. Everything else here does not depend on the CPU.
 	t.Run("the recorded queries", func(t *testing.T) {
-		got := catalogGoldenFile{Arch: s.Arch}
+		harness.RequireReferenceImage(t)
+		ref := harness.Start(t, harness.Options{Image: harness.ReferenceImage(), CLI: harness.ReferenceCLI()})
+		refAdmin := ref.Admin(t)
+		rc := ref.MCP(t, refAdmin.Token(t, "catalog-search-reference"))
+		catalogRegister(t, refAdmin, fakes.ServerInput(gitea, "gitea", "none", fakes.WithName("Gitea"), catalogWithDescription("Git hosting: repositories, pull requests")))
+		catalogRegister(t, refAdmin, fakes.ServerInput(youtrack, "youtrack", "none", fakes.WithName("YouTrack"), catalogWithDescription("Issue tracker")))
+		catalogWaitDocs(t, ref, "gitea", 61)
+		catalogWaitDocs(t, ref, "youtrack", 23)
+
 		for _, q := range catalogSearchQueries {
 			hits := catalogSearch(t, c, q.query, 10, both)
-			rec := catalogGoldenQuery{Query: q.query, Servers: both, Limit: 10, Refs: catalogHitRefs(hits), Scores: make([]float64, 0, len(hits))}
-			for _, h := range hits {
-				rec.Scores = append(rec.Scores, h.Score)
-			}
-			got.Queries = append(got.Queries, rec)
+			refHits := catalogSearch(t, rc, q.query, 10, both)
 
-			// Properties that do not depend on the golden.
+			// Properties that do not depend on the CPU.
 			if len(hits) > 10 {
 				t.Errorf("%q: %d hits, limit 10", q.query, len(hits))
 			}
@@ -128,62 +121,33 @@ func TestCatalogSearch(t *testing.T) {
 					t.Errorf("%q: score %v of %s is outside (0, 1]", q.query, h.Score, h.Tool)
 				}
 				if i > 0 && h.Score > hits[i-1].Score {
-					t.Errorf("%q: scores are not sorted descending at %d: %v", q.query, i, rec.Scores)
+					t.Errorf("%q: scores are not sorted descending at %d", q.query, i)
 				}
 				if h.Server != strings.SplitN(h.Tool, ".", 2)[0] || (h.Server != "gitea" && h.Server != "youtrack") {
 					t.Errorf("%q: hit %s from server %q", q.query, h.Tool, h.Server)
 				}
 			}
 			if q.nothing && len(hits) != 0 {
-				t.Errorf("%q must find nothing, got %v", q.query, rec.Refs)
+				t.Errorf("%q must find nothing, got %v", q.query, catalogHitRefs(hits))
 			}
 			if q.relevant != "" && (len(hits) == 0 || hits[0].Tool != q.relevant) {
-				t.Errorf("%q: first hit %v, want %s", q.query, rec.Refs, q.relevant)
+				t.Errorf("%q: first hit %v, want %s", q.query, catalogHitRefs(hits), q.relevant)
 			}
-		}
-		if t.Failed() {
-			return
-		}
-		if len(got.Queries) < 12 {
-			t.Fatalf("only %d queries", len(got.Queries))
-		}
-		doc, err := json.MarshalIndent(got, "", "  ")
-		if err != nil {
-			t.Fatal(err)
-		}
-		name := filepath.Base(catalogGoldenPath(s.Arch))
-		if catalogUpdating() {
-			harness.Golden(t, name, append(doc, '\n')) // writes, and refuses without COMPAT_REFERENCE=1
-			return
-		}
-		raw, err := os.ReadFile(catalogGoldenPath(s.Arch))
-		if errors.Is(err, os.ErrNotExist) {
-			t.Fatalf("there is no golden %s for the architecture %s of the image under test: record it with COMPAT_REFERENCE=1 and -update on a %s runner against the reference image", name, s.Arch, s.Arch)
-		}
-		if err != nil {
-			t.Fatal(err)
-		}
-		var want catalogGoldenFile
-		if err := json.Unmarshal(raw, &want); err != nil {
-			t.Fatalf("golden %s: %v", name, err)
-		}
-		if want.Arch != got.Arch || len(want.Queries) != len(got.Queries) {
-			t.Fatalf("golden %s is for %s with %d queries; this run has %s with %d", name, want.Arch, len(want.Queries), got.Arch, len(got.Queries))
-		}
-		for i, w := range want.Queries {
-			g := got.Queries[i]
-			if w.Query != g.Query || w.Limit != g.Limit || !slices.Equal(w.Servers, g.Servers) {
-				t.Fatalf("golden query %d is %q, the test asks %q", i, w.Query, g.Query)
-			}
-			if !slices.Equal(w.Refs, g.Refs) {
-				t.Errorf("%q: refs\n got  %v\n want %v", w.Query, g.Refs, w.Refs)
+
+			// The comparison with the reference image on this machine.
+			got, want := catalogHitRefs(hits), catalogHitRefs(refHits)
+			if !slices.Equal(got, want) {
+				t.Errorf("%q: refs differ from the reference image on this machine\n server under test %v\n reference image   %v", q.query, got, want)
 				continue
 			}
-			for j := range w.Scores {
-				if math.Abs(w.Scores[j]-g.Scores[j]) > 1e-6 {
-					t.Errorf("%q: score of %s is %.9f, golden %.9f (rank-derived, tolerance 1e-6)", w.Query, w.Refs[j], g.Scores[j], w.Scores[j])
+			for j := range refHits {
+				if math.Abs(hits[j].Score-refHits[j].Score) > 1e-6 {
+					t.Errorf("%q: score of %s is %.9f, the reference image gives %.9f (tolerance 1e-6)", q.query, want[j], hits[j].Score, refHits[j].Score)
 				}
 			}
+		}
+		if len(catalogSearchQueries) < 12 {
+			t.Fatalf("only %d queries", len(catalogSearchQueries))
 		}
 	})
 

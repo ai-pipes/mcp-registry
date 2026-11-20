@@ -2,34 +2,34 @@
 
 package compat_test
 
-// Requirement 4 of the migration plan: the vectors a Go server STORES for the same texts match the
-// TypeScript reference within 1e-6. TestCatalogSearch compares search SCORES with 1e-6, but a score
-// is a pure function of the rank (see there), so it says nothing about vectors; this file compares
-// the vectors themselves.
+// Requirement 4 of the migration plan: on the same machine the vectors a Go server STORES for the
+// same texts match the TypeScript reference within 1e-6. TestCatalogSearch compares search SCORES,
+// but a score is a pure function of the rank (see there), so it says nothing about vectors; this
+// file compares the vectors themselves.
 //
-// Approach (a): the scenario registers the `gitea` and `youtrack` fixture servers with exactly the
-// name and description the passage texts of compat/golden/embeddings-<arch>.json were generated
-// from (compat/golden/gen-embeddings.mjs: "passage: <slug>. <slug> server\n<tool> <title>\n<description>",
-// the document text of CLAUDE.md "Search / index" with server name "<slug>" and description
+// The reference is produced at test time, on the same host: compat/golden/gen-embeddings.mjs runs
+// @huggingface/transformers directly (not the server's code) inside a container of the REFERENCE
+// image (harness.ReferenceImage: COMPAT_REFERENCE_IMAGE, else the built-in default tag), which holds
+// Node, the library and the baked-in model; the container has no network. No vectors are committed:
+// the q8 model's vectors differ between CPUs of the same architecture by up to about 0.015 (found
+// when goldens recorded on an Apple Silicon Mac failed on the GitHub arm64 runner: 39 of 84 vectors
+// differed), so a reference is only meaningful when it comes from the machine that compares. When
+// the image under test is the reference image this is a determinism check of the generator against
+// the server; for another image (the Go server) it is the real comparison.
+//
+// The scenario registers the `gitea` and `youtrack` fixture servers with the name and description
+// the passage texts assume ("passage: <slug>. <slug> server\n<tool> <title>\n<description>", the
+// document text of CLAUDE.md "Search / index" with server name "<slug>" and description
 // "<slug> server"), waits for the index, reads search.documents.embedding through SQL and compares
-// every vector component-wise with the reference vector of the same text. The reference comes from
-// @huggingface/transformers run directly (gen-embeddings.mjs), not from the image, so the
-// comparison judges the image against something it did not produce.
-//
-// What each golden file is for: embeddings-<arch>.json holds the reference vectors of the passage
-// texts compared here and also of the query texts, which nothing in the product exposes (the
-// query vector is never stored and search returns ranks and scores only): the query side stays the
-// milestone-4 reference for the Go embedder's unit tests.
+// every vector component-wise with the reference vector of the same text.
 //
 // The same stack serves the SEARCH_MIN_SIMILARITY scenario (configuration, requirement 7): the
 // index is built once and the app is restarted with other floors.
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"math"
-	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -48,28 +48,42 @@ type referenceEmbedding struct {
 	Vec  []float64 `json:"vec"`
 }
 
-// loadReferenceEmbeddings reads compat/golden/embeddings-<arch>.json keyed by text. A missing file
-// is a clear failure: the vectors of an architecture can only be compared with the reference
-// recorded on it.
-func loadReferenceEmbeddings(t *testing.T, arch string) map[string][]float64 {
+// Where the reference image keeps what the generator needs (Dockerfile: WORKDIR /app/apps/server,
+// MODEL_DIR=/app/models, @huggingface/transformers installed for the server).
+const (
+	referenceTransformers = "/app/apps/server/node_modules/@huggingface/transformers/dist/transformers.node.mjs"
+	referenceModelDir     = "/app/models"
+)
+
+// referenceEmbeddings embeds texts with @huggingface/transformers inside a container of the
+// reference image on this machine and returns the vectors keyed by text.
+func referenceEmbeddings(t *testing.T, texts []string) map[string][]float64 {
 	t.Helper()
-	path := filepath.Join("golden", "embeddings-"+arch+".json")
-	raw, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("there is no reference %s for the architecture %s of the image under test: record it with compat/golden/gen-embeddings.mjs in a node container of that architecture (see the header of the script)", path, arch)
-	}
+	golden, err := filepath.Abs("golden")
 	if err != nil {
 		t.Fatal(err)
 	}
+	in, err := json.Marshal(texts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := harness.RunInReference(t, harness.ReferenceRun{
+		Mounts: []string{golden + ":/gen"},
+		Stdin:  in,
+		Args:   []string{"node", "/gen/gen-embeddings.mjs", referenceTransformers, referenceModelDir, "--stdin", "-"},
+	})
 	var rows []referenceEmbedding
-	if err := json.Unmarshal(raw, &rows); err != nil {
-		t.Fatalf("%s: %v", path, err)
+	if err := json.Unmarshal(out, &rows); err != nil {
+		t.Fatalf("the generator's output is not the expected JSON: %v", err)
 	}
-	out := make(map[string][]float64, len(rows))
+	if len(rows) != len(texts) {
+		t.Fatalf("the generator returned %d vectors for %d texts", len(rows), len(texts))
+	}
+	vecs := make(map[string][]float64, len(rows))
 	for _, r := range rows {
-		out[r.Text] = r.Vec
+		vecs[r.Text] = r.Vec
 	}
-	return out
+	return vecs
 }
 
 // fixturePassage is the passage text gen-embeddings.mjs builds for a fixture tool: the product's
@@ -133,7 +147,6 @@ func TestSearchStoredVectors(t *testing.T) {
 	s := harness.Start(t, harness.Options{})
 	admin := s.Admin(t)
 	token := admin.Token(t, "stored-vectors")
-	reference := loadReferenceEmbeddings(t, s.Arch)
 
 	gitea := fakes.StartUpstream(t, fakes.UpstreamOptions{Tools: fakes.FixtureTools("gitea")})
 	youtrack := fakes.StartUpstream(t, fakes.UpstreamOptions{Tools: fakes.FixtureTools("youtrack")})
@@ -146,13 +159,21 @@ func TestSearchStoredVectors(t *testing.T) {
 	catalogWaitDocs(t, s, "gitea", 61)
 	catalogWaitDocs(t, s, "youtrack", 23)
 
-	// expected: the reference vector of every fixture tool's passage, keyed by ref.
+	// expected: the reference vector of every fixture tool's passage, keyed by ref, produced now
+	// on this machine from the reference image.
+	var passages []string
+	for _, srv := range []string{"gitea", "youtrack"} {
+		for _, tool := range fakes.FixtureTools(srv) {
+			passages = append(passages, fixturePassage(srv, tool))
+		}
+	}
+	reference := referenceEmbeddings(t, passages)
 	expected := map[string][]float64{}
 	for _, srv := range []string{"gitea", "youtrack"} {
 		for _, tool := range fakes.FixtureTools(srv) {
 			vec, ok := reference[fixturePassage(srv, tool)]
 			if !ok {
-				t.Fatalf("the reference has no passage for %s.%s: the document text the scenario expects differs from the generator's", srv, tool.Name)
+				t.Fatalf("the reference has no passage for %s.%s: the generator did not return the text the scenario sent", srv, tool.Name)
 			}
 			expected[srv+"."+tool.Name] = vec
 		}
@@ -194,7 +215,7 @@ func TestSearchStoredVectors(t *testing.T) {
 		}
 		t.Logf("largest component difference of the 84 vectors: %.3g", worst)
 		if problems := compareVectors(got, expected, vectorTolerance); len(problems) != 0 {
-			t.Fatalf("%d of 84 stored vectors differ from the %s reference:\n%s", len(problems), s.Arch, strings.Join(problems[:min(len(problems), 10)], "\n"))
+			t.Fatalf("%d of 84 stored vectors differ from the reference image's vectors on this machine:\n%s", len(problems), strings.Join(problems[:min(len(problems), 10)], "\n"))
 		}
 	})
 
