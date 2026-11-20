@@ -7,13 +7,16 @@ const RESERVED = ['/api', '/mcp', '/healthz'];
 const isReserved = (path: string): boolean =>
   RESERVED.some((p) => path === p || path.startsWith(`${p}/`));
 
-/** Static files from the built UI; hashed `/assets/*` are cached forever. */
+/** Static files from the built UI; hashed `/assets/*` are cached forever, the shell (`/`, `/index.html`) is `no-cache`. */
 export function staticFiles(webRoot: string): MiddlewareHandler {
   const files = serveStatic({ root: webRoot });
   return async (c, next) => {
     // Set before serveStatic builds its response: headers added afterwards miss the returned one.
     if (c.req.path.startsWith('/assets/')) {
       c.header('Cache-Control', 'public, max-age=31536000, immutable');
+    } else if (c.req.path === '/' || c.req.path === '/index.html') {
+      // The shell is revalidated like the client routes served by spaFallback, so an upgrade shows at once.
+      c.header('Cache-Control', 'no-cache');
     }
     const res = await files(c, next);
     // A miss falls through to a 404 that must not be cached forever.

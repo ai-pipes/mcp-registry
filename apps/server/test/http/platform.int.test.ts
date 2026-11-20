@@ -101,6 +101,18 @@ describe('platform HTTP app', () => {
     expect(asset.headers.get('cache-control')).toBe('public, max-age=31536000, immutable');
   });
 
+  it('marks the shell no-cache on / and /index.html too, not only on client routes', async () => {
+    const app = makeApp();
+    const check = async (path: string) => {
+      const res = await app.request(path, { headers: { accept: 'text/html' } });
+      expect(res.status).toBe(200);
+      expect(await res.text()).toContain('<div id="root"></div>');
+      expect(res.headers.get('cache-control')).toBe('no-cache');
+    };
+    await check('/');
+    await check('/index.html');
+  });
+
   it('does not hand the SPA shell to /api, /mcp or /healthz paths', async () => {
     const app = makeApp();
     const api = await app.request('/api/nothing', { headers: { accept: 'text/html' } });
