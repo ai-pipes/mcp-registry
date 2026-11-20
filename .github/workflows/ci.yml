@@ -110,10 +110,11 @@ jobs:
       - run: make go-verify
 
   # The Go compatibility suite (compat/, tag compat) against the image built from this tree, on both
-  # architectures. The embeddings and search goldens are per architecture: the amd64 search golden
-  # (compat/golden/search-amd64.json) has to be recorded on an amd64 runner first (compat-record.yml,
-  # then commit the file); until it exists the amd64 entry only reports that with a notice instead of
-  # running a suite that cannot pass. arm64 always runs.
+  # architectures. The search golden is per architecture. When compat/golden/search-amd64.json is not
+  # committed yet, the amd64 entry records it first (make compat-record-search: the reference image,
+  # the one golden), uploads it as an artifact, warns that it must be committed and then runs the
+  # whole suite, so everything else is verified on amd64 either way. The stored vectors are compared
+  # with compat/golden/embeddings-<arch>.json, which is committed for both architectures.
   compat:
     needs: [go]
     name: compat (${{ matrix.arch }})
@@ -129,33 +130,41 @@ jobs:
             runner: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # `if: hashFiles(...)` does not exist at job level, so the condition is a step whose output
-      # gates the steps below. No continue-on-error anywhere: a skipped entry is skipped openly.
-      - name: Decide whether this architecture can run the suite
-        id: gate
-        run: |
-          if [ "${{ matrix.arch }}" = amd64 ] && [ ! -f compat/golden/search-amd64.json ]; then
-            echo "run=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::compat (amd64) did not run: compat/golden/search-amd64.json has not been recorded yet. Run the compat-record workflow, then commit the artifact it uploads."
-          else
-            echo "run=true" >> "$GITHUB_OUTPUT"
-          fi
-      - if: steps.gate.outputs.run == 'true'
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - if: steps.gate.outputs.run == 'true'
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
-      - if: steps.gate.outputs.run == 'true'
-        run: make compat-image-ts
-      - if: steps.gate.outputs.run == 'true'
-        run: make compat
+      - run: make compat-image-ts
+      # Decided before recording: the later steps would see the file the record step has just written.
+      - name: Is the amd64 search golden committed?
+        id: golden
+        run: |
+          if [ "${{ matrix.arch }}" = amd64 ] && [ ! -f compat/golden/search-amd64.json ]; then
+            echo "record=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "record=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Record the amd64 search golden (not committed yet)
+        if: steps.golden.outputs.record == 'true'
+        run: make compat-record-search
+      - name: Upload the recorded golden
+        if: steps.golden.outputs.record == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: search-amd64
+          path: compat/golden/search-amd64.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Say that the golden was recorded in this run
+        if: steps.golden.outputs.record == 'true'
+        run: echo "::warning::compat/golden/search-amd64.json was not committed, so this run recorded it from the reference image (artifact search-amd64). Download and commit it; until then the amd64 search check compares the image with itself."
+      - run: make compat
         env:
           COMPAT_LOG_DIR: ${{ runner.temp }}/compat-logs
       # The harness writes the app container's log of every failed stack (secrets removed) there.
-      - if: failure() && steps.gate.outputs.run == 'true'
+      - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: compat-app-logs-${{ matrix.arch }}

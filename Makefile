@@ -43,8 +43,11 @@ compat-schemas:
 compat-image-ts:
 	docker build -t mcp-registry:compat-ts .
 
+# COMPAT_ARGS adds go test arguments, e.g. make compat COMPAT_ARGS='-run ^TestPlatform' (the -run
+# patterns per area are in CONTRIBUTING.md). Nothing here sets COMPAT_REFERENCE: it matters only
+# for -update, which the harness allows only for the reference image.
 compat:
-	COMPAT_REFERENCE=1 go test -tags compat -count=1 -timeout 30m ./compat/...
+	go test -tags compat -count=1 -timeout 30m $(COMPAT_ARGS) ./compat/...
 
 # The browser flows (e2e/flows, Playwright with Chromium) against the image COMPAT_IMAGE (default
 # mcp-registry:compat-ts, see compat-image-ts), orchestrated from Go so that the same flows judge the
@@ -54,12 +57,16 @@ compat:
 # operations; TestPlaywrightArgs*: the arguments refused) run in go-verify too. Traces of a failed run: node_modules/.cache/playwright/flows-results
 # (or E2E_OUTPUT_DIR). E2E_PLAYWRIGHT_ARGS='03-tokens.spec.ts' runs one spec file (space-separated
 # arguments only: a test title with spaces cannot be passed, pass its file; --list and
-# --pass-with-no-tests are refused, as are --retries, -c and --config in any form).
+# --pass-with-no-tests are refused, as are --retries, --grep-invert, --shard, --last-failed,
+# --only-changed, -c and --config in any form).
 e2e-flows:
 	go test -tags "compat e2e" -count=1 -timeout 30m -v -run '^(TestBrowserFlows|TestControl)' ./compat/e2e/
 
 # Records compat/golden/search-<arch>.json for the architecture of this machine, from the reference
-# image only (the one test that writes it; -update would rewrite other goldens if it ran them).
+# image only (the one test that writes it; -update would rewrite other goldens if it ran them). It is
+# the only golden that is recorded: the stored vectors are compared with embeddings-<arch>.json,
+# which comes from compat/golden/gen-embeddings.mjs. The harness refuses -update unless the image
+# under test is the reference (the default tag, or COMPAT_REFERENCE_IMAGE).
 compat-record-search:
 	COMPAT_REFERENCE=1 go test -tags compat -count=1 -timeout 30m -run '^TestCatalogSearch$$/^the_recorded_queries$$' ./compat/ -update
 
