@@ -38,34 +38,32 @@ func readTextFile(path string) (string, error) {
 // a map. Exit codes: 0 stopped cleanly, 1 operation failed (configuration, start, shutdown),
 // 2 bad invocation.
 func run(ctx context.Context, args []string, env map[string]string, stdout, stderr io.Writer) int {
-	if len(args) == 0 {
-		return serve(ctx, env, stdout, stderr)
-	}
-	if args[0] == "--version" {
+	if len(args) > 0 && args[0] == "--version" {
 		_, _ = fmt.Fprintln(stdout, version)
 		return 0
 	}
-	// The configuration is not read for an unknown command.
-	command, ok := commands[args[0]]
-	if !ok {
-		_, _ = fmt.Fprintf(stderr, "error: unknown command %q\n%s", args[0], usage)
-		return 2
-	}
-	return command(args[1:], stdout, stderr)
-}
-
-func serve(ctx context.Context, env map[string]string, stdout, stderr io.Writer) int {
+	// Like the TypeScript CLI, the configuration is read before the command is looked at.
 	cfg, err := config.Load(env, readTextFile)
 	if err != nil {
 		// The text starts with "Invalid configuration:" and names variables, never values.
 		_, _ = fmt.Fprintln(stderr, err.Error())
 		return 1
 	}
-	return app.Run(ctx, app.Options{
-		Config:  cfg,
-		Version: version,
-		Logger:  logging.New(cfg.LogLevel, stdout),
-	})
+	if len(args) == 0 {
+		return app.Run(ctx, app.Options{
+			Config:  cfg,
+			Version: version,
+			Logger:  logging.New(cfg.LogLevel, stdout),
+		})
+	}
+	// Migrations before the command (as in cli.ts) arrive with the first real command, in milestone 2.
+	command, ok := commands[args[0]]
+	if !ok {
+		// The name is printed raw between double quotes, as the TypeScript template string does.
+		_, _ = io.WriteString(stderr, "error: unknown command \""+args[0]+"\"\n"+usage)
+		return 2
+	}
+	return command(args[1:], stdout, stderr)
 }
 
 func environ(pairs []string) map[string]string {

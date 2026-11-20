@@ -35,8 +35,8 @@ func newStdoutLogger(level string) *slog.Logger { return logging.New(level, os.S
 // point cancels it with an app.Signal cause on SIGTERM or SIGINT). The result is the process exit
 // code: 0 after a clean stop, 1 when the start failed or the shutdown did not finish in time.
 //
-// The start itself (migrations, key check) is not interrupted by ctx: a signal that arrives
-// meanwhile is honoured as soon as the server is up, so a migration is never cut off half way.
+// The migrations and the key check are not interrupted by ctx, so a migration is never cut off
+// half way; a signal that arrives meanwhile stops the start before the port is opened.
 func Run(ctx context.Context, o Options) int {
 	logger := loggerOf(o)
 	cfg := o.Config
@@ -48,7 +48,9 @@ func Run(ctx context.Context, o Options) int {
 	}
 
 	startCtx := context.WithoutCancel(ctx)
-	pool, err := db.Open(startCtx, cfg.DatabaseURL, cfg.DatabasePassword)
+	openCtx, cancelOpen := context.WithTimeout(startCtx, connectTimeout)
+	pool, err := db.Open(openCtx, cfg.DatabaseURL, cfg.DatabasePassword)
+	cancelOpen()
 	if err != nil {
 		// db.Open's text is fixed and never quotes the address or a password.
 		logging.Fatal(logger, err.Error())
@@ -57,6 +59,14 @@ func Run(ctx context.Context, o Options) int {
 	if !prepare(startCtx, o, logger, pool) {
 		pool.Close()
 		return 1
+	}
+
+	if ctx.Err() != nil {
+		// A signal arrived during the start: do not open the port, stop at once.
+		logger.Info("shutting down", "signal", signalName(ctx))
+		pool.Close()
+		logger.Info("stopped")
+		return 0
 	}
 
 	stopWorker := outbox.StartWorker(outbox.WorkerOptions{
@@ -84,6 +94,7 @@ func Run(ctx context.Context, o Options) int {
 		Handler:           handler(cfg, logger, pool, webRootOf(o), o.mount),
 		ReadHeaderTimeout: readHeaderTimeout,
 		IdleTimeout:       idleTimeout,
+		MaxHeaderBytes:    maxHeaderBytes,
 		// net/http's own messages stay JSON lines of the platform logger.
 		ErrorLog: slog.NewLogLogger(logger.Handler(), slog.LevelError),
 	}

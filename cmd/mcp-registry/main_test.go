@@ -20,18 +20,41 @@ func TestVersionFlagPrintsVersionAndExitsZero(t *testing.T) {
 	}
 }
 
-// compat: TestCLIVersion needs no configuration for --version, and "version" is not a command.
-func TestUnknownCommandExitsTwoWithoutReadingConfiguration(t *testing.T) {
+// validEnv passes the configuration check; nothing connects for an unknown command.
+var validEnv = map[string]string{
+	"DATABASE_URL": "postgres://u@127.0.0.1:1/db",
+	"PUBLIC_URL":   "http://localhost:3000",
+	"SECRETS_KEY":  "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+}
+
+// compat: TestCLIVersion: "version" is not a command; the name is printed raw.
+func TestUnknownCommandWithValidConfigurationExitsTwo(t *testing.T) {
 	var errOut, out bytes.Buffer
-	code := run(context.Background(), []string{"version"}, nil, &out, &errOut)
+	code := run(context.Background(), []string{`ver\sion`}, validEnv, &out, &errOut)
 	if code != 2 || out.Len() != 0 {
 		t.Fatalf("code=%d stdout=%q", code, out.String())
 	}
-	if !strings.HasPrefix(errOut.String(), `error: unknown command "version"`+"\n") || !strings.Contains(errOut.String(), "Usage:") {
+	if !strings.HasPrefix(errOut.String(), "error: unknown command \"ver\\sion\"\n") || !strings.Contains(errOut.String(), "Usage:") {
 		t.Fatalf("stderr=%q", errOut.String())
 	}
-	if strings.Contains(errOut.String(), "Invalid configuration") {
-		t.Fatal("the configuration was read for an unknown command")
+}
+
+// The configuration is read first: a bare environment is a configuration error, not usage.
+func TestUnknownCommandWithBareEnvironmentReportsTheConfiguration(t *testing.T) {
+	var errOut, out bytes.Buffer
+	code := run(context.Background(), []string{"version"}, nil, &out, &errOut)
+	if code != 1 || out.Len() != 0 || !strings.HasPrefix(errOut.String(), "Invalid configuration:\n") {
+		t.Fatalf("code=%d stdout=%q stderr=%q", code, out.String(), errOut.String())
+	}
+	if strings.Contains(errOut.String(), "unknown command") {
+		t.Fatal("the command was looked at before the configuration")
+	}
+}
+
+func TestVersionNeedsNoConfiguration(t *testing.T) {
+	var out bytes.Buffer
+	if code := run(context.Background(), []string{"--version"}, nil, &out, io.Discard); code != 0 || out.String() != version+"\n" {
+		t.Fatalf("code=%d out=%q", code, out.String())
 	}
 }
 

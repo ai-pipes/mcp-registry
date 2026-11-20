@@ -23,6 +23,7 @@ import (
 	"github.com/ai-pipes/mcp-registry/internal/platform/logging"
 	"github.com/ai-pipes/mcp-registry/internal/platform/pgtest"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const (
@@ -157,22 +158,29 @@ func launch(t *testing.T, cfg config.Config, edit func(*Options)) *instance {
 // waitFor polls the log until a record with msg appears; it fails when Run ends first.
 func (in *instance) waitFor(msg string) {
 	in.t.Helper()
+	if err := in.waitErr(msg); err != nil {
+		in.t.Fatal(err)
+	}
+}
+
+// waitErr is waitFor for goroutines other than the test's: it returns the failure.
+func (in *instance) waitErr(msg string) error {
 	deadline := time.After(waitLimit)
 	tick := time.NewTicker(5 * time.Millisecond)
 	defer tick.Stop()
 	for {
 		if len(in.logs.find(in.t, msg)) > 0 {
-			return
+			return nil
 		}
 		select {
 		case code := <-in.done:
 			in.done <- code
 			if len(in.logs.find(in.t, msg)) > 0 {
-				return
+				return nil
 			}
-			in.t.Fatalf("Run ended with %d before %q; log:\n%s", code, msg, in.logs.String())
+			return fmt.Errorf("Run ended with %d before %q; log:\n%s", code, msg, in.logs.String())
 		case <-deadline:
-			in.t.Fatalf("no %q record; log:\n%s", msg, in.logs.String())
+			return fmt.Errorf("no %q record; log:\n%s", msg, in.logs.String())
 		case <-tick.C:
 		}
 	}
@@ -213,6 +221,29 @@ func get(t *testing.T, url string, header ...string) (int, string, http.Header) 
 	defer func() { _ = res.Body.Close() }()
 	b, _ := io.ReadAll(res.Body)
 	return res.StatusCode, string(b), res.Header
+}
+
+// fetch is get for goroutines other than the test's: it returns the error.
+func fetch(url string) (int, string, error) {
+	res, err := http.Get(url) //nolint:gosec // G107: the test's own server
+	if err != nil {
+		return 0, "", err
+	}
+	defer func() { _ = res.Body.Close() }()
+	b, _ := io.ReadAll(res.Body)
+	return res.StatusCode, string(b), nil
+}
+
+// await receives from ch or fails the test after waitLimit.
+func await[T any](t *testing.T, ch <-chan T, what string) T {
+	t.Helper()
+	select {
+	case v := <-ch:
+		return v
+	case <-time.After(waitLimit):
+		t.Fatalf("timed out waiting for %s", what)
+		panic("unreachable")
+	}
 }
 
 func levelOf(r map[string]any) int { return int(r["level"].(float64)) }
@@ -443,20 +474,20 @@ func TestSecretsKeyOldWarnings(t *testing.T) {
 	in.stop("SIGTERM")
 }
 
-// A request in flight when the context is cancelled still completes.
+// A request in flight when the context is cancelled still completes, also when it uses the pool:
+// the pool is closed only after the request has drained.
 func TestInFlightRequestCompletesOnShutdown(t *testing.T) {
 	url := pgtest.StartURL(t)
 	started := make(chan struct{})
 	in := startInstance(t, baseConfig(url, newKey(t)), func(o *Options) {
-		o.mount = func(mux *http.ServeMux) {
+		o.mount = func(mux *http.ServeMux, pool *pgxpool.Pool) {
 			mux.HandleFunc("GET /slow", func(w http.ResponseWriter, r *http.Request) {
 				close(started)
-				select {
-				case <-time.After(300 * time.Millisecond):
-					_, _ = w.Write([]byte("done"))
-				case <-r.Context().Done():
+				if _, err := pool.Exec(r.Context(), "select pg_sleep(0.3)"); err != nil {
 					w.WriteHeader(http.StatusInternalServerError)
+					return
 				}
+				_, _ = w.Write([]byte("done"))
 			})
 		}
 	})
@@ -464,16 +495,17 @@ func TestInFlightRequestCompletesOnShutdown(t *testing.T) {
 	type result struct {
 		code int
 		body string
+		err  error
 	}
 	res := make(chan result, 1)
 	go func() {
-		code, body, _ := get(t, in.base+"/slow")
-		res <- result{code, body}
+		code, body, err := fetch(in.base + "/slow")
+		res <- result{code, body, err}
 	}()
-	<-started
+	await(t, started, "the slow handler")
 	in.cancel(Signal("SIGTERM"))
-	if r := <-res; r.code != 200 || r.body != "done" {
-		t.Fatalf("in-flight request: %d %q", r.code, r.body)
+	if r := await(t, res, "the slow response"); r.err != nil || r.code != 200 || r.body != "done" {
+		t.Fatalf("in-flight request: %d %q %v", r.code, r.body, r.err)
 	}
 	if code := in.exit(); code != 0 {
 		t.Fatalf("exit %d; log:\n%s", code, in.logs.String())
@@ -482,13 +514,7 @@ func TestInFlightRequestCompletesOnShutdown(t *testing.T) {
 	if tail[len(tail)-1] != "stopped" {
 		t.Fatalf("tail: %q", tail)
 	}
-	if _, _, err := func() (int, string, error) {
-		res, err := http.Get(in.base + "/healthz")
-		if err == nil {
-			_ = res.Body.Close()
-		}
-		return 0, "", err
-	}(); err == nil {
+	if _, _, err := fetch(in.base + "/healthz"); err == nil {
 		t.Fatal("the server still accepts connections after stopped")
 	}
 }
@@ -499,7 +525,7 @@ func TestShutdownTimesOut(t *testing.T) {
 	started, release := make(chan struct{}), make(chan struct{})
 	in := startInstance(t, baseConfig(url, newKey(t)), func(o *Options) {
 		o.shutdownTimeout = 300 * time.Millisecond
-		o.mount = func(mux *http.ServeMux) {
+		o.mount = func(mux *http.ServeMux, _ *pgxpool.Pool) {
 			mux.HandleFunc("GET /stuck", func(_ http.ResponseWriter, _ *http.Request) {
 				close(started)
 				<-release
@@ -507,12 +533,8 @@ func TestShutdownTimesOut(t *testing.T) {
 		}
 	})
 	t.Cleanup(func() { close(release) })
-	go func() {
-		if res, err := http.Get(in.base + "/stuck"); err == nil {
-			_ = res.Body.Close()
-		}
-	}()
-	<-started
+	go func() { _, _, _ = fetch(in.base + "/stuck") }()
+	await(t, started, "the stuck handler")
 	if code := in.stop("SIGTERM"); code != 1 {
 		t.Fatalf("exit %d; log:\n%s", code, in.logs.String())
 	}
@@ -522,6 +544,60 @@ func TestShutdownTimesOut(t *testing.T) {
 	}
 	if len(in.logs.find(t, "stopped")) != 0 {
 		t.Fatal("stopped after a timeout")
+	}
+}
+
+// A signal that arrives before Run (or during its start) stops it before the port is opened.
+func TestSignalDuringStartStopsBeforeListening(t *testing.T) {
+	url := pgtest.StartURL(t)
+	cfg := baseConfig(url, newKey(t))
+	cfg.Port = freePort(t)
+	logs := &logBuf{}
+	ctx, cancel := context.WithCancelCause(context.Background())
+	cancel(Signal("SIGINT"))
+	done := make(chan int, 1)
+	go func() {
+		done <- Run(ctx, Options{Config: cfg, Version: "v", WebRoot: t.TempDir(), Logger: logging.New("info", logs)})
+	}()
+	if code := await(t, done, "Run"); code != 0 {
+		t.Fatalf("exit %d; log:\n%s", code, logs.String())
+	}
+	msgs := logs.messages(t)
+	if len(msgs) < 3 || msgs[0] != "starting" || msgs[len(msgs)-2] != "shutting down" || msgs[len(msgs)-1] != "stopped" {
+		t.Fatalf("records: %q", msgs)
+	}
+	if sd := logs.find(t, "shutting down")[0]; sd["signal"] != "SIGINT" {
+		t.Errorf("shutting down: %v", sd)
+	}
+	if len(logs.find(t, "listening")) != 0 {
+		t.Fatal("listening after a signal during the start")
+	}
+	ln, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", cfg.Port)) //nolint:gosec // G102: the server binds every interface
+	if err != nil {
+		t.Fatalf("the port was opened: %v", err)
+	}
+	_ = ln.Close()
+	eventuallyNoConnections(t, url)
+}
+
+// A header block above 16 KiB is refused (Node's limit), not read up to Go's 1 MiB default.
+func TestOversizedHeadersAreRefused(t *testing.T) {
+	in := startInstance(t, baseConfig(pgtest.StartURL(t), newKey(t)), nil)
+	req, err := http.NewRequest("GET", in.base+"/healthz", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("X-Big", strings.Repeat("a", 32<<10))
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	if res.StatusCode != http.StatusRequestHeaderFieldsTooLarge {
+		t.Fatalf("status %d, want 431", res.StatusCode)
+	}
+	if code, body, _ := get(t, in.base+"/healthz"); code != 200 || body != "ok" {
+		t.Fatalf("/healthz after: %d %q", code, body)
 	}
 }
 
@@ -557,7 +633,7 @@ func TestTwoServersOnAnEmptyDatabase(t *testing.T) {
 	url := pgtest.StartURL(t)
 	key := newKey(t)
 	var ins [2]*instance
-	var wg sync.WaitGroup
+	errs := make(chan error, len(ins))
 	for i := range ins {
 		ln, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
@@ -566,10 +642,13 @@ func TestTwoServersOnAnEmptyDatabase(t *testing.T) {
 		t.Cleanup(func() { _ = ln.Close() })
 		ins[i] = launch(t, baseConfig(url, key), func(o *Options) { o.listener = ln })
 		ins[i].base = "http://" + ln.Addr().String()
-		wg.Add(1)
-		go func() { defer wg.Done(); ins[i].waitFor("listening") }()
+		go func() { errs <- ins[i].waitErr("listening") }()
 	}
-	wg.Wait()
+	for range ins {
+		if err := await(t, errs, "a server to listen"); err != nil {
+			t.Fatal(err)
+		}
+	}
 	for _, in := range ins {
 		if code, body, _ := get(t, in.base+"/healthz"); code != 200 || body != "ok" {
 			t.Fatalf("/healthz: %d %q", code, body)

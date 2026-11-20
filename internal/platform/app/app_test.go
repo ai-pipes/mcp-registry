@@ -9,9 +9,10 @@ import (
 	"testing"
 
 	"github.com/ai-pipes/mcp-registry/internal/platform/config"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func testHandler(t *testing.T, mount func(*http.ServeMux)) http.Handler {
+func testHandler(t *testing.T, mount func(*http.ServeMux, *pgxpool.Pool)) http.Handler {
 	t.Helper()
 	cfg := config.Config{PublicURL: "http://localhost:3000", TrustProxyHops: 1}
 	return handler(cfg, discardLogger(), nil, t.TempDir(), mount)
@@ -30,7 +31,7 @@ func TestBodyLimitAppliesExceptToMCP(t *testing.T) {
 		_, _ = io.Copy(io.Discard, r.Body)
 		_, _ = w.Write([]byte("ok"))
 	})
-	h := testHandler(t, func(mux *http.ServeMux) {
+	h := testHandler(t, func(mux *http.ServeMux, _ *pgxpool.Pool) {
 		mux.Handle("POST /mcp", drain)
 		mux.Handle("POST /mcp/sub", drain)
 		mux.Handle("POST /mcpx", drain)

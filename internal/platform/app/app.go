@@ -29,6 +29,10 @@ const (
 	// is no read or write timeout: /mcp carries large bodies and long responses.
 	readHeaderTimeout = 10 * time.Second
 	idleTimeout       = 60 * time.Second
+	// Node's default header limit; Go's default is 1 MiB.
+	maxHeaderBytes = 16 << 10
+	// connectTimeout is the Node client's default connect timeout.
+	connectTimeout = 30 * time.Second
 )
 
 // Options configures Run.
@@ -41,9 +45,9 @@ type Options struct {
 	Logger *slog.Logger
 
 	// Seams for tests in this package.
-	listener        net.Listener         // used instead of listening on 0.0.0.0:Config.Port
-	mount           func(*http.ServeMux) // extra routes, registered before the catch-all
-	shutdownTimeout time.Duration        // replaces shutdownLimit when > 0
+	listener        net.Listener                        // used instead of listening on 0.0.0.0:Config.Port
+	mount           func(*http.ServeMux, *pgxpool.Pool) // extra routes, registered before the catch-all
+	shutdownTimeout time.Duration                       // replaces shutdownLimit when > 0
 }
 
 // Signal is the cancellation cause of the context given to Run when the process got a signal; its
@@ -65,13 +69,13 @@ func signalName(ctx context.Context) string {
 // handler assembles the HTTP handler: request id and access log, security headers, body limit
 // (everything except /mcp, which has its own limit), client address, CSRF; then the routes.
 // pool may be nil (then /healthz answers 503).
-func handler(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, webRoot string, mount func(*http.ServeMux)) http.Handler {
+func handler(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, webRoot string, mount func(*http.ServeMux, *pgxpool.Pool)) http.Handler {
 	health := httpx.Healthz(pool)
 	rest := httpx.Static(webRoot, httpx.SPAFallback(webRoot, httpx.NotFound()))
 	var extra *http.ServeMux
 	if mount != nil {
 		extra = http.NewServeMux()
-		mount(extra)
+		mount(extra, pool)
 	}
 	// Dispatch by hand instead of registering patterns: ServeMux would answer 405 for another
 	// method on a known path and redirect non-clean paths (//x, /a/../b), where the TypeScript
