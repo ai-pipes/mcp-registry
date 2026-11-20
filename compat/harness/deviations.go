@@ -8,8 +8,8 @@ import (
 	"strings"
 )
 
-// Deviation names one behaviour of 1.0.0 that the Go server deliberately does NOT reproduce (an
-// owner decision). A scenario that touches it has two expectations: the 1.0.0 behaviour, asserted
+// Deviation names one behaviour of the reference image (1.0.x) that the Go server deliberately does NOT reproduce (an
+// owner decision). A scenario that touches it has two expectations: the reference behaviour, asserted
 // as before, and the decided behaviour, asserted when the stack reports Fixed(deviation).
 //
 // COMPAT_FIXED selects the decided behaviour: "all", or a comma-separated list of deviation ids.
@@ -19,13 +19,11 @@ type Deviation string
 
 // The deviations. The description of each is in AllDeviations.
 const (
-	DevAuditOrder           Deviation = "audit-order"
 	DevCreateUserKeepsRole  Deviation = "create-user-keeps-role"
 	DevCreateServerSyncExit Deviation = "create-server-sync-exit"
 	DevReadyBeforeServing   Deviation = "ready-before-serving"
 	DevOAuthStateKept       Deviation = "oauth-state-kept"
 	DevReindexWording       Deviation = "reindex-wording"
-	DevRootNoCache          Deviation = "root-no-cache"
 	DevRequestIDOnRefusals  Deviation = "request-id-on-refusals"
 	DevConfigErrors         Deviation = "config-errors"
 	DevAuditLoginVia        Deviation = "audit-login-via"
@@ -35,19 +33,17 @@ const (
 // DeviationInfo is one registry entry.
 type DeviationInfo struct {
 	ID Deviation
-	// Description is one line: the 1.0.0 behaviour, then the decided behaviour.
+	// Description is one line: the reference behaviour, then the decided behaviour.
 	Description string
 }
 
 // AllDeviations lists every deviation; a test checks that each is used by a scenario.
 var AllDeviations = []DeviationInfo{
-	{DevAuditOrder, "GET /api/audit orders by the text form of the id and paging skips rows -> newest first by numeric id, and paging with before returns every row exactly once"},
 	{DevCreateUserKeepsRole, "create-user without --admin demotes an existing admin -> an existing person's role changes only with an explicit flag (--admin promotes, --member demotes)"},
 	{DevCreateServerSyncExit, "create-server exits 0 when the first sync fails -> exits 1, the server still exists, the output says the sync failed"},
 	{DevReadyBeforeServing, "/healthz may answer 503 and search uses full text only until the embedding model has loaded -> after a start /healthz never answers 503 while the database is up, and the first search equals the settled one"},
 	{DevOAuthStateKept, "a callback under another person's session (invalid_state) consumes the starter's pending state -> the refusal leaves the state usable"},
 	{DevReindexWording, "reindex prints `reindexed <N> server(s)` for a document count -> `reindexed <N> tool(s)`"},
-	{DevRootNoCache, "GET / has no Cache-Control -> Cache-Control: no-cache, as on the other SPA routes"},
 	{DevRequestIDOnRefusals, "the foreign-Host 403 on /mcp carries no X-Request-Id -> every response carries it, that refusal included"},
 	{DevConfigErrors, "EMBEDDER=openai-compatible without EMBEDDER_URL/EMBEDDER_MODEL ends in an unhandled exception and OIDC_SCOPES without openid is refused without OIDC -> an ordinary `Invalid configuration:` error naming both variables, and OIDC_SCOPES is validated only when OIDC is configured"},
 	{DevAuditLoginVia, "an OIDC sign-in writes auth.login with empty meta -> meta.via is \"oidc\""},
@@ -92,5 +88,5 @@ func ParseFixed(value string) (map[Deviation]bool, error) {
 func fixedFromEnv() (map[Deviation]bool, error) { return ParseFixed(os.Getenv(FixedEnv)) }
 
 // Fixed reports whether the image under test is expected to show the decided behaviour of d
-// instead of the 1.0.0 one (COMPAT_FIXED is "all" or lists d). It is false for the reference image.
+// instead of the reference one (COMPAT_FIXED is "all" or lists d). It is false for the reference image.
 func (s *Stack) Fixed(d Deviation) bool { return s.fixed[d] }

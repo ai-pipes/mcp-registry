@@ -3,7 +3,7 @@
 package compat_test
 
 // Docker-free tests of the helpers that judge the decided behaviours (deviations, see
-// compat/harness/deviations.go). The fixed branches cannot run against the 1.0.0 image, so each
+// compat/harness/deviations.go). The fixed branches cannot run against the reference image, so each
 // helper they depend on is tested here on synthetic data, with a case that must be refused next to
 // the case that must be accepted.
 

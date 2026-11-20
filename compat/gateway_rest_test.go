@@ -7,16 +7,11 @@ package compat_test
 // audit trail records for connections, servers, tools and tokens. Source: the calls/audit parts of
 // admin-rest.int.test.ts and PgCallLog in call.int.test.ts.
 //
-// Known defects of the image that are NOT pinned (they are bugs, not contract):
-//   - GET /api/audit (1.0.0) orders by the text form of the id, so its order and its paging are
-//     wrong once ids reach two digits: the 1.0.0 branch never asserts the order or the paging of
-//     the audit list; completeness is asserted on a fresh stack, where the whole trail fits in one
-//     page, and scenarios that need the whole trail elsewhere read platform.audit_log (see
-//     auditAll). The decided behaviour (deviation audit-order) is asserted when the stack reports
-//     it fixed: newest first by numeric id, every row exactly once across pages;
-//   - GET /api/calls orders by started_at desc, id desc with a `before` timestamp cursor, so rows
-//     that share a millisecond can be skipped at a page boundary: the scenarios use rows with
-//     distinct timestamps and never depend on same-millisecond paging.
+// Ordering and paging (reference 1.0.1): GET /api/audit is newest first by the NUMERIC id and
+// paging with `before` returns every row exactly once; GET /api/calls is ordered by start time and
+// then by numeric id, pages with the pair cursor (`before` + `beforeId`) and refuses `beforeId`
+// without `before`. Both are asserted on ids that cross digit counts, where a text order differs
+// from the numeric one.
 
 import (
 	"fmt"
@@ -172,6 +167,81 @@ func TestGatewayCallsAPI(t *testing.T) {
 		}
 	})
 
+	t.Run("rows that share a start time are ordered by numeric id and the pair cursor pages through them once each", func(t *testing.T) {
+		tied := harness.Unique("callsapi-tie")
+		old, mid, newest := base.Add(-2*time.Hour), base.Add(-time.Hour), base
+		// Ids that cross digit counts (17 and 18 digits), so a text order differs from the numeric one;
+		// the sequence of the table never reaches them.
+		group := []string{"90000000000000001", "90000000000000002", "99999999999999999", "100000000000000000", "100000000000000001", "100000000000000002"}
+		insert := func(id string, tool string, at time.Time) {
+			execSQL(t, s, `insert into gateway.calls (id, user_id, server, tool, started_at, duration_ms, outcome)
+				values ($1::bigint, $2::uuid, $3, $4, $5, 1, 'ok')`, id, u1, tied, tool, at)
+		}
+		insert("90000000000000000", "old", old)
+		for _, id := range group {
+			insert(id, "g"+id, mid)
+		}
+		insert("100000000000000003", "newest", newest)
+		want := []string{"100000000000000003", "100000000000000002", "100000000000000001", "100000000000000000", "99999999999999999", "90000000000000002", "90000000000000001", "90000000000000000"}
+		ids := func(rows []gwCallEntry) []string {
+			out := make([]string, 0, len(rows))
+			for _, e := range rows {
+				out = append(out, e.ID)
+			}
+			return out
+		}
+		if got := ids(gwCalls(t, admin, "?server="+tied)); !slices.Equal(got, want) {
+			t.Fatalf("order %v, want start time then numeric id, newest first: %v", got, want)
+		}
+		for _, limit := range []int{1, 2, 3, 5} {
+			var read []string
+			cursor := ""
+			for page := 0; ; page++ {
+				if page > len(want)+1 {
+					t.Fatalf("limit=%d: the pages do not end (read %v)", limit, read)
+				}
+				rows := gwCalls(t, admin, fmt.Sprintf("?server=%s&limit=%d%s", tied, limit, cursor))
+				if len(rows) == 0 {
+					break
+				}
+				if len(rows) > limit {
+					t.Fatalf("limit=%d: a page of %d rows", limit, len(rows))
+				}
+				read = append(read, ids(rows)...)
+				last := rows[len(rows)-1]
+				cursor = "&before=" + url.QueryEscape(last.StartedAt) + "&beforeId=" + last.ID
+			}
+			if !slices.Equal(read, want) {
+				t.Errorf("limit=%d: the pair cursor read %v, want every row once: %v", limit, read, want)
+			}
+		}
+		// The pair is strict: rows of the same start time with a smaller id, and older rows.
+		pair := "?server=" + tied + "&before=" + url.QueryEscape(gwStamp(mid)) + "&beforeId="
+		for _, c := range []struct {
+			beforeID string
+			want     []string
+		}{
+			{"100000000000000001", []string{"100000000000000000", "99999999999999999", "90000000000000002", "90000000000000001", "90000000000000000"}},
+			{"90000000000000001", []string{"90000000000000000"}},
+			{"90000000000000000", []string{"90000000000000000"}},
+			{"1", []string{"90000000000000000"}},
+			{"999999999999999999", []string{"100000000000000002", "100000000000000001", "100000000000000000", "99999999999999999", "90000000000000002", "90000000000000001", "90000000000000000"}},
+		} {
+			if got := ids(gwCalls(t, admin, pair+c.beforeID)); !slices.Equal(got, c.want) {
+				t.Errorf("beforeId=%s: %v, want %v", c.beforeID, got, c.want)
+			}
+		}
+		// Negative control: before alone is the strict timestamp cursor, so it skips the rows that
+		// share the boundary start time (that is what the pair is for).
+		if got := ids(gwCalls(t, admin, "?server="+tied+"&before="+url.QueryEscape(gwStamp(mid)))); !slices.Equal(got, []string{"90000000000000000"}) {
+			t.Errorf("before alone: %v, want only the older row", got)
+		}
+		// The pair cursor composes with the other filters.
+		if got := ids(gwCalls(t, admin, pair+"100000000000000001&outcome=ok&user="+u1+"&limit=2")); !slices.Equal(got, []string{"100000000000000000", "99999999999999999"}) {
+			t.Errorf("the pair with filters and a limit: %v", got)
+		}
+	})
+
 	t.Run("the default limit is 100 and the largest is 500", func(t *testing.T) {
 		many := harness.Unique("callsapi-many")
 		execSQL(t, s, `insert into gateway.calls (user_id, server, tool, started_at, duration_ms, outcome)
@@ -190,6 +260,7 @@ func TestGatewayCallsAPI(t *testing.T) {
 	})
 
 	t.Run("invalid parameters are 422 invalid_request at the parameter", func(t *testing.T) {
+		ts := url.QueryEscape(gwStamp(at(2)))
 		for _, c := range []struct{ query, path string }{
 			{"?limit=0", "limit"},
 			{"?limit=501", "limit"},
@@ -204,11 +275,18 @@ func TestGatewayCallsAPI(t *testing.T) {
 			{"?before=1700000000", "before"},
 			{"?server=", "server"},
 			{"?server=" + strings.Repeat("s", 201), "server"},
+			// beforeId pairs with before: alone it is refused, and it is a number of 1 to 18 digits.
+			{"?beforeId=5", "beforeId"},
+			{"?beforeId=abc&before=" + ts, "beforeId"},
+			{"?beforeId=&before=" + ts, "beforeId"},
+			{"?beforeId=-1&before=" + ts, "beforeId"},
+			{"?beforeId=1.5&before=" + ts, "beforeId"},
+			{"?beforeId=" + strings.Repeat("9", 19) + "&before=" + ts, "beforeId"},
 		} {
 			expectZodBodyError(t, "GET /api/calls"+c.query, admin.Do(t, "GET", "/api/calls"+c.query, nil), 422, c.path)
 		}
 		// Controls: the same parameters at their limits are fine.
-		for _, q := range []string{"?limit=1", "?limit=500", "?server=" + strings.Repeat("s", 200), "?outcome=denied:expired&limit=3"} {
+		for _, q := range []string{"?limit=1", "?limit=500", "?server=" + strings.Repeat("s", 200), "?outcome=denied:expired&limit=3", "?before=" + ts, "?before=" + ts + "&beforeId=1", "?before=" + ts + "&beforeId=" + strings.Repeat("9", 18)} {
 			gwCalls(t, admin, q)
 		}
 	})
@@ -405,11 +483,6 @@ func TestGatewayAuditAPI(t *testing.T) {
 	})
 
 	t.Run("order and paging", func(t *testing.T) {
-		if !s.Fixed(harness.DevAuditOrder) {
-			// 1.0.0: the order and the paging are broken (text order of the ids) and not asserted
-			// here (deviation audit-order).
-			return
-		}
 		// Enough records that the ids cross from one to two digits whatever the stack did before.
 		for n := len(auditAll(t, s)); n < 15; n++ {
 			if r := admin.Do(t, "POST", "/api/tokens", map[string]string{"name": fmt.Sprintf("audit-page-%d", n)}); r.Status != 201 && r.Status != 200 {

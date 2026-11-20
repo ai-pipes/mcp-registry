@@ -195,11 +195,10 @@ func auditRows(t *testing.T, s *harness.Stack, tail string, args ...any) []audit
 	return out
 }
 
-// auditAll returns the whole audit log, newest first. It reads platform.audit_log through SQL:
-// GET /api/audit of the TypeScript image sorts by the text form of the id, so once ids reach two
-// digits its order and paging are wrong (a defect of the image, not a contract; see the report of
-// gateway_test.go), and a scenario that needs completeness cannot rely on it. The shape and the
-// rules of the endpoint itself are covered by TestGatewayAuditAPI; auditViaAPI is for that test.
+// auditAll returns the whole audit log, newest first. It reads platform.audit_log through SQL, so a
+// scenario that needs completeness does not depend on the endpoint's paging. The shape, the order
+// and the paging of the endpoint itself are covered by TestGatewayAuditAPI; auditViaAPI is for that
+// test.
 func auditAll(t *testing.T, s *harness.Stack) []auditEntry {
 	t.Helper()
 	return auditRows(t, s, "order by id desc")
@@ -207,8 +206,8 @@ func auditAll(t *testing.T, s *harness.Stack) []auditEntry {
 
 // auditViaAPI reads the audit log as admin through GET /api/audit?limit=500, one page. It is for
 // scenarios about the endpoint on a stack whose whole trail fits in one page: it fails when the
-// page is full, because then it could be incomplete. The order of the entries is the endpoint's
-// own and is never asserted on.
+// page is full, because then it could be incomplete. The order of the entries is asserted by
+// TestGatewayAuditAPI, not here.
 func auditViaAPI(t *testing.T, admin *harness.Client) []auditEntry {
 	t.Helper()
 	r := admin.Do(t, "GET", "/api/audit?limit=500", nil)

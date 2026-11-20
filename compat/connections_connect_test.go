@@ -294,6 +294,11 @@ func TestConnectionsConnectCallbackRefusals(t *testing.T) {
 			t.Fatal("the code was sent to the provider although the client id changed since the start")
 		}
 		connChangeServer(t, admin, env.slug, func(b map[string]any) { connOAuthOf(b)["clientId"] = env.provider.ClientID })
+		// Reference 1.0.1: a change of the client ID cleared the stored client secret (it is never sent
+		// to a new place), so it is entered again with the restored config.
+		if r := admin.Do(t, "PUT", "/api/servers/"+env.slug+"/secret", map[string]string{"secret": env.provider.ClientSecret}); r.Status != 204 {
+			t.Fatalf("set the client secret again: %d %s", r.Status, r.Body)
+		}
 		// Control: a fresh start under the restored config connects.
 		u = connStart(t, p.c, env.slug)
 		if loc := connCallback(t, p.c, connAuthorize(t, s, u)); loc != "/connections?connected="+url.QueryEscape(env.slug) {

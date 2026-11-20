@@ -22,29 +22,29 @@ func TestParseFixed(t *testing.T) {
 			t.Errorf("all lacks %s", d.ID)
 		}
 	}
-	got, err := ParseFixed(" audit-order , reindex-wording ")
-	if err != nil || len(got) != 2 || !got[DevAuditOrder] || !got[DevReindexWording] || got[DevRootNoCache] {
+	got, err := ParseFixed(" create-user-keeps-role , reindex-wording ")
+	if err != nil || len(got) != 2 || !got[DevCreateUserKeepsRole] || !got[DevReindexWording] || got[DevOAuthStateKept] {
 		t.Fatalf("list: %v %v", got, err)
 	}
-	for _, bad := range []string{"nope", "audit-order,nope", "audit-order,", "ALL", "all,audit-order"} {
+	for _, bad := range []string{"nope", "reindex-wording,nope", "reindex-wording,", "ALL", "all,reindex-wording", "audit-order", "root-no-cache"} {
 		_, err := ParseFixed(bad)
-		if err == nil || !strings.Contains(err.Error(), "valid ids") || !strings.Contains(err.Error(), string(DevAuditOrder)) || !strings.Contains(err.Error(), FixedEnv) {
+		if err == nil || !strings.Contains(err.Error(), "valid ids") || !strings.Contains(err.Error(), string(DevReindexWording)) || !strings.Contains(err.Error(), FixedEnv) {
 			t.Errorf("%q: error %v", bad, err)
 		}
 	}
 }
 
 func TestFixedFollowsTheEnvironment(t *testing.T) {
-	t.Setenv(FixedEnv, "root-no-cache")
+	t.Setenv(FixedEnv, "oauth-state-kept")
 	f, err := fixedFromEnv()
 	if err != nil {
 		t.Fatal(err)
 	}
 	s := &Stack{fixed: f}
-	if !s.Fixed(DevRootNoCache) || s.Fixed(DevAuditOrder) {
+	if !s.Fixed(DevOAuthStateKept) || s.Fixed(DevReindexWording) {
 		t.Fatalf("Fixed: %v", f)
 	}
-	if (&Stack{}).Fixed(DevRootNoCache) {
+	if (&Stack{}).Fixed(DevOAuthStateKept) {
 		t.Fatal("a stack without COMPAT_FIXED reports a deviation as fixed")
 	}
 	t.Setenv(FixedEnv, "bogus")

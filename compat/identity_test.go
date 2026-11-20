@@ -556,6 +556,80 @@ func identityCLIToken(t *testing.T, s *harness.Stack, sub string) string {
 	return token
 }
 
+// TestIdentityOIDCFailedCallbackAudit (reference 1.0.1): failed code exchanges at the callback are
+// audited (auth.login_failed, reason exchange_failed) at most 20 times per minute per client
+// address; past that the callback is still refused with invalid_state, just not recorded, and a
+// valid sign-in from the same address still succeeds. Its own stack, which trusts X-Forwarded-For,
+// so the address of every scenario here is its own and nothing else shares the counter.
+func TestIdentityOIDCFailedCallbackAudit(t *testing.T) {
+	idp := fakes.StartIdP(t)
+	s := harness.Start(t, harness.Options{OIDC: idp, Env: map[string]string{"TRUST_PROXY": "true"}})
+	count := func(action string, keep func(auditEntry) bool) int {
+		return len(auditWhere(auditAll(t, s), action, keep))
+	}
+	exchangeFailed := func() int {
+		return count("auth.login_failed", func(e auditEntry) bool { return e.Meta["reason"] == "exchange_failed" })
+	}
+	// fail sends a callback whose code the provider rejects, from the given client address.
+	fail := func(t *testing.T, ip string) {
+		t.Helper()
+		a := beginIDPLogin(t, s, idp, identityLoginPerson(harness.Unique("badcode"), "Bea", "mcp-users"), "")
+		u, err := url.Parse(a.Back)
+		if err != nil {
+			t.Fatal(err)
+		}
+		q := u.Query()
+		q.Set("code", "forged-code")
+		u.RawQuery = q.Encode()
+		cb := a.Client.Do(t, "GET", u.String(), nil, identityForwarded(ip))
+		if cb.Status != 302 || cb.Header.Get("Location") != "/?loginError=invalid_state" || cookieNamed(cb, "mcp_session") != nil {
+			t.Fatalf("a rejected code from %s: %d Location %q session cookie %v", ip, cb.Status, cb.Header.Get("Location"), cookieNamed(cb, "mcp_session") != nil)
+		}
+	}
+
+	ip, other := identityNextIP(), identityNextIP()
+	if n := exchangeFailed(); n != 0 {
+		t.Fatalf("%d exchange_failed records on a fresh stack", n)
+	}
+	for i := 1; i <= 20; i++ {
+		fail(t, ip)
+	}
+	if n := exchangeFailed(); n != 20 {
+		t.Fatalf("exchange_failed records after 20 failures from one address: %d, want 20", n)
+	}
+
+	t.Run("the 21st and later failures from the address are refused but not audited", func(t *testing.T) {
+		fail(t, ip)
+		fail(t, ip)
+		if n := exchangeFailed(); n != 20 {
+			t.Errorf("exchange_failed records after 22 failures from one address: %d, want 20", n)
+		}
+	})
+
+	t.Run("a valid sign-in from that address still succeeds and is audited", func(t *testing.T) {
+		sub := harness.Unique("valid")
+		loginsBefore := count("auth.login", nil)
+		a := beginIDPLogin(t, s, idp, identityLoginPerson(sub, "Val", "mcp-users"), "")
+		cb := a.Client.Do(t, "GET", a.Back, nil, identityForwarded(ip))
+		if cb.Status != 302 || cb.Header.Get("Location") != "/" || cookieNamed(cb, "mcp_session") == nil {
+			t.Fatalf("a valid callback from the address past the limit: %d Location %q session cookie %v", cb.Status, cb.Header.Get("Location"), cookieNamed(cb, "mcp_session") != nil)
+		}
+		if n := count("auth.login", nil); n != loginsBefore+1 {
+			t.Errorf("auth.login records: %d, want %d", n, loginsBefore+1)
+		}
+		if n := exchangeFailed(); n != 20 {
+			t.Errorf("a valid sign-in changed the failure count to %d", n)
+		}
+	})
+
+	t.Run("the limit is per address: another address is audited", func(t *testing.T) {
+		fail(t, other)
+		if n := exchangeFailed(); n != 21 {
+			t.Errorf("exchange_failed records after a failure from another address: %d, want 21", n)
+		}
+	})
+}
+
 // TestIdentityOIDCProviderDownAtStart runs a stack whose provider is down from the start, with the
 // provider-specific settings (group names, scopes, groups claim) and COOKIE_SECURE=true.
 func TestIdentityOIDCProviderDownAtStart(t *testing.T) {

@@ -968,6 +968,142 @@ func TestCatalogServers(t *testing.T) {
 		catalogExpectError(t, "PUT secret of an unknown server", admin.Do(t, "PUT", "/api/servers/nope-x/secret", map[string]any{"secret": "x"}), 404, `not_found|server "nope-x" not found`)
 	})
 
+	// Reference 1.0.1: the stored secret is cleared when the place it is sent to changes, so an edit
+	// cannot make the gateway send it to a new address: for shared_secret the upstream URL, for
+	// oauth_user (the secret is the OAuth client secret) the token URL, the revoke URL or the client
+	// ID. Any other edit keeps it. Both the clearing and its audit record are asserted.
+	t.Run("a change of where the secret is sent clears it, is audited, and the new place never sees it", func(t *testing.T) {
+		clears := func(slug string) int {
+			return len(auditWhere(auditAll(t, s), "server.secret_clear", func(e auditEntry) bool { return ptrIs(e.Target, slug) }))
+		}
+		put := func(slug string, mut func(b map[string]any)) catalogView {
+			t.Helper()
+			r := admin.Do(t, "PUT", "/api/servers/"+slug, catalogPutBody(catalogGet(t, admin, slug), mut))
+			if r.Status != 200 {
+				t.Fatalf("PUT /api/servers/%s: %d %s", slug, r.Status, r.Body)
+			}
+			var v catalogView
+			r.JSON(t, "ServerView", &v)
+			return v
+		}
+
+		t.Run("shared_secret: the upstream URL", func(t *testing.T) {
+			const secret = "old-destination-key"
+			oldUp := fakes.StartUpstream(t, fakes.UpstreamOptions{Tools: fakes.Tools("a"), RequireHeader: [2]string{"Authorization", "Bearer " + secret}})
+			newUp := fakes.StartUpstream(t, fakes.UpstreamOptions{Tools: fakes.Tools("a", "b"), RequireHeader: [2]string{"Authorization", "Bearer " + secret}})
+			slug := harness.Unique("sdest")
+			if v := catalogRegister(t, admin, fakes.ServerInput(oldUp, slug, "shared_secret", fakes.WithSecret(secret))); !v.SecretSet || v.ToolCount != 1 {
+				t.Fatalf("registered: %+v", v)
+			}
+			// Edits that do not move the secret keep it and write no secret_clear.
+			for name, mut := range map[string]func(b map[string]any){
+				"the name":           func(b map[string]any) { b["name"] = "Renamed" },
+				"the header":         func(b map[string]any) { b["auth"].(map[string]any)["header"] = "X-Api-Key" },
+				"the template":       func(b map[string]any) { b["auth"].(map[string]any)["template"] = "Key {secret}" },
+				"nothing at all":     func(map[string]any) {},
+				"the URL, to itself": func(b map[string]any) { b["url"] = oldUp.URL },
+			} {
+				if v := put(slug, mut); !v.SecretSet || !catalogGet(t, admin, slug).SecretSet {
+					t.Fatalf("an edit of %s dropped the secret", name)
+				}
+			}
+			if n := clears(slug); n != 0 {
+				t.Fatalf("%d server.secret_clear records after edits that keep the secret", n)
+			}
+			// Put the header back so the sync below would be accepted by an upstream holding the secret.
+			put(slug, func(b map[string]any) {
+				b["auth"].(map[string]any)["header"] = "Authorization"
+				b["auth"].(map[string]any)["template"] = "Bearer {secret}"
+			})
+			updatesBefore := len(auditWhere(auditAll(t, s), "server.update", func(e auditEntry) bool { return ptrIs(e.Target, slug) }))
+
+			oldUp.Reset() // what the old upstream saw while the server was set up is not the question
+			v := put(slug, func(b map[string]any) { b["url"] = newUp.URL })
+			if v.SecretSet || catalogGet(t, admin, slug).SecretSet || v.URL != newUp.URL {
+				t.Fatalf("after the URL changed: %+v", v)
+			}
+			if n := countSQL(t, s, "select count(*) from catalog.servers where slug = $1 and secret is not null", slug); n != 0 {
+				t.Fatalf("a secret is still stored after the URL changed (%d rows)", n)
+			}
+			if n := clears(slug); n != 1 {
+				t.Fatalf("server.secret_clear records: %d, want 1", n)
+			}
+			cleared := auditWhere(auditAll(t, s), "server.secret_clear", func(e auditEntry) bool { return ptrIs(e.Target, slug) })[0]
+			if !ptrIs(cleared.ActorID, adminID) || len(cleared.Meta) != 0 {
+				t.Errorf("server.secret_clear: %+v, want the admin and no meta", cleared)
+			}
+			if n := len(auditWhere(auditAll(t, s), "server.update", func(e auditEntry) bool { return ptrIs(e.Target, slug) })); n != updatesBefore+1 {
+				t.Errorf("server.update records: %d, want %d", n, updatesBefore+1)
+			}
+			// A sync does not reach the new upstream: there is no secret to send.
+			catalogExpectError(t, "sync after the URL changed", admin.Do(t, "POST", "/api/servers/"+slug+"/sync", nil), 502, "sync_failed|The server secret is not set")
+			if got := catalogGet(t, admin, slug); got.syncError() != "The server secret is not set" || got.ToolCount != 1 {
+				t.Errorf("after the refused sync: %+v (sync error %q)", got, got.syncError())
+			}
+			for _, r := range newUp.Requests() {
+				t.Errorf("the new upstream received a %q request: %v", r.Method, r.Header)
+			}
+			for _, r := range oldUp.Requests() {
+				t.Errorf("the old upstream received a %q request after the move: %v", r.Method, r.Header)
+			}
+			// Control: setting the secret again makes the sync work and send it to the new place only.
+			if r := admin.Do(t, "PUT", "/api/servers/"+slug+"/secret", map[string]any{"secret": secret}); r.Status != 204 {
+				t.Fatalf("set: %d %s", r.Status, r.Body)
+			}
+			if res := catalogSyncOK(t, admin, slug); res.Added != 1 || res.Removed != 0 {
+				t.Errorf("sync with the secret set again: %+v", res)
+			}
+			if n := newUp.ListRequests(); n != 1 {
+				t.Errorf("the new upstream saw %d tools/list requests, want 1", n)
+			}
+		})
+
+		t.Run("oauth_user: the token URL, the revoke URL and the client ID", func(t *testing.T) {
+			up := fakes.StartUpstream(t, fakes.UpstreamOptions{Tools: fakes.Tools("a")})
+			slug := harness.Unique("odest")
+			catalogRegister(t, admin, fakes.ServerInput(up, slug, "oauth_user", catalogOAuth(func(o map[string]any) {
+				o["revokeUrl"] = "https://git.example.com/revoke"
+			}), fakes.WithSecret("client-secret")))
+			oauth := func(mut func(o map[string]any)) func(b map[string]any) {
+				return func(b map[string]any) {
+					o := b["auth"].(map[string]any)["oauth"].(map[string]any)
+					mut(o)
+				}
+			}
+			keep := map[string]func(b map[string]any){
+				"the authorize URL": oauth(func(o map[string]any) { o["authorizeUrl"] = "https://git.example.com/authorize2" }),
+				"the scopes":        oauth(func(o map[string]any) { o["scopes"] = []string{"read", "write"} }),
+				"the template":      func(b map[string]any) { b["auth"].(map[string]any)["template"] = "token {secret}" },
+				"the upstream URL":  func(b map[string]any) { b["url"] = up.URL + "?x=1" },
+			}
+			for name, mut := range keep {
+				if v := put(slug, mut); !v.SecretSet || !catalogGet(t, admin, slug).SecretSet {
+					t.Fatalf("an edit of %s dropped the client secret", name)
+				}
+			}
+			if n := clears(slug); n != 0 {
+				t.Fatalf("%d server.secret_clear records after edits that keep the secret", n)
+			}
+			total := 0
+			for name, mut := range map[string]func(b map[string]any){
+				"the token URL":  oauth(func(o map[string]any) { o["tokenUrl"] = "https://elsewhere.example.com/token" }),
+				"the revoke URL": oauth(func(o map[string]any) { o["revokeUrl"] = "https://elsewhere.example.com/revoke" }),
+				"the client ID":  oauth(func(o map[string]any) { o["clientId"] = "another-client" }),
+			} {
+				if r := admin.Do(t, "PUT", "/api/servers/"+slug+"/secret", map[string]any{"secret": "client-secret"}); r.Status != 204 {
+					t.Fatalf("set: %d %s", r.Status, r.Body)
+				}
+				total = clears(slug)
+				if v := put(slug, mut); v.SecretSet || catalogGet(t, admin, slug).SecretSet {
+					t.Fatalf("an edit of %s kept the client secret", name)
+				}
+				if n := clears(slug); n != total+1 {
+					t.Errorf("an edit of %s: %d server.secret_clear records, want %d", name, n, total+1)
+				}
+			}
+		})
+	})
+
 	t.Run("every editable field round-trips through the API", func(t *testing.T) {
 		up := fakes.StartUpstream(t, fakes.UpstreamOptions{Tools: fakes.Tools("a")})
 		slug := harness.Unique("rt")

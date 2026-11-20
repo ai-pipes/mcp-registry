@@ -391,13 +391,9 @@ func TestPlatformStaticFilesAndSPA(t *testing.T) {
 	const html = "Accept: text/html"
 
 	index := anon.Do(t, "GET", "/", nil, html)
-	// 1.0.0 sends no Cache-Control on GET / (index.html as a static file) while the SPA routes send
-	// no-cache; that absence is not asserted (not a contract). Decided (root-no-cache): GET / carries
-	// Cache-Control: no-cache like the other SPA routes.
-	if s.Fixed(harness.DevRootNoCache) {
-		if cc := index.Header.Get("Cache-Control"); cc != "no-cache" {
-			t.Errorf("GET /: Cache-Control %q, want no-cache", cc)
-		}
+	// Reference 1.0.1: the shell is revalidated, like the client routes served as the SPA fallback.
+	if cc := index.Header.Get("Cache-Control"); cc != "no-cache" {
+		t.Errorf("GET /: Cache-Control %q, want no-cache", cc)
 	}
 	if index.Status != 200 || !strings.Contains(string(index.Body), `<div id="root">`) {
 		t.Fatalf("GET / with Accept text/html: %d %.200s", index.Status, index.Body)
