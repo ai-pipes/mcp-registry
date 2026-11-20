@@ -22,7 +22,10 @@ async function login(f: ReturnType<typeof makeDeps>, c: OidcClaims, returnTo = '
   f.oidc.next = c;
   const url = startedUrl(await startOidcLogin(f.deps, { returnTo }));
   const state = url.searchParams.get('state') ?? '';
-  return { state, result: await completeOidcLogin(f.deps, { state, code: 'code-1' }) };
+  return {
+    state,
+    result: await completeOidcLogin(f.deps, { state, code: 'code-1', ip: '1.1.1.1' }),
+  };
 }
 
 describe('an unreachable identity provider', () => {
@@ -41,6 +44,7 @@ describe('an unreachable identity provider', () => {
     const r = await completeOidcLogin(f.deps, {
       state: url.searchParams.get('state') ?? '',
       code: 'c',
+      ip: '1.1.1.1',
     });
     expect(r.ok || r.error.code).toBe('idp_unavailable');
     expect(f.auditEntries).toEqual([]);
@@ -132,6 +136,7 @@ describe('completeOidcLogin', () => {
       state: url.searchParams.get('state') ?? '',
       code: 'c',
       iss: 'https://id.example',
+      ip: '1.1.1.1',
     });
     expect(f.oidc.lastExchange).toEqual({
       code: 'c',
@@ -143,7 +148,7 @@ describe('completeOidcLogin', () => {
 
   it('rejects an unknown state', async () => {
     const f = makeDeps();
-    const r = await completeOidcLogin(f.deps, { state: 'nope', code: 'c' });
+    const r = await completeOidcLogin(f.deps, { state: 'nope', code: 'c', ip: '1.1.1.1' });
     expect(r).toMatchObject({ ok: false, error: { code: 'invalid_state' } });
   });
 
@@ -152,7 +157,11 @@ describe('completeOidcLogin', () => {
     f.oidc.next = claims();
     const url = startedUrl(await startOidcLogin(f.deps, { returnTo: '/' }));
     f.clock.advance(10 * 60_000);
-    const r = await completeOidcLogin(f.deps, { state: url.searchParams.get('state')!, code: 'c' });
+    const r = await completeOidcLogin(f.deps, {
+      state: url.searchParams.get('state')!,
+      code: 'c',
+      ip: '1.1.1.1',
+    });
     expect(r).toMatchObject({ ok: false, error: { code: 'invalid_state' } });
   });
 
@@ -160,7 +169,7 @@ describe('completeOidcLogin', () => {
     const f = makeDeps();
     const { state, result } = await login(f, claims());
     expect(result.ok).toBe(true);
-    const replay = await completeOidcLogin(f.deps, { state, code: 'c' });
+    const replay = await completeOidcLogin(f.deps, { state, code: 'c', ip: '1.1.1.1' });
     expect(replay).toMatchObject({ ok: false, error: { code: 'invalid_state' } });
   });
 
@@ -168,8 +177,48 @@ describe('completeOidcLogin', () => {
     const f = makeDeps();
     f.oidc.next = null;
     const url = startedUrl(await startOidcLogin(f.deps, { returnTo: '/' }));
-    const r = await completeOidcLogin(f.deps, { state: url.searchParams.get('state')!, code: 'c' });
+    const r = await completeOidcLogin(f.deps, {
+      state: url.searchParams.get('state')!,
+      code: 'c',
+      ip: '1.1.1.1',
+    });
     expect(r).toMatchObject({ ok: false, error: { code: 'invalid_state' } });
     expect(f.auditEntries.map((e) => e.action)).toContain('auth.login_failed');
+  });
+
+  it('counts failed exchanges per client IP and audits only while the limiter allows', async () => {
+    const f = makeDeps();
+    f.oidc.next = null;
+    const hits: string[] = [];
+    let allowed = true;
+    f.deps.callbackLimiter.hit = (key) => {
+      hits.push(key);
+      return { allowed, retryAfterSec: allowed ? 0 : 60 };
+    };
+    const fail = async (ip: string) => {
+      const url = startedUrl(await startOidcLogin(f.deps, { returnTo: '/' }));
+      return completeOidcLogin(f.deps, { state: url.searchParams.get('state')!, code: 'c', ip });
+    };
+    expect((await fail('2.2.2.2')).ok).toBe(false);
+    expect(f.auditEntries).toHaveLength(1);
+    allowed = false;
+    const over = await fail('2.2.2.2');
+    expect(over).toMatchObject({ ok: false, error: { code: 'invalid_state' } });
+    expect(f.auditEntries).toHaveLength(1);
+    expect(hits).toEqual(['2.2.2.2', '2.2.2.2']);
+  });
+
+  it('a valid code still signs in while the limiter is over its limit, and is not counted', async () => {
+    const f = makeDeps();
+    f.deps.callbackLimiter.hit = () => ({ allowed: false, retryAfterSec: 60 });
+    f.oidc.next = claims();
+    const url = startedUrl(await startOidcLogin(f.deps, { returnTo: '/' }));
+    const r = await completeOidcLogin(f.deps, {
+      state: url.searchParams.get('state')!,
+      code: 'c',
+      ip: '2.2.2.2',
+    });
+    expect(r.ok).toBe(true);
+    expect(f.auditEntries.map((e) => e.action)).toEqual(['auth.login']);
   });
 });

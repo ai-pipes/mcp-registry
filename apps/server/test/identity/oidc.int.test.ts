@@ -10,6 +10,7 @@ import {
   OpenidProvider,
   requireBearerToken,
 } from '../../src/modules/identity/index.ts';
+import { PgPendingLoginRepository } from '../../src/modules/identity/infrastructure/pg-repositories.ts';
 import { principalOf } from '../../src/modules/identity/domain/user.ts';
 import type { Config } from '../../src/platform/config.ts';
 import { buildContainer, type Container } from '../../src/platform/container.ts';
@@ -579,5 +580,83 @@ describe('a provider with its own scopes and groups claim (OIDC_SCOPES, OIDC_GRO
       idp.groupsClaim = 'groups';
       idp.groupsOnlyInUserInfo = false;
     }
+  });
+});
+
+const failedAudits = async () => {
+  const rows = await pg.sql<{ n: number }[]>`select count(*)::int as n from platform.audit_log
+    where action = 'auth.login_failed'`;
+  return rows[0]?.n ?? -1;
+};
+
+describe('anonymous callbacks cannot bloat the audit log', () => {
+  it('the 21st failed exchange from one address in a minute writes no audit record; a valid code still signs in', async () => {
+    container.identity.callbackLimiter.reset('192.0.2.1');
+    idp.tokenStatus = 400;
+    try {
+      const results = await Promise.all(Array.from({ length: 21 }, () => signIn(member)));
+      for (const { callback } of results) {
+        expect(callback.headers.get('location')).toBe('/?loginError=invalid_state');
+      }
+    } finally {
+      idp.tokenStatus = null;
+    }
+    expect(await failedAudits()).toBe(20);
+
+    const { callback } = await signIn(member);
+    expect(callback.headers.get('location')).toBe('/servers');
+    expect(cookieOf(callback)).toMatch(/^mcp_session=/);
+    expect(await failedAudits()).toBe(20);
+    container.identity.callbackLimiter.reset('192.0.2.1');
+  });
+
+  it('refuses a pending login whose ten minutes are over', async () => {
+    const start = await app.request('/api/auth/login');
+    const location = new URL(start.headers.get('location') ?? '');
+    const binding =
+      (setCookies(start).find((c) => c.startsWith('mcp_login=')) ?? '').split(';')[0] ?? '';
+    const code = idp.authorize(location, member);
+    await pg.sql`update identity.oidc_pending set expires_at = now() - interval '1 minute'`;
+    const res = await app.request(
+      `/api/auth/callback?code=${code}&state=${encodeURIComponent(location.searchParams.get('state') ?? '')}&iss=${encodeURIComponent(idp.issuer)}`,
+      { headers: { cookie: binding } },
+    );
+    expect(res.headers.get('location')).toBe('/?loginError=invalid_state');
+    expect(await userCount()).toBe(0);
+  });
+});
+
+const pending = (state: string, expiresAt: Date) => ({
+  state,
+  codeVerifier: 'v',
+  nonce: 'n',
+  returnTo: '/',
+  expiresAt,
+});
+const states = async () => {
+  const rows = await pg.sql<{ state: string }[]>`select state from identity.oidc_pending
+    order by expires_at`;
+  return rows.map((r) => r.state);
+};
+
+describe('PgPendingLoginRepository bounds the table', () => {
+  it('deletes the oldest rows when a new one would exceed the cap', async () => {
+    const repo = new PgPendingLoginRepository(pg.sql, 3);
+    const base = Date.now() + 600_000;
+    await repo.insert(pending('s1', new Date(base + 1000)));
+    await repo.insert(pending('s2', new Date(base + 2000)));
+    await repo.insert(pending('s3', new Date(base + 3000)));
+    await repo.insert(pending('s4', new Date(base + 4000)));
+    await repo.insert(pending('s5', new Date(base + 5000)));
+    expect(await states()).toEqual(['s3', 's4', 's5']);
+    expect(await repo.consume('s1')).toBeNull();
+    expect((await repo.consume('s5'))?.state).toBe('s5');
+  });
+
+  it('drops expired rows on the next insert, not an hour later', async () => {
+    const repo = new PgPendingLoginRepository(pg.sql, 100);
+    await repo.insert(pending('old', new Date(Date.now() - 60_000)));
+    await repo.insert(pending('new', new Date(Date.now() + 600_000)));
+    expect(await states()).toEqual(['new']);
   });
 });

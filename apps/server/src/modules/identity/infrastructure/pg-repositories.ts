@@ -11,6 +11,7 @@ import type {
   UserRepository,
 } from '../application/ports.ts';
 import type { OidcClaims, Role, User } from '../domain/user.ts';
+import { PENDING_LOGIN_CAP } from '../domain/login-flow.ts';
 
 interface UserRow {
   id: string;
@@ -208,14 +209,24 @@ interface PendingRow {
 }
 
 export class PgPendingLoginRepository implements PendingLoginRepository {
-  constructor(private readonly sql: Sql) {}
+  constructor(
+    private readonly sql: Sql,
+    private readonly cap: number = PENDING_LOGIN_CAP,
+  ) {}
 
   async insert(p: PendingLogin): Promise<void> {
-    // Abandoned attempts are swept on the way in, so the table cannot grow without bound.
-    await this.sql`delete from identity.oidc_pending where expires_at < now() - interval '1 hour'`;
-    await this
-      .sql`insert into identity.oidc_pending (state, code_verifier, nonce, return_to, expires_at)
-      values (${p.state}, ${p.codeVerifier}, ${p.nonce}, ${p.returnTo}, ${p.expiresAt})`;
+    // Anyone can start a login, so the table is bounded: expired attempts go first, then, if the
+    // new row would pass the cap, the oldest ones (every attempt lives the same ten minutes, so
+    // the earliest expiry is the earliest start). The lock keeps concurrent inserts exact.
+    await this.sql.begin(async (tx) => {
+      await tx`select pg_advisory_xact_lock(hashtext('identity.oidc_pending'))`;
+      await tx`delete from identity.oidc_pending where expires_at <= now()`;
+      await tx`delete from identity.oidc_pending where state in (
+        select state from identity.oidc_pending order by expires_at asc, state asc
+        limit greatest(0, (select count(*) from identity.oidc_pending) - ${this.cap - 1}))`;
+      await tx`insert into identity.oidc_pending (state, code_verifier, nonce, return_to, expires_at)
+        values (${p.state}, ${p.codeVerifier}, ${p.nonce}, ${p.returnTo}, ${p.expiresAt})`;
+    });
   }
 
   async consume(state: string): Promise<PendingLogin | null> {

@@ -91,6 +91,7 @@ export function authRoutes(deps: IdentityDeps, opts: BrowserRouteOptions) {
         r = await completeOidcLogin(deps, {
           state: parsed.data.state,
           code: parsed.data.code,
+          ip: c.get('clientIp'),
           ...(parsed.data.iss === undefined ? {} : { iss: parsed.data.iss }),
         });
       } catch (error) {
