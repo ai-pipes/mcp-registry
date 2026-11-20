@@ -65,7 +65,7 @@ func TestCLIServers(t *testing.T) {
 		wrongSlug := harness.Unique("cli-wrong")
 		wrongFile := cliServerFile(t, s, up, wrongSlug, "shared_secret")
 		wrong := s.CLI(t, "not-the-secret\n", "create-server", "--json", wrongFile, "--as", ownerSub)
-		cliGolden(t, s, "create-server-sync-401", wrong, 0, wrongSlug, "<SLUG>")
+		cliFirstSyncFailed(t, s, owner, wrong, "create-server-sync-401", wrongSlug, true)
 		if v := catalogGet(t, owner, wrongSlug); v.ToolCount != 0 || v.LastSyncError == nil {
 			t.Fatalf("server with a wrong secret: %+v", v)
 		}
@@ -116,8 +116,9 @@ func TestCLIServers(t *testing.T) {
 		up := fakes.StartUpstream(t, fakes.UpstreamOptions{Tools: fakes.Tools("echo")})
 		file := cliServerFile(t, s, up, slug, "shared_secret")
 		r := s.CLI(t, "", "create-server", "--json", file, "--as", ownerSub)
-		// Exit 0: the server exists; the failed sync is part of the report, not of the exit code.
-		cliGolden(t, s, "create-server-no-secret", r, 0, slug, "<SLUG>")
+		// 1.0.0: exit 0, the server exists and the failed sync is part of the report, not of the exit
+		// code. Decided (create-server-sync-exit): exit 1, the server still exists.
+		cliFirstSyncFailed(t, s, owner, r, "create-server-no-secret", slug, false)
 		v := catalogGet(t, owner, slug)
 		if v.SecretSet || v.ToolCount != 0 || v.syncError() != "The server secret is not set" {
 			t.Fatalf("server: %+v (sync error %q)", v, v.syncError())
@@ -129,7 +130,7 @@ func TestCLIServers(t *testing.T) {
 		ffile := cliServerFile(t, s, fup, failing, "shared_secret")
 		secret := harness.Unique("sekret-fail")
 		fr := s.CLI(t, secret+"\n", "create-server", "--json", ffile, "--as", ownerSub)
-		cliGolden(t, s, "create-server-sync-failed", fr, 0, failing, "<SLUG>")
+		cliFirstSyncFailed(t, s, owner, fr, "create-server-sync-failed", failing, true)
 		fv := catalogGet(t, owner, failing)
 		if !fv.SecretSet || fv.ToolCount != 0 || fv.syncError() != catalogMsgUnreachable {
 			t.Fatalf("server after a failed first sync: %+v (sync error %q)", fv, fv.syncError())
@@ -274,7 +275,7 @@ func TestCLIServers(t *testing.T) {
 		up := fakes.StartUpstream(t, fakes.UpstreamOptions{Tools: fakes.Tools("echo")})
 		file := cliServerFile(t, s, up, slug, "pat_user", fakes.WithHeader("X-Token", "pat {secret}"))
 		created := s.CLI(t, "", "create-server", "--json", file, "--as", ownerSub)
-		cliGolden(t, s, "create-server-pat-needs-connection", created, 0, subs...)
+		cliFirstSyncFailed(t, s, owner, created, "create-server-pat-needs-connection", slug, false)
 
 		// No connection yet: refused, by the administrator and by the scheduler alike.
 		denied := s.CLI(t, "", "sync", slug, "--as", ownerSub)
@@ -411,14 +412,19 @@ func TestCLIServers(t *testing.T) {
 		}
 
 		r := s.CLI(t, "", "reindex")
-		// The number is the count of indexed TOOLS, although the text says "server(s)": a known
-		// defect of the image, pinned as it is (see the report); the owner has not decided whether
-		// the next implementation keeps it.
-		if want := fmt.Sprintf("reindexed %d server(s)\n", total); r.Stdout != want {
-			t.Fatalf("reindex printed %q, want %q (the number of rows of search.documents)", r.Stdout, want)
+		// The number is the count of indexed TOOLS (rows of search.documents). 1.0.0 words it
+		// "server(s)"; decided (reindex-wording): "tool(s)".
+		if s.Fixed(harness.DevReindexWording) {
+			if want := fmt.Sprintf("reindexed %d tool(s)\n", total); r.Code != 0 || r.Stdout != want {
+				t.Fatalf("reindex printed %q (exit %d), want %q (the number of rows of search.documents)", r.Stdout, r.Code, want)
+			}
+		} else {
+			if want := fmt.Sprintf("reindexed %d server(s)\n", total); r.Stdout != want {
+				t.Fatalf("reindex printed %q, want %q (the number of rows of search.documents)", r.Stdout, want)
+			}
+			// The count depends on what else is indexed on the stack: the golden holds a placeholder.
+			cliGolden(t, s, "reindex", r, 0, fmt.Sprintf("reindexed %d server(s)", total), "reindexed <DOCS> server(s)")
 		}
-		// The count depends on what else is indexed on the stack: the golden holds a placeholder.
-		cliGolden(t, s, "reindex", r, 0, fmt.Sprintf("reindexed %d server(s)", total), "reindexed <DOCS> server(s)")
 		after, _ := snapshot()
 		if len(after) != total {
 			t.Fatalf("documents after reindex: %d, before %d", len(after), total)
@@ -445,8 +451,45 @@ func TestCLIReindexEmpty(t *testing.T) {
 		t.Fatalf("a fresh stack has %d servers", n)
 	}
 	r := s.CLI(t, "", "reindex")
+	if s.Fixed(harness.DevReindexWording) {
+		// Decided (reindex-wording): the unit is "tool(s)". No golden: it cannot be recorded from 1.0.0.
+		if r.Code != 0 || r.Stdout != "reindexed 0 tool(s)\n" {
+			t.Fatalf("reindex on an empty index: %v", r)
+		}
+		return
+	}
 	cliGolden(t, s, "reindex-empty", r, 0)
 	if r.Stdout != "reindexed 0 server(s)\n" {
 		t.Fatalf("reindex on an empty index: %v", r)
 	}
+}
+
+// cliFirstSyncFailed judges a create-server whose first sync failed. 1.0.0: exit 0 and the golden
+// (the failed sync is part of the report). Decided (create-server-sync-exit): exit 1, the server
+// still exists with secretSet as given, and the output says the sync failed; no golden (it cannot
+// be recorded from 1.0.0).
+func cliFirstSyncFailed(t *testing.T, s *harness.Stack, owner *harness.Client, r harness.CLIResult, golden, slug string, secretSet bool) {
+	t.Helper()
+	if !s.Fixed(harness.DevCreateServerSyncExit) {
+		cliGolden(t, s, golden, r, 0, slug, "<SLUG>")
+		return
+	}
+	if problem := createServerSyncFailureProblem(r); problem != "" {
+		t.Fatalf("create-server of %s: %s: %v", slug, problem, r)
+	}
+	if v := catalogGet(t, owner, slug); v.SecretSet != secretSet {
+		t.Fatalf("the server after the failed first sync: secretSet %v, want %v", v.SecretSet, secretSet)
+	}
+}
+
+// createServerSyncFailureProblem is the decided create-server outcome of a failed first sync:
+// exit 1 and "sync failed" on stdout or stderr. It returns "" when r is that.
+func createServerSyncFailureProblem(r harness.CLIResult) string {
+	if r.Code != 1 {
+		return fmt.Sprintf("exit code %d, want 1", r.Code)
+	}
+	if !strings.Contains(r.Stdout+r.Stderr, "sync failed") {
+		return "neither stdout nor stderr says `sync failed`"
+	}
+	return ""
 }

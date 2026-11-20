@@ -63,10 +63,28 @@ func (e *Embedder) Requests() []EmbedRequest {
 	return out
 }
 
+// embedInput is the "input" of an embeddings request: the OpenAI-compatible protocol allows one
+// string or an array of strings; a single string is one input.
+type embedInput []string
+
+func (in *embedInput) UnmarshalJSON(data []byte) error {
+	var one string
+	if err := json.Unmarshal(data, &one); err == nil {
+		*in = embedInput{one}
+		return nil
+	}
+	var many []string
+	if err := json.Unmarshal(data, &many); err != nil {
+		return err
+	}
+	*in = many
+	return nil
+}
+
 func (e *Embedder) embeddings(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Model string   `json:"model"`
-		Input []string `json:"input"`
+		Model string     `json:"model"`
+		Input embedInput `json:"input"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<20)).Decode(&body); err != nil {
 		http.Error(w, `{"error":"bad request"}`, http.StatusBadRequest)
@@ -77,7 +95,7 @@ func (e *Embedder) embeddings(w http.ResponseWriter, r *http.Request) {
 	if e.down {
 		status = http.StatusServiceUnavailable
 	}
-	e.requests = append(e.requests, EmbedRequest{Model: body.Model, Input: body.Input, Header: r.Header.Clone(), Status: status})
+	e.requests = append(e.requests, EmbedRequest{Model: body.Model, Input: []string(body.Input), Header: r.Header.Clone(), Status: status})
 	e.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

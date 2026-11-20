@@ -1021,6 +1021,34 @@ func TestEmbedderAnswersTheOpenAIShapeAndRecordsRequests(t *testing.T) {
 	}
 }
 
+func TestEmbedderAcceptsASingleStringInputAndRefusesOtherTypes(t *testing.T) {
+	e := fakes.StartEmbedder(t)
+	for name, body := range map[string]string{
+		"a string":       `{"model":"m","input":"passage: one text"}`,
+		"a one-item set": `{"model":"m","input":["passage: one text"]}`,
+	} {
+		status, raw := postEmbeddings(t, e, body)
+		var out struct {
+			Data []struct {
+				Index     int       `json:"index"`
+				Embedding []float64 `json:"embedding"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(raw, &out); status != 200 || err != nil || len(out.Data) != 1 || out.Data[0].Index != 0 || len(out.Data[0].Embedding) != fakes.EmbedderDimensions {
+			t.Fatalf("%s: status %d err %v body %.200s", name, status, err, raw)
+		}
+	}
+	reqs := e.Requests()
+	if len(reqs) != 2 || len(reqs[0].Input) != 1 || reqs[0].Input[0] != "passage: one text" || reqs[1].Input[0] != reqs[0].Input[0] {
+		t.Fatalf("the recorded inputs: %+v", reqs)
+	}
+	for name, body := range map[string]string{"a number": `{"model":"m","input":5}`, "an object": `{"model":"m","input":{"a":"b"}}`, "a mixed array": `{"model":"m","input":["a",1]}`} {
+		if status, raw := postEmbeddings(t, e, body); status != 400 {
+			t.Errorf("%s: status %d, want 400 (body %.100s)", name, status, raw)
+		}
+	}
+}
+
 func TestEmbeddingOfIsDeterministicAndPrefixBlindAndSimilarForSharedWords(t *testing.T) {
 	a, b := fakes.EmbeddingOf("passage: Create an issue in the tracker"), fakes.EmbeddingOf("query: create an issue in the tracker")
 	if len(a) != fakes.EmbedderDimensions {

@@ -119,10 +119,10 @@ func TestPlatformSecurityHeaders(t *testing.T) {
 		name   string
 		req    func() harness.Response
 		status int
-		// noRequestID: the response is not required to carry X-Request-Id (a foreign Host is
+		// noRequestID: the response is not required to carry X-Request-Id (1.0.0: a foreign Host is
 		// refused by the MCP transport before the access-log middleware, and the image sends none
-		// there). A finding for the owner, pending a decision: whether it should is not asserted,
-		// neither its presence nor its absence.
+		// there; neither its presence nor its absence is asserted). Decided (request-id-on-refusals):
+		// every response carries it, that refusal included.
 		noRequestID bool
 	}{
 		{"index", func() harness.Response { return index }, 200, false},
@@ -139,7 +139,7 @@ func TestPlatformSecurityHeaders(t *testing.T) {
 		{"413", func() harness.Response {
 			return anon.DoExpectingEarlyRefusal(t, "POST", "/api/tokens", make([]byte, restBodyLimit+1), "Content-Type: application/json")
 		}, 413, false},
-		{"foreign host on mcp", func() harness.Response { return anon.Do(t, "GET", "/mcp", nil, "Host: evil.example") }, 403, true},
+		{"foreign host on mcp", func() harness.Response { return anon.Do(t, "GET", "/mcp", nil, "Host: evil.example") }, 403, !s.Fixed(harness.DevRequestIDOnRefusals)},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -382,9 +382,14 @@ func TestPlatformStaticFilesAndSPA(t *testing.T) {
 	const html = "Accept: text/html"
 
 	index := anon.Do(t, "GET", "/", nil, html)
-	// Finding for the owner (pending decision): the TypeScript image sends no Cache-Control on GET /
-	// (index.html as a static file) while the SPA routes send no-cache. Whether / should carry one
-	// too is not decided, so its absence is not asserted either way.
+	// 1.0.0 sends no Cache-Control on GET / (index.html as a static file) while the SPA routes send
+	// no-cache; that absence is not asserted (not a contract). Decided (root-no-cache): GET / carries
+	// Cache-Control: no-cache like the other SPA routes.
+	if s.Fixed(harness.DevRootNoCache) {
+		if cc := index.Header.Get("Cache-Control"); cc != "no-cache" {
+			t.Errorf("GET /: Cache-Control %q, want no-cache", cc)
+		}
+	}
 	if index.Status != 200 || !strings.Contains(string(index.Body), `<div id="root">`) {
 		t.Fatalf("GET / with Accept text/html: %d %.200s", index.Status, index.Body)
 	}

@@ -503,14 +503,19 @@ func TestIdentityOIDC(t *testing.T) {
 	// Reads data produced by the earlier subtests: it must run as part of this parent test.
 	t.Run("the audit log has the documented login records and no secret", func(t *testing.T) {
 		entries := auditAll(t, s)
-		// OIDC logins carry the actor only; the admin of this test signed in with a link.
-		oidcLogins := auditWhere(entries, "auth.login", func(e auditEntry) bool { return e.Meta["via"] == nil })
+		// The admin of this test signed in with a link. 1.0.0: an OIDC login carries the actor only
+		// (empty meta). Decided (audit-login-via): its meta is exactly {via: "oidc"}.
+		wantVia, wantMeta := any(nil), 0
+		if s.Fixed(harness.DevAuditLoginVia) {
+			wantVia, wantMeta = "oidc", 1
+		}
+		oidcLogins := auditWhere(entries, "auth.login", func(e auditEntry) bool { return e.Meta["via"] == wantVia })
 		if len(oidcLogins) == 0 {
 			t.Fatal("no auth.login record of an OIDC login")
 		}
 		for _, e := range oidcLogins {
-			if e.ActorID == nil || e.Target != nil || len(e.Meta) != 0 {
-				t.Errorf("an OIDC login is recorded with the actor only: %+v", e)
+			if e.ActorID == nil || e.Target != nil || len(e.Meta) != wantMeta {
+				t.Errorf("an OIDC login is recorded with the actor and meta via=%v only: %+v", wantVia, e)
 			}
 		}
 		if links := auditWhere(entries, "auth.login", func(e auditEntry) bool { return e.Meta["via"] == "link" }); len(links) != 1 {
@@ -962,7 +967,8 @@ func TestIdentityNoOIDC(t *testing.T) {
 				t.Errorf("%s: %d %s", name, r.Status, r.Body)
 			}
 		}
-		// Unknown fields are ignored (the zod object is not strict), so this still signs in.
+		// Unknown fields are ignored: a decided rule (the request bodies are a whitelist of fields,
+		// extra ones are stripped, not refused), so this still signs in. Only this endpoint is pinned.
 		r := s.Anonymous().Do(t, "POST", "/api/auth/link", map[string]string{"code": code, "extra": "x"}, identityForwarded(identityNextIP()))
 		if r.Status != 204 {
 			t.Fatalf("the code was spent by refused bodies (or extra fields are refused): %d %s", r.Status, r.Body)
@@ -1497,10 +1503,9 @@ func TestIdentityNoOIDC(t *testing.T) {
 		}
 		r := anon.Do(t, "GET", "/mcp", nil, identityForwarded(ip), "Authorization: Bearer sk_"+strings.Repeat("y", 43))
 		if r.Status != 429 || errorCode(t, r) != "rate_limited|too many failed attempts" {
-			// The image sends neither Retry-After nor WWW-Authenticate on this 429 (unlike the link
-			// endpoint); that is deliberately not asserted, so a rewrite may add them.
 			t.Fatalf("31st failure: %d %s", r.Status, r.Body)
 		}
+		identityExpectTokenRetryAfter(t, s, r)
 		if r := identityMCPInitialize(t, anon, good, identityForwarded(ip)); r.Status != 200 {
 			t.Fatalf("a valid token from the locked-out address: %d %s", r.Status, r.Body)
 		}
@@ -1585,6 +1590,31 @@ func TestIdentityNoOIDC(t *testing.T) {
 	})
 }
 
+// identityExpectTokenRetryAfter judges the Retry-After of the 429 for failed token checks on /mcp.
+// 1.0.0 sends none and nothing is asserted about it (the absence of a helpful header is not a
+// contract). Decided (token-429-retry-after): it carries Retry-After with a positive integer.
+func identityExpectTokenRetryAfter(t *testing.T, s *harness.Stack, r harness.Response) {
+	t.Helper()
+	if !s.Fixed(harness.DevRetryAfter429) {
+		return
+	}
+	if problem := retryAfterProblem(r.Header.Values("Retry-After")); problem != "" {
+		t.Errorf("the 429 for failed token checks: %s", problem)
+	}
+}
+
+// retryAfterProblem is "" when values is exactly one Retry-After value that is a positive integer
+// (delta-seconds), else what is wrong.
+func retryAfterProblem(values []string) string {
+	if len(values) != 1 {
+		return fmt.Sprintf("%d Retry-After headers, want 1", len(values))
+	}
+	if secs, err := strconv.Atoi(values[0]); err != nil || secs < 1 || strconv.Itoa(secs) != values[0] {
+		return fmt.Sprintf("Retry-After %q is not a positive integer", values[0])
+	}
+	return ""
+}
+
 // rawLinkClient is the client of rawPostLink. Its idle connections are dropped after a second, as
 // those of the harness's clients are (a server closes an idle keep-alive connection by itself, and
 // a POST that goes out on a connection being closed is never retried by net/http).
@@ -1645,11 +1675,11 @@ func TestIdentityDefaultRateLimits(t *testing.T) {
 				t.Fatalf("failure %d: %d %s", i, r.Status, r.Body)
 			}
 		}
-		// Status and body only: the image sends no Retry-After here, which is not pinned.
 		r := anon.Do(t, "GET", "/mcp", nil, identityForwarded(identityNextIP()), "Authorization: Bearer sk_"+strings.Repeat("y", 43))
 		if r.Status != 429 || errorCode(t, r) != "rate_limited|too many failed attempts" {
 			t.Fatalf("31st failure: %d %s", r.Status, r.Body)
 		}
+		identityExpectTokenRetryAfter(t, s, r)
 		// The code only counts failed checks: a genuine token still opens /mcp from the locked-out peer.
 		if r := identityMCPInitialize(t, anon, good, identityForwarded(identityNextIP())); r.Status != 200 {
 			t.Fatalf("a valid token from the locked-out peer: %d %s", r.Status, r.Body)

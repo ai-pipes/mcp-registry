@@ -8,10 +8,12 @@ package compat_test
 // admin-rest.int.test.ts and PgCallLog in call.int.test.ts.
 //
 // Known defects of the image that are NOT pinned (they are bugs, not contract):
-//   - GET /api/audit orders by the text form of the id, so its order and its paging are wrong once
-//     ids reach two digits: the scenarios never assert the order or the paging of the audit list;
-//     completeness is asserted on a fresh stack, where the whole trail fits in one page, and
-//     scenarios that need the whole trail elsewhere read platform.audit_log (see auditAll);
+//   - GET /api/audit (1.0.0) orders by the text form of the id, so its order and its paging are
+//     wrong once ids reach two digits: the 1.0.0 branch never asserts the order or the paging of
+//     the audit list; completeness is asserted on a fresh stack, where the whole trail fits in one
+//     page, and scenarios that need the whole trail elsewhere read platform.audit_log (see
+//     auditAll). The decided behaviour (deviation audit-order) is asserted when the stack reports
+//     it fixed: newest first by numeric id, every row exactly once across pages;
 //   - GET /api/calls orders by started_at desc, id desc with a `before` timestamp cursor, so rows
 //     that share a millisecond can be skipped at a page boundary: the scenarios use rows with
 //     distinct timestamps and never depend on same-millisecond paging.
@@ -399,6 +401,64 @@ func TestGatewayAuditAPI(t *testing.T) {
 		// Controls: the largest accepted cursor is a number of 18 digits.
 		if r := admin.Do(t, "GET", "/api/audit?before="+strings.Repeat("9", 18), nil); r.Status != 200 {
 			t.Errorf("before with 18 digits: %d %.200s", r.Status, r.Body)
+		}
+	})
+
+	t.Run("order and paging", func(t *testing.T) {
+		if !s.Fixed(harness.DevAuditOrder) {
+			// 1.0.0: the order and the paging are broken (text order of the ids) and not asserted
+			// here (deviation audit-order).
+			return
+		}
+		// Enough records that the ids cross from one to two digits whatever the stack did before.
+		for n := len(auditAll(t, s)); n < 15; n++ {
+			if r := admin.Do(t, "POST", "/api/tokens", map[string]string{"name": fmt.Sprintf("audit-page-%d", n)}); r.Status != 201 && r.Status != 200 {
+				t.Fatalf("POST /api/tokens: %d %s", r.Status, r.Body)
+			}
+		}
+		const limit = 4
+		var read []string
+		before := ""
+		for page := 0; ; page++ {
+			if page > 100 {
+				t.Fatal("the audit pages do not end")
+			}
+			q := fmt.Sprintf("?limit=%d", limit)
+			if before != "" {
+				q += "&before=" + before
+			}
+			r := admin.Do(t, "GET", "/api/audit"+q, nil)
+			var got []auditEntry
+			r.JSON(t, "AuditList", &got)
+			if r.Status != 200 {
+				t.Fatalf("GET /api/audit%s: %d", q, r.Status)
+			}
+			if len(got) == 0 {
+				break
+			}
+			if len(got) > limit {
+				t.Fatalf("GET /api/audit%s returned %d records, limit %d", q, len(got), limit)
+			}
+			for _, a := range got {
+				read = append(read, a.ID)
+			}
+			before = got[len(got)-1].ID
+		}
+		var want []string
+		for _, a := range auditAll(t, s) {
+			want = append(want, a.ID)
+		}
+		if len(want) < 12 {
+			t.Fatalf("only %d audit records, the scenario needs at least 12", len(want))
+		}
+		if problem := auditPagingProblem(read, want); problem != "" {
+			t.Errorf("paging through GET /api/audit?limit=%d: %s (read %v)", limit, problem, read)
+		}
+		// A page of the default size is newest first as well.
+		var first []auditEntry
+		admin.Do(t, "GET", "/api/audit", nil).JSON(t, "AuditList", &first)
+		if len(first) == 0 || first[0].ID != want[0] {
+			t.Errorf("the first record of the default page is not the newest (%s)", want[0])
 		}
 	})
 

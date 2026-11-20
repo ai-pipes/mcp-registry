@@ -29,6 +29,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -654,4 +655,83 @@ func catalogExpectInputError(t *testing.T, what string, res *mcp.CallToolResult,
 func slugOf(ref string) string {
 	slug, _, _ := strings.Cut(ref, ".")
 	return slug
+}
+
+// searchReadyProblem judges deviation ready-before-serving: after a start /healthz never answered
+// 503 (healthz holds every status seen), and each query's first answer (made at once after the app
+// became healthy) holds the same refs as its settled answer (made after polling). settled must be
+// non-empty for at least one query, so that "equal" is not two empty answers. It returns "" when
+// all of that holds.
+func searchReadyProblem(healthz []int, first, settled map[string][]string) string {
+	for _, code := range healthz {
+		if code == 503 {
+			return "/healthz answered 503 while the database was up"
+		}
+	}
+	nonEmpty := false
+	for query, want := range settled {
+		if len(want) > 0 {
+			nonEmpty = true
+		}
+		if got := first[query]; !slices.Equal(got, want) {
+			return fmt.Sprintf("search %q answered %v right after the start and %v once settled", query, got, want)
+		}
+	}
+	if !nonEmpty {
+		return "every settled answer is empty: nothing was compared"
+	}
+	return ""
+}
+
+// TestSearchReadyBeforeServing: the app restarts with an indexed catalog. 1.0.0 loads its embedding
+// model after it first answers healthy: until then /healthz can answer 503 and a search silently
+// uses full text only, so an answer from the first instants can differ from the settled one. The
+// decided behaviour (deviation ready-before-serving): once the app is healthy, /healthz never
+// answers 503 while the database is up, and a search made at once returns the refs that the same
+// search returns 5 s of polling later. The 1.0.0 branch asserts nothing about the first instants
+// (the deviation), only that the settled search works.
+func TestSearchReadyBeforeServing(t *testing.T) {
+	s := harness.Start(t, harness.Options{})
+	admin := s.Admin(t)
+	token := admin.Token(t, "search-ready")
+	up := fakes.StartUpstream(t, fakes.UpstreamOptions{Tools: fakes.FixtureTools("youtrack")})
+	catalogRegister(t, admin, fakes.ServerInput(up, "youtrack", "none", fakes.WithName("YouTrack"), catalogWithDescription("Issue tracker")))
+	catalogWaitDocs(t, s, "youtrack", 23)
+
+	queries := []string{"create an issue in the tracker", "создать задачу в трекере"}
+	search := func(c *mcp.ClientSession) map[string][]string {
+		out := map[string][]string{}
+		for _, q := range queries {
+			out[q] = catalogHitRefs(catalogSearch(t, c, q, 10, []string{"youtrack"}))
+		}
+		return out
+	}
+
+	s.SwapImage(t, harness.DefaultImage(), "") // the restart; the catalog and its vectors are in the database
+	c := s.MCP(t, token)
+	if !s.Fixed(harness.DevReadyBeforeServing) {
+		// 1.0.0: nothing is asserted about the first instants. The settled search must work.
+		harness.Eventually(t, "the settled search to find youtrack.create_issue first", func() bool {
+			hits := catalogHitRefs(catalogSearch(t, c, queries[0], 10, []string{"youtrack"}))
+			return len(hits) > 0 && hits[0] == "youtrack.create_issue"
+		})
+		return
+	}
+	var healthz []int
+	probe := func() { healthz = append(healthz, s.Anonymous().Do(t, "GET", "/healthz", nil).Status) }
+	probe()
+	first := search(c)
+	probe()
+	until := time.Now().Add(5 * time.Second)
+	harness.Eventually(t, "5 s of polling", func() bool {
+		probe()
+		return time.Now().After(until)
+	})
+	settled := search(c)
+	if problem := searchReadyProblem(healthz, first, settled); problem != "" {
+		t.Error(problem)
+	}
+	if got := settled[queries[0]]; len(got) == 0 || got[0] != "youtrack.create_issue" {
+		t.Errorf("the settled search %q: %v, want youtrack.create_issue first", queries[0], got)
+	}
 }

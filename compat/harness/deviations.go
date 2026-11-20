@@ -1,0 +1,96 @@
+//go:build compat
+
+package harness
+
+import (
+	"fmt"
+	"os"
+	"strings"
+)
+
+// Deviation names one behaviour of 1.0.0 that the Go server deliberately does NOT reproduce (an
+// owner decision). A scenario that touches it has two expectations: the 1.0.0 behaviour, asserted
+// as before, and the decided behaviour, asserted when the stack reports Fixed(deviation).
+//
+// COMPAT_FIXED selects the decided behaviour: "all", or a comma-separated list of deviation ids.
+// Unset (the reference TypeScript image) means none are fixed. The Go image is expected to pass
+// with COMPAT_FIXED=all at the switchover. Adding a deviation needs the owner's decision.
+type Deviation string
+
+// The deviations. The description of each is in AllDeviations.
+const (
+	DevAuditOrder           Deviation = "audit-order"
+	DevCreateUserKeepsRole  Deviation = "create-user-keeps-role"
+	DevCreateServerSyncExit Deviation = "create-server-sync-exit"
+	DevReadyBeforeServing   Deviation = "ready-before-serving"
+	DevOAuthStateKept       Deviation = "oauth-state-kept"
+	DevReindexWording       Deviation = "reindex-wording"
+	DevRootNoCache          Deviation = "root-no-cache"
+	DevRequestIDOnRefusals  Deviation = "request-id-on-refusals"
+	DevConfigErrors         Deviation = "config-errors"
+	DevAuditLoginVia        Deviation = "audit-login-via"
+	DevRetryAfter429        Deviation = "token-429-retry-after"
+)
+
+// DeviationInfo is one registry entry.
+type DeviationInfo struct {
+	ID Deviation
+	// Description is one line: the 1.0.0 behaviour, then the decided behaviour.
+	Description string
+}
+
+// AllDeviations lists every deviation; a test checks that each is used by a scenario.
+var AllDeviations = []DeviationInfo{
+	{DevAuditOrder, "GET /api/audit orders by the text form of the id and paging skips rows -> newest first by numeric id, and paging with before returns every row exactly once"},
+	{DevCreateUserKeepsRole, "create-user without --admin demotes an existing admin -> an existing person's role changes only with an explicit flag (--admin promotes, --member demotes)"},
+	{DevCreateServerSyncExit, "create-server exits 0 when the first sync fails -> exits 1, the server still exists, the output says the sync failed"},
+	{DevReadyBeforeServing, "/healthz may answer 503 and search uses full text only until the embedding model has loaded -> after a start /healthz never answers 503 while the database is up, and the first search equals the settled one"},
+	{DevOAuthStateKept, "a callback under another person's session (invalid_state) consumes the starter's pending state -> the refusal leaves the state usable"},
+	{DevReindexWording, "reindex prints `reindexed <N> server(s)` for a document count -> `reindexed <N> tool(s)`"},
+	{DevRootNoCache, "GET / has no Cache-Control -> Cache-Control: no-cache, as on the other SPA routes"},
+	{DevRequestIDOnRefusals, "the foreign-Host 403 on /mcp carries no X-Request-Id -> every response carries it, that refusal included"},
+	{DevConfigErrors, "EMBEDDER=openai-compatible without EMBEDDER_URL/EMBEDDER_MODEL ends in an unhandled exception and OIDC_SCOPES without openid is refused without OIDC -> an ordinary `Invalid configuration:` error naming both variables, and OIDC_SCOPES is validated only when OIDC is configured"},
+	{DevAuditLoginVia, "an OIDC sign-in writes auth.login with empty meta -> meta.via is \"oidc\""},
+	{DevRetryAfter429, "the 429 for failed token checks on /mcp has no Retry-After -> it carries Retry-After with a positive integer"},
+}
+
+// FixedEnv is the environment variable that selects the decided behaviours.
+const FixedEnv = "COMPAT_FIXED"
+
+// ParseFixed parses the value of COMPAT_FIXED: "" = none, "all" = every deviation, otherwise a
+// comma-separated list of ids (spaces around ids are ignored, empty items are an error). An
+// unknown id is an error that lists the valid ones.
+func ParseFixed(value string) (map[Deviation]bool, error) {
+	fixed := map[Deviation]bool{}
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return fixed, nil
+	}
+	if value == "all" {
+		for _, d := range AllDeviations {
+			fixed[d.ID] = true
+		}
+		return fixed, nil
+	}
+	valid := map[Deviation]bool{}
+	ids := make([]string, 0, len(AllDeviations))
+	for _, d := range AllDeviations {
+		valid[d.ID] = true
+		ids = append(ids, string(d.ID))
+	}
+	for _, item := range strings.Split(value, ",") {
+		id := Deviation(strings.TrimSpace(item))
+		if !valid[id] {
+			return nil, fmt.Errorf("%s: unknown deviation %q; valid ids: all, %s", FixedEnv, string(id), strings.Join(ids, ", "))
+		}
+		fixed[id] = true
+	}
+	return fixed, nil
+}
+
+// fixedFromEnv reads COMPAT_FIXED; boot fails on an invalid value.
+func fixedFromEnv() (map[Deviation]bool, error) { return ParseFixed(os.Getenv(FixedEnv)) }
+
+// Fixed reports whether the image under test is expected to show the decided behaviour of d
+// instead of the 1.0.0 one (COMPAT_FIXED is "all" or lists d). It is false for the reference image.
+func (s *Stack) Fixed(d Deviation) bool { return s.fixed[d] }

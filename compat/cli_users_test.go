@@ -206,7 +206,32 @@ func TestCLICreateUser(t *testing.T) {
 		entries := cliAudit(t, s, "user.provision", id)
 		cliMetaIs(t, entries[len(entries)-1], `{"created":false,"role":"admin","via":"cli"}`)
 
-		// The usage says it: without --admin an existing admin becomes a member.
+		if s.Fixed(harness.DevCreateUserKeepsRole) {
+			// Decided (create-user-keeps-role): an existing person's role changes only with an explicit
+			// flag. The output of these runs is not recorded (no golden): exit code and effect are judged.
+			if r := s.CLI(t, "", "create-user", "--sub", sub, "--name", "Ann Renamed"); r.Code != 0 {
+				t.Fatalf("create-user without a role flag: %v", r)
+			}
+			if p := cliMustUser(t, s, sub); p.ID != id || p.Role != "admin" {
+				t.Fatalf("an admin run again without a flag: %+v, want the role unchanged (admin)", p)
+			}
+			if r := s.CLI(t, "", "create-user", "--sub", sub, "--name", "Ann Renamed", "--member"); r.Code != 0 {
+				t.Fatalf("create-user --member: %v", r)
+			}
+			if p := cliMustUser(t, s, sub); p.ID != id || p.Role != "member" {
+				t.Fatalf("after --member: %+v, want a member", p)
+			}
+			// Control: a member run again without a flag stays a member (the flagless run changes nothing
+			// in either direction).
+			if r := s.CLI(t, "", "create-user", "--sub", sub, "--name", "Ann Renamed"); r.Code != 0 {
+				t.Fatalf("create-user without a role flag, again: %v", r)
+			}
+			if p := cliMustUser(t, s, sub); p.Role != "member" {
+				t.Fatalf("a member run again without a flag: %+v", p)
+			}
+			return
+		}
+		// 1.0.0: without --admin an existing admin becomes a member (the usage says it).
 		demoted := s.CLI(t, "", "create-user", "--sub", sub, "--name", "Ann Renamed")
 		cliGolden(t, s, "create-user-demote", demoted, 0, subs...)
 		if p := cliMustUser(t, s, sub); p.Role != "member" {

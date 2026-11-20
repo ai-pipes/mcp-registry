@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -432,4 +433,48 @@ func assertHostRefused(t *testing.T, what string, r harness.Response) {
 			t.Errorf("%s: the refusal lists the tool %s: %.200s", what, tool, r.Body)
 		}
 	}
+}
+
+// auditPagingProblem judges the ids read page by page from GET /api/audit (concatenated in the
+// order they came) against the ids of the trail (platform.audit_log): they must be strictly
+// descending by NUMERIC value (newest first), and be exactly the trail, each once. It returns ""
+// when they are, else what is wrong.
+func auditPagingProblem(read, want []string) string {
+	num := func(id string) (int64, bool) {
+		n, err := strconv.ParseInt(id, 10, 64)
+		return n, err == nil
+	}
+	for i, id := range read {
+		n, ok := num(id)
+		if !ok {
+			return fmt.Sprintf("id %q is not a number", id)
+		}
+		if i > 0 {
+			prev, _ := num(read[i-1])
+			if n == prev {
+				return fmt.Sprintf("id %d is read twice in a row", n)
+			}
+			if n > prev {
+				return fmt.Sprintf("id %d follows %d: not newest first by numeric id", n, prev)
+			}
+		}
+	}
+	got := map[string]int{}
+	for _, id := range read {
+		got[id]++
+	}
+	for _, id := range want {
+		switch got[id] {
+		case 0:
+			return fmt.Sprintf("record %s of the trail is never returned", id)
+		case 1:
+		default:
+			return fmt.Sprintf("record %s is returned %d times", id, got[id])
+		}
+		delete(got, id)
+	}
+	for id := range got {
+		return fmt.Sprintf("record %s is returned but is not in the trail", id)
+	}
+	return ""
 }

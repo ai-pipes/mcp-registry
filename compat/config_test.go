@@ -17,9 +17,10 @@ package compat_test
 //   - TestConfigOpenAICompatibleEmbedder: EMBEDDER, EMBEDDER_URL, EMBEDDER_MODEL against a fake.
 //   - SEARCH_MIN_SIMILARITY is in search_vectors_test.go (it shares the stack with the index of the
 //     fixture servers).
-//   - MODEL_DIR: the image bakes the model in at /app/models, and a model directory that holds no
-//     model cannot be made from outside without changing the image: the variable is not exercised
-//     (reported as a gap); EMBEDDER=local with the default directory is what every other scenario runs.
+//   - TestConfigModelDirMissing: MODEL_DIR=/nonexistent (the hermetic negative case: a model
+//     directory that holds no model); EMBEDDER=local with the image's own directory (/app/models) is
+//     what every other scenario runs. A MODEL_DIR that holds ANOTHER model cannot be made from
+//     outside without shipping one, and is not exercised.
 //
 // Findings about the image that these scenarios pin (the real behaviour differs from CLAUDE.md or is
 // worth the owner's attention): see the report; each is marked "FINDING" below.
@@ -49,8 +50,10 @@ type configRefusal struct {
 	// values must not appear in the output: the offending values (recognisable markers) and any
 	// secret of the stack are always checked as well.
 	values []string
-	// noPrefix: the refusal is not a configuration error report (see the FINDING on EMBEDDER).
-	noPrefix bool
+	// unreported: the refusal is NOT a configuration error report (1.0.0 on EMBEDDER=openai-compatible
+	// without URL or model: an unhandled exception). The output names the variables and does not
+	// carry the `Invalid configuration:` report. Decided (config-errors): an ordinary report.
+	unreported bool
 }
 
 // cfgEnv builds an environment override from NAME, value pairs.
@@ -85,6 +88,7 @@ func TestConfigRefused(t *testing.T) {
 	image := harness.DefaultImage()
 	idpURL := "http://idp.compat.test"
 
+	fixedErrors := s.Fixed(harness.DevConfigErrors)
 	cases := []configRefusal{
 		// --- OIDC: all three or none; an empty value is unset ---
 		{
@@ -107,10 +111,12 @@ func TestConfigRefused(t *testing.T) {
 			name: "OIDC_ISSUER is not a URL", env: cfgEnv("OIDC_ISSUER", "ZZ-not-a-url", "OIDC_CLIENT_ID", "cid", "OIDC_CLIENT_SECRET", "ZZ-oidc-secret-3"),
 			vars: []string{"OIDC_ISSUER"}, values: []string{"ZZ-not-a-url", "ZZ-oidc-secret-3"},
 		},
-		// FINDING: OIDC_SCOPES is validated even when OIDC is not configured.
+		// With OIDC configured, OIDC_SCOPES must include openid: refused by 1.0.0 and by the decided
+		// behaviour alike. Without OIDC see the 1.0.0 case below and the fixed branch after the loop.
 		{
-			name: "OIDC_SCOPES without openid", env: cfgEnv("OIDC_SCOPES", "profile,ZZ-scope"),
-			vars: []string{"OIDC_SCOPES"}, values: []string{"ZZ-scope"},
+			name: "OIDC_SCOPES without openid, OIDC configured",
+			env:  cfgEnv("OIDC_ISSUER", idpURL, "OIDC_CLIENT_ID", "cid", "OIDC_CLIENT_SECRET", "ZZ-oidc-secret-4", "OIDC_SCOPES", "profile,ZZ-scope"),
+			vars: []string{"OIDC_SCOPES"}, values: []string{"ZZ-scope", "ZZ-oidc-secret-4"},
 		},
 
 		// --- NAME and NAME_FILE ---
@@ -196,17 +202,25 @@ func TestConfigRefused(t *testing.T) {
 			vars: []string{"PORT", "TRUST_PROXY_HOPS", "SEARCH_MIN_SIMILARITY"},
 		},
 
-		// FINDING: a missing EMBEDDER_URL / EMBEDDER_MODEL is not a configuration error report: the
-		// image logs `starting` and then dies on an unhandled exception with a stack trace (exit 1).
-		// The text names both variables. The report prefix is not pinned here.
+		// EMBEDDER=openai-compatible without URL or model. 1.0.0: not a configuration report, the image
+		// logs `starting` and dies on an unhandled exception (exit 1) that names the variables.
+		// Decided (config-errors): an ordinary `Invalid configuration:` report naming both variables.
 		{
 			name: "EMBEDDER=openai-compatible without URL and model", env: cfgEnv("EMBEDDER", "openai-compatible"),
-			vars: []string{"EMBEDDER_URL", "EMBEDDER_MODEL"}, noPrefix: true,
+			vars: []string{"EMBEDDER_URL", "EMBEDDER_MODEL"}, unreported: !fixedErrors,
 		},
 		{
 			name: "EMBEDDER=openai-compatible without a model", env: cfgEnv("EMBEDDER", "openai-compatible", "EMBEDDER_URL", "http://embedder.compat.test/v1"),
-			vars: []string{"EMBEDDER_MODEL"}, noPrefix: true,
+			vars: []string{"EMBEDDER_MODEL"}, unreported: !fixedErrors,
 		},
+	}
+	if !fixedErrors {
+		// 1.0.0 validates OIDC_SCOPES even when OIDC is not configured. Decided (config-errors): only
+		// when OIDC is configured; without it the app starts (checked after the loop).
+		cases = append(cases, configRefusal{
+			name: "OIDC_SCOPES without openid, OIDC not configured", env: cfgEnv("OIDC_SCOPES", "profile,ZZ-scope"),
+			vars: []string{"OIDC_SCOPES"}, values: []string{"ZZ-scope"},
+		})
 	}
 
 	for _, c := range cases {
@@ -215,14 +229,18 @@ func TestConfigRefused(t *testing.T) {
 			if code != 1 {
 				t.Fatalf("exit code %d, want 1; output:\n%s", code, s.Scrub(logs))
 			}
-			if !c.noPrefix && !strings.Contains(logs, "Invalid configuration:\n") {
+			hasReport := strings.Contains(logs, "Invalid configuration:\n")
+			if !c.unreported && !hasReport {
 				t.Errorf("the output has no `Invalid configuration:` line:\n%s", s.Scrub(logs))
+			}
+			if c.unreported && hasReport {
+				t.Errorf("1.0.0 reports this refusal as an unhandled exception, not as a configuration report:\n%s", s.Scrub(logs))
 			}
 			for _, name := range c.vars {
 				// A line that starts with the variable name, a colon and a reason; the reason's wording is
-				// the validator's and is not pinned. Without the report prefix the name only has to appear.
+				// the validator's and is not pinned. Without the report the name only has to appear.
 				pattern := `(?m)^\s*` + regexp.QuoteMeta(name) + `: \S`
-				if c.noPrefix {
+				if c.unreported {
 					pattern = `\b` + regexp.QuoteMeta(name) + `\b`
 				}
 				if !regexp.MustCompile(pattern).MatchString(logs) {
@@ -240,6 +258,14 @@ func TestConfigRefused(t *testing.T) {
 				}
 			}
 			// The settings of this case do not exist for the next one (the override is for one start).
+		})
+	}
+
+	if fixedErrors {
+		// Decided (config-errors): OIDC_SCOPES is validated only when OIDC is configured.
+		t.Run("OIDC_SCOPES without openid starts when OIDC is not configured", func(t *testing.T) {
+			s.SwapImage(t, image, "", cfgEnv("OIDC_SCOPES", "profile,ZZ-scope"))
+			s.Answers(t)
 		})
 	}
 
@@ -365,28 +391,48 @@ func TestConfigSecretsFromFiles(t *testing.T) {
 	})
 }
 
-// configXFFRecordIP sends GET /api/auth/methods (no database, no model: see Stack.Answers) with
-// X-Forwarded-For and returns the "ip" of its access-log record (found by the request id the
-// response carries).
-func configXFFRecordIP(t *testing.T, s *harness.Stack, xff string) string {
+// configBudgetShared sends 11 failed link attempts whose three-entry X-Forwarded-For keeps the entry
+// at position fixed (0 = leftmost, 1 = middle, 2 = rightmost) and changes the other two on every
+// request, and reports whether the failed-attempt budget of that one entry was shared: the first 10
+// attempts are answered 401 either way, and the 11th is 429 exactly when the app counts the attempts
+// against that entry. Every call uses fresh addresses.
+func configBudgetShared(t *testing.T, s *harness.Stack, fixed int) bool {
 	t.Helper()
-	r := s.Anonymous().Do(t, "GET", "/api/auth/methods", nil, "X-Forwarded-For: "+xff)
-	id := r.Header.Get("X-Request-Id")
-	if r.Status != 200 || id == "" {
-		t.Fatalf("GET /api/auth/methods: %d, X-Request-Id %q", r.Status, id)
-	}
-	var ip string
-	harness.Eventually(t, "the access-log record of request "+id, func() bool {
-		recs, _ := logRecords(t, s.Logs(t))
-		for _, rec := range recs {
-			if rec["reqId"] == id {
-				ip, _ = rec["ip"].(string)
-				return true
-			}
+	anchor := identityNextIP()
+	var last harness.Response
+	for i := 1; i <= 11; i++ {
+		chain := []string{identityNextIP(), identityNextIP(), identityNextIP()}
+		chain[fixed] = anchor
+		last = identityPostLink(t, s.Anonymous(), identityRandomLinkCode(), identityForwarded(strings.Join(chain, ", ")))
+		if i <= 10 && last.Status != 401 {
+			// A 429 before the 11th means the budget of some entry was spent by fewer attempts than
+			// the documented 10 (or an earlier use of an address): not a verdict on the hop.
+			t.Fatalf("failed link attempt %d (entry %d fixed): %d %s", i, fixed, last.Status, last.Body)
 		}
+	}
+	switch last.Status {
+	case 429:
+		return true
+	case 401:
 		return false
-	})
-	return ip
+	}
+	t.Fatalf("11th failed link attempt (entry %d fixed): %d %s", fixed, last.Status, last.Body)
+	return false
+}
+
+// configExpectClientEntry asserts which entry of X-Forwarded-For the app takes for the client with
+// the current TRUST_PROXY_HOPS: the one hops entries from the right. It is observed through the
+// per-address limit of failed link attempts (10 per minute): attempts share a budget only when they
+// agree on that entry, whatever the other entries say.
+func configExpectClientEntry(t *testing.T, s *harness.Stack, hops int) {
+	t.Helper()
+	names := []string{"leftmost", "middle", "rightmost"}
+	for fixed := 0; fixed < 3; fixed++ {
+		want := fixed == 3-hops
+		if got := configBudgetShared(t, s, fixed); got != want {
+			t.Errorf("TRUST_PROXY_HOPS=%d: attempts that agree on the %s entry share a budget: %v, want %v", hops, names[fixed], got, want)
+		}
+	}
 }
 
 func TestConfigNetworkAndRetention(t *testing.T) {
@@ -440,18 +486,13 @@ func TestConfigNetworkAndRetention(t *testing.T) {
 		s.SwapImage(t, image, "")
 	})
 
+	// Observed behaviourally, through the per-address limit of failed link attempts (see
+	// configExpectClientEntry), not through the field names of the access log.
 	t.Run("TRUST_PROXY_HOPS: the client is the entry that many hops from the right of X-Forwarded-For", func(t *testing.T) {
-		const chain = "198.51.100.1, 198.51.100.2, 198.51.100.3"
-		if ip := configXFFRecordIP(t, s, chain); ip != "198.51.100.2" {
-			t.Errorf("with TRUST_PROXY_HOPS=2 the client of %q is %q, want 198.51.100.2", chain, ip)
-		}
-		s.SwapImage(t, image, "", map[string]string{"TRUST_PROXY_HOPS": "1"})
-		if ip := configXFFRecordIP(t, s, chain); ip != "198.51.100.3" {
-			t.Errorf("with TRUST_PROXY_HOPS=1 the client of %q is %q, want 198.51.100.3", chain, ip)
-		}
-		s.SwapImage(t, image, "", map[string]string{"TRUST_PROXY_HOPS": "3"})
-		if ip := configXFFRecordIP(t, s, chain); ip != "198.51.100.1" {
-			t.Errorf("with TRUST_PROXY_HOPS=3 the client of %q is %q, want 198.51.100.1", chain, ip)
+		configExpectClientEntry(t, s, 2) // the stack's own setting
+		for _, hops := range []int{1, 3} {
+			s.SwapImage(t, image, "", map[string]string{"TRUST_PROXY_HOPS": fmt.Sprint(hops)})
+			configExpectClientEntry(t, s, hops)
 		}
 		s.SwapImage(t, image, "")
 	})
@@ -506,7 +547,10 @@ func TestConfigOpenAICompatibleEmbedder(t *testing.T) {
 		return parseVector(t, *text)
 	}
 
-	slug := harness.Unique("emb")
+	// Fixed slugs: the fake's vectors are bags of words and the slug is a word of every passage of
+	// the server, so a random slug could collide with a query word of the "no common word finds
+	// nothing" control (about 0.3 %). The stack is fresh, so nothing else uses these slugs.
+	const slug = "emb-config"
 	tools := []fakes.Tool{
 		{Name: "calibrate_flux", Description: "Calibrates the flux capacitor.", InputSchema: map[string]any{"type": "object"}},
 		{Name: "brew_tea", Description: "Brews a pot of jasmine tea.", InputSchema: map[string]any{"type": "object"}},
@@ -581,7 +625,7 @@ func TestConfigOpenAICompatibleEmbedder(t *testing.T) {
 
 	t.Run("with the embedder down documents are stored without vectors and text search still works", func(t *testing.T) {
 		embedder.SetDown(true)
-		down := harness.Unique("embdown")
+		const down = "embdown-config"
 		up := fakes.StartUpstream(t, fakes.UpstreamOptions{Tools: []fakes.Tool{
 			{Name: "tame_zebra", Description: "Tames a striped zebra.", InputSchema: map[string]any{"type": "object"}},
 			{Name: "milk_gnu", Description: "Milks a patient gnu.", InputSchema: map[string]any{"type": "object"}},
@@ -617,11 +661,63 @@ func TestConfigOpenAICompatibleEmbedder(t *testing.T) {
 		if r := s.CLI(t, "", "reindex"); r.Code != 0 {
 			t.Fatalf("reindex: %v", r)
 		}
-		catalogWaitDocs(t, s, down, 2)
+		// Wait on the condition itself, not on the outbox: the events of the registration failed while
+		// the embedder was down and are in exponential backoff (min(2^attempts, 300) s per retry), so
+		// "every event delivered" can take longer than the 15 s of Eventually. reindex embeds
+		// synchronously, so the vectors are there when it returns; Eventually only covers the
+		// database round trip. (The periodic fill, every 5 minutes, is not what this step tests.)
+		harness.Eventually(t, "both documents of "+down+" to hold a vector", func() bool {
+			var total, embedded int
+			err := s.DB.QueryRow(t.Context(), "select count(*), count(embedding) from search.documents where server = $1", down).Scan(&total, &embedded)
+			return err == nil && total == 2 && embedded == 2
+		})
 		want := fakes.EmbeddingOf(passageOf(down, "tame_zebra", "Tames a striped zebra."))
 		got := storedVector(down + ".tame_zebra")
 		if problems := compareVectors(map[string][]float64{"v": got}, map[string][]float64{"v": want}, vectorTolerance); len(problems) != 0 {
 			t.Fatalf("the vector after the reindex: %v", problems)
 		}
+	})
+}
+
+// TestConfigModelDirMissing: with MODEL_DIR pointing at a directory that holds no model the app
+// still becomes healthy, indexes documents WITHOUT vectors, and text search works; the log carries
+// an error-or-warn record about the failure (the severity is judged through the shared helper, the
+// message text is not pinned).
+func TestConfigModelDirMissing(t *testing.T) {
+	s := harness.Start(t, harness.Options{Env: map[string]string{"MODEL_DIR": "/nonexistent"}})
+	admin := s.Admin(t)
+	token := admin.Token(t, "config-model-dir")
+	baseline := logCountFrom(t, s, "warn") // the first-start link is a warn record too
+
+	slug := harness.Unique("nomodel")
+	up := fakes.StartUpstream(t, fakes.UpstreamOptions{Tools: []fakes.Tool{
+		{Name: "tame_zebra", Description: "Tames a striped zebra.", InputSchema: map[string]any{"type": "object"}},
+		{Name: "milk_gnu", Description: "Milks a patient gnu.", InputSchema: map[string]any{"type": "object"}},
+	}})
+	catalogRegister(t, admin, fakes.ServerInput(up, slug, "none"))
+
+	// The documents exist and hold no vector (not waiting for the outbox: with no model the events
+	// that need a vector are retried with a backoff).
+	harness.Eventually(t, "two documents of "+slug+" without vectors", func() bool {
+		var total, embedded int
+		err := s.DB.QueryRow(t.Context(), "select count(*), count(embedding) from search.documents where server = $1", slug).Scan(&total, &embedded)
+		return err == nil && total == 2 && embedded == 0
+	})
+	c := s.MCP(t, token)
+	if hits := catalogHitRefs(catalogSearch(t, c, "striped zebra", 5, []string{slug})); !slices.Contains(hits, slug+".tame_zebra") {
+		t.Fatalf("text search without a model: %v", hits)
+	}
+	harness.Eventually(t, "a warn-or-error record after the registration", func() bool { return logCountFrom(t, s, "warn") > baseline })
+	if n := countSQL(t, s, "select count(embedding) from search.documents where server = $1", slug); n != 0 {
+		t.Fatalf("%d documents got a vector without a model", n)
+	}
+	// Control: the same stack with the image's own model directory (an empty value removes the
+	// variable, for the app and for the one-off CLI container alike) indexes vectors.
+	s.SwapImage(t, harness.DefaultImage(), "", map[string]string{"MODEL_DIR": ""})
+	if r := s.CLIWithEnv(t, map[string]string{"MODEL_DIR": ""}, "", "reindex"); r.Code != 0 {
+		t.Fatalf("reindex with the model back: %v", r)
+	}
+	harness.Eventually(t, "both documents to hold a vector once the model is found", func() bool {
+		return countSQL(t, s, "select count(embedding) from search.documents where server = $1", slug) == 2
 	})
 }

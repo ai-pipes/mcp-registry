@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -305,6 +306,29 @@ func TestAppArgsPublishTheContainerPortAndKeepFileContentOffTheCommandLine(t *te
 	}
 	if run := strings.Join(s.appArgs("run", "img", nil), " "); !strings.Contains(run, "run -d --name") {
 		t.Errorf("run is not detached: %q", run)
+	}
+}
+
+func TestSecretValuesListTheBareDatabasePasswordToo(t *testing.T) {
+	const pass = "pg-secret-24"
+	url := "postgres://mcp:" + pass + "@db:5432/mcp"
+	s := &Stack{
+		dbPass: pass,
+		env:    map[string]string{"DATABASE_URL": url, "SECRETS_KEY": "key-1", "LOG_LEVEL": "debug", "PUBLIC_URL": "http://localhost:1"},
+	}
+	got := s.SecretValues()
+	for _, want := range []string{pass, url, "key-1"} {
+		if !slices.Contains(got, want) {
+			t.Errorf("SecretValues lacks %q: %v", want, got)
+		}
+	}
+	if slices.Contains(got, "debug") || slices.Contains(got, "http://localhost:1") {
+		t.Errorf("SecretValues lists a plain setting: %v", got)
+	}
+	// With the password from a file it is listed once, not twice.
+	f := &Stack{dbPass: "pw-file", env: map[string]string{"PGPASSWORD_FILE": "/tmp/pw"}, files: map[string][]byte{"/tmp/pw": []byte("pw-file\n")}}
+	if got := f.SecretValues(); len(got) != 1 || got[0] != "pw-file" {
+		t.Errorf("SecretValues with a password file: %v", got)
 	}
 }
 

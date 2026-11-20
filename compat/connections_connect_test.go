@@ -222,7 +222,22 @@ func TestConnectionsConnectCallbackRefusals(t *testing.T) {
 		if connStatus(t, a.c, env.slug) != "missing" || connStatus(t, b.c, env.slug) != "missing" {
 			t.Fatal("a refused callback created a connection")
 		}
-		// Pinned: the refused attempt consumed the state (one-time), so the starter cannot finish it.
+		if s.Fixed(harness.DevOAuthStateKept) {
+			// Decided (oauth-state-kept): the refusal leaves the state usable, the starter finishes the
+			// same connect.
+			if loc := connCallback(t, a.c, back); loc != "/connections?connected="+url.QueryEscape(env.slug) {
+				t.Fatalf("the starter's callback after the refused one: %q, want the connect to complete", loc)
+			}
+			if got := connStatus(t, a.c, env.slug); got != "ready" {
+				t.Fatalf("the starter's connection after finishing: %q", got)
+			}
+			if connStatus(t, b.c, env.slug) != "missing" {
+				t.Fatal("the refused person got a connection")
+			}
+			return
+		}
+		// 1.0.0 (pinned): the refused attempt consumed the state (one-time), so the starter cannot
+		// finish it.
 		if loc := connCallback(t, a.c, back); loc != "/connections?error=invalid_state" {
 			t.Fatalf("the starter's callback after the refused one: %q", loc)
 		}

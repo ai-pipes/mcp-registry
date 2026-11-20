@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -109,7 +110,9 @@ type Stack struct {
 	host    string   // host part of BaseURL
 	hosts   []string // docker --add-host values given by Options.ExtraHosts
 	env     map[string]string
-	files   map[string][]byte // placed by PutFile: path inside the container -> content
+	files   map[string][]byte  // placed by PutFile: path inside the container -> content
+	fixed   map[Deviation]bool // the deviations COMPAT_FIXED selects (see deviations.go)
+	dbPass  string             // the database password, whichever way the app is given it
 
 	fetchLog func(container string) (string, error) // the app log for COMPAT_LOG_DIR; nil = docker logs
 }
@@ -249,7 +252,11 @@ func boot(o Options, expectExit bool) (s *Stack, err error) {
 	if cli == "" {
 		cli = DefaultCLI()
 	}
-	s = &Stack{id: randomHex(4), cli: cli, image: image, host: "localhost", hosts: o.ExtraHosts, cport: defaultContainerPort}
+	fixed, ferr := fixedFromEnv()
+	if ferr != nil {
+		return nil, ferr
+	}
+	s = &Stack{fixed: fixed, id: randomHex(4), cli: cli, image: image, host: "localhost", hosts: o.ExtraHosts, cport: defaultContainerPort}
 	if o.ContainerPort != 0 {
 		s.cport = o.ContainerPort
 	}
@@ -276,6 +283,7 @@ func boot(o Options, expectExit bool) (s *Stack, err error) {
 	}
 
 	pgPassword := randomHex(12)
+	s.dbPass = pgPassword
 	key := make([]byte, 32)
 	if _, err = rand.Read(key); err != nil {
 		return s, err
@@ -466,9 +474,10 @@ func (s *Stack) scrub(text string) string {
 func (s *Stack) Scrub(text string) string { return s.scrub(text) }
 
 // SecretValues returns the values of the stack's secret-looking settings (names with KEY, SECRET or
-// PASSWORD, and DATABASE_URL) and the trimmed content of the files that such a NAME_FILE setting
-// points at, for assertions that an output carries none of them. The database password alone is
-// not listed when it is part of DATABASE_URL: the URL as a whole is.
+// PASSWORD, and DATABASE_URL), the trimmed content of the files that such a NAME_FILE setting
+// points at, and the bare database password (also while it sits inside DATABASE_URL, so an output
+// that prints only the password is caught as well as one that prints the whole URL), for
+// assertions that an output carries none of them.
 func (s *Stack) SecretValues() []string {
 	var out []string
 	secretName := func(u string) bool {
@@ -488,8 +497,11 @@ func (s *Stack) SecretValues() []string {
 			}
 		}
 	}
+	if s.dbPass != "" {
+		out = append(out, s.dbPass)
+	}
 	sort.Strings(out)
-	return out
+	return slices.Compact(out)
 }
 
 func (s *Stack) tailLogs() string {
