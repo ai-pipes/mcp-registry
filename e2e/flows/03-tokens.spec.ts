@@ -26,7 +26,7 @@ test('a token and its connect command are shown once; afterwards only the prefix
   const token = await dialog.getByRole('textbox', { name: t.token }).inputValue();
   // The answer that created it is the one response allowed to carry it.
   guard.secret(token, 'the token', { page, method: 'POST', path: '/api/tokens' });
-  expect(token).toMatch(/^sk_[A-Za-z0-9_-]{20,}$/);
+  expect(token).toMatch(/^sk_[A-Za-z0-9_-]{41,}$/);
   const command = await dialog.getByRole('textbox', { name: t.connectCommand }).inputValue();
   guard.secret(command, 'the connect command');
   expect(command).toBe(

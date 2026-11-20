@@ -46,14 +46,14 @@
 // and an /api/ one after a registered secret fails, so a flow has to let the page consume it first.
 import type { BrowserContext, CDPSession, Page } from '@playwright/test';
 
-// The product's formats exactly: a prefix plus the base64url of 32 random bytes (43 characters),
-// apps/server/src/modules/identity/{application/tokens.ts,application/login-link.ts}. Anchored at both
-// ends, so a random base64url value (a session cookie: 43 characters, no prefix) cannot match unless
-// it is itself longer than 46 characters and holds the prefix after a word boundary followed by
-// exactly 43 base64url characters and then a non-base64url character. A server that issues another
-// length escapes these shape checks only; the registered secrets of the flows are still matched exactly.
-const LINK_CODE = /\bll_[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])/;
-const API_TOKEN = /\bsk_[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])/;
+// The product's formats: a prefix plus the base64url of 32 random bytes (43 characters),
+// apps/server/src/modules/identity/{application/tokens.ts,application/login-link.ts}. The shape is a
+// prefix, a left boundary and AT LEAST 41 base64url characters (44 in all, the product's 46 included),
+// whatever follows: a longer token (another length a server may issue) is caught as well, and a random
+// base64url value without the prefix (a session cookie) cannot match. Anything shorter than 44
+// characters is not a credential of this shape; the registered secrets of the flows are matched exactly.
+const LINK_CODE = /(?<![A-Za-z0-9_-])ll_[A-Za-z0-9_-]{41,}/;
+const API_TOKEN = /(?<![A-Za-z0-9_-])sk_[A-Za-z0-9_-]{41,}/;
 
 /** The bounded wait for captures, reads in flight and a page's close event. */
 const GRACE_MS = 5000;
@@ -340,7 +340,7 @@ function failureFacts(w: Watched, st: PageState, rec: Rec): FailureFacts {
  * call was refused for the closing page. So when a `readBody` call was REFUSED and nothing else
  * decided the outcome (it would be T7), the close event is awaited within the grace and only
  * `pageClosed` is re-read. A `loadingFailed`, or an outcome already decided (a commit, a close, a
- * cached asset), is settled at once.
+ * cached asset), is settled at once. The self-tests pin the order of `loadingFailed` and the commit.
  */
 async function settleFailure(
   w: Watched,

@@ -8,6 +8,7 @@ func TestPlaywrightArgsRefusesWhatCouldPassWithoutTesting(t *testing.T) {
 	for _, a := range []string{
 		"--list", "--pass-with-no-tests", "--retries", "--retries=2", "--reporter=dot", "--reporter",
 		"-c", "-cother.config.ts", "-c=other.config.ts", "--config", "--config=other.config.ts",
+		"--grep-invert", "--grep-invert=tokens", "--shard", "--shard=1/2", "--last-failed", "--only-changed", "--only-changed=main",
 	} {
 		if !refusedPlaywrightArg(a) {
 			t.Errorf("%q is accepted, want refused", a)

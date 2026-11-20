@@ -111,14 +111,19 @@ func TestBrowserFlows(t *testing.T) {
 // refusedPlaywrightArg reports whether an argument of E2E_PLAYWRIGHT_ARGS is refused: listing
 // instead of running, passing with no tests, retries (a retried failure counts as a "flaky" pass),
 // another reporter, or another config (`-c path`, `-cpath`, `-c=path`, `--config...`), which would
-// run specs outside the guard's fixture.
+// run specs outside the guard's fixture; and the selections that silently run fewer tests than the
+// caller thinks (`--grep-invert`, `--shard`, `--last-failed`, `--only-changed`), so a green run
+// cannot be taken for all twelve flows. `--grep` (select by title) and a spec file stay allowed.
 func refusedPlaywrightArg(a string) bool {
-	return strings.HasPrefix(a, "--list") ||
-		strings.HasPrefix(a, "--retries") ||
-		strings.HasPrefix(a, "--pass-with-no-tests") ||
-		strings.HasPrefix(a, "--reporter") ||
-		strings.HasPrefix(a, "--config") ||
-		strings.HasPrefix(a, "-c")
+	for _, prefix := range []string{
+		"--list", "--retries", "--pass-with-no-tests", "--reporter", "--config", "-c",
+		"--grep-invert", "--shard", "--last-failed", "--only-changed",
+	} {
+		if strings.HasPrefix(a, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // testsRun counts the tests Playwright ran (expected, unexpected and flaky outcomes; skipped ones

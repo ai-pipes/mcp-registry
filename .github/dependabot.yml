@@ -23,3 +23,14 @@ updates:
       # Bump the major together with `@types/node` and CI.
       - dependency-name: node
         update-types: ['version-update:semver-major']
+  # The Go rewrite: the root module (compat suite, fakes, harness, the server to come).
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+  # The self-check image is built FROM the reference image; keep its base current.
+  - package-ecosystem: docker
+    directory: /compat/selfcheck
+    schedule:
+      interval: weekly

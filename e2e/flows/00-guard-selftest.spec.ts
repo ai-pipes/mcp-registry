@@ -397,10 +397,9 @@ test('T4 a refused read of a cache-served app asset is settled at once, without 
   await page.goto(`${base}/`);
   await expect(page.getByRole('heading', { level: 1, name: strings.login.title })).toBeVisible();
   await expect(page.getByText(strings.login.localHint)).toBeVisible();
-  const started = Date.now();
-  // A short verdict deadline: a read still waiting for a close would be reported as unfinished.
+  // A short verdict deadline: a read still waiting for a close would be reported as unfinished, so
+  // a verdict without such a problem proves that no read waited for the page to close.
   const verdict = await guard.settle(1000);
-  expect(Date.now() - started).toBeLessThan(2500);
   expect(verdict.notScanned.join('\n')).toContain('cached asset (refused by the self-test)');
   expect(verdict.problems).toEqual([]);
   guard.reset();
@@ -861,6 +860,26 @@ test('H a secret and a link-code shape in Set-Cookie headers are caught', async 
   });
 });
 
+test('a link code or token of any length from 44 characters on is caught, a shorter value is not', async ({
+  page,
+  guard,
+}) => {
+  await withTiny(async ({ origin }) => {
+    await page.goto(`${origin}/ok`);
+    const long = `sk_${'Ab3-_xYz9k'.repeat(6)}0`; // 64 characters
+    await fetchOf(page, `/ok?q=${long}`);
+    await expect
+      .poll(async () => (await guard.problems()).join('\n'))
+      .toContain(`an API token is in the URL of GET ${origin}/ok?q=`);
+    guard.reset();
+    // Control: 40 characters after the prefix are not a credential of the product's shape.
+    await fetchOf(page, `/ok?q=ll_${'Ab3-_xYz9k'.repeat(4)}`);
+    await fetchOf(page, '/ok');
+    expect((await guard.settle(1000)).problems).toEqual([]);
+    guard.reset();
+  });
+});
+
 test('U a secret in the URL of a response is caught', async ({ page, guard }) => {
   await withTiny(async ({ origin }) => {
     await page.goto(`${origin}/ok`);
@@ -881,7 +900,11 @@ test('no flow makes a page or a context behind the guard', () => {
   // The guard's self-test hooks (forgetting, settling early, faking records, replacing reads) belong
   // to this file only: in a flow they could clear or bend the verdict.
   const testOnly = /\b(?:reset|settle|injectUncaptured|replaceBodyRead)\b/;
-  const specs = readdirSync(dir).filter((f) => f.endsWith('.spec.ts') && f !== self);
+  // Every module of the flows but the guard, its fixture and this file: the control client and the
+  // Playwright config could bend the verdict as well as a spec.
+  const specs = readdirSync(dir).filter(
+    (f) => f.endsWith('.ts') && f !== self && f !== 'fixtures.ts' && f !== 'guard.ts',
+  );
   const read = (f: string) => readFileSync(path.join(dir, f), 'utf8');
   expect(
     specs.filter((f) => bypass.test(read(f))),
