@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"errors"
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -14,10 +15,32 @@ import (
 
 var update = flag.Bool("update", false, "rewrite golden files (only with COMPAT_REFERENCE=1)")
 
-// CheckUpdateAllowed refuses -update unless the image under test is declared the reference.
+// referenceImageVar names the image CI declares as the reference when it is not the built-in
+// default (a differently tagged build of the TypeScript image).
+const referenceImageVar = "COMPAT_REFERENCE_IMAGE"
+
+// CheckUpdateAllowed refuses -update unless COMPAT_REFERENCE=1 AND the image under test (see
+// DefaultImage) is the reference image: the built-in default tag, or exactly the value of
+// COMPAT_REFERENCE_IMAGE when that is set. Without the second condition `COMPAT_IMAGE=<go image>
+// make compat-record-search` would rewrite the goldens from the server they are meant to judge.
 func CheckUpdateAllowed(update bool) error {
-	if update && os.Getenv("COMPAT_REFERENCE") != "1" {
+	return checkUpdate(update, os.Getenv("COMPAT_REFERENCE"), os.Getenv(referenceImageVar), DefaultImage())
+}
+
+// checkUpdate is CheckUpdateAllowed over explicit inputs.
+func checkUpdate(update bool, reference, referenceImage, image string) error {
+	if !update {
+		return nil
+	}
+	if reference != "1" {
 		return errors.New("-update needs COMPAT_REFERENCE=1: golden files come only from the reference image")
+	}
+	want := defaultImage
+	if referenceImage != "" {
+		want = referenceImage
+	}
+	if image != want {
+		return fmt.Errorf("-update refused: the image under test is %q, the reference image is %q (set COMPAT_REFERENCE_IMAGE to name another reference; goldens never come from the server they judge)", image, want)
 	}
 	return nil
 }
@@ -41,7 +64,7 @@ func Golden(t *testing.T, name string, got []byte) {
 		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(path, got, 0o600); err != nil {
+		if err := os.WriteFile(path, got, 0o644); err != nil { //nolint:gosec // goldens are committed files, readable like the rest of the tree
 			t.Fatal(err)
 		}
 		return

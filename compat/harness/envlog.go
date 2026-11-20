@@ -32,6 +32,9 @@ var harnessOwned = map[string]bool{
 
 // credentialShape matches the sign-in link codes (ll_ + 32 bytes base64url) and API tokens (sk_ +
 // 32 bytes base64url) of the product; anything that long after the prefix is removed from logs.
+// Redaction errs towards masking: any word boundary on the left and 20 characters as the minimum
+// (the guard of e2e/flows detects the shape exactly, with 41, because a false alarm fails a flow;
+// a false redaction only shortens a log).
 var credentialShape = regexp.MustCompile(`\b(?:ll|sk)_[A-Za-z0-9_-]{20,}`)
 
 // parseAppEnv reads the value of COMPAT_APP_ENV.

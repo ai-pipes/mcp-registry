@@ -34,6 +34,8 @@ func TestStackBootsAndIsReachableBothWays(t *testing.T) {
 }
 
 func TestUpdateRefusesNonReferenceImage(t *testing.T) {
+	t.Setenv("COMPAT_IMAGE", "")
+	t.Setenv("COMPAT_REFERENCE_IMAGE", "")
 	t.Setenv("COMPAT_REFERENCE", "")
 	if err := harness.CheckUpdateAllowed(true); err == nil {
 		t.Fatal("update must be refused without COMPAT_REFERENCE=1")
@@ -293,5 +295,14 @@ func TestCLIWithEnvRunsWhileTheAppIsDown(t *testing.T) {
 	s.SwapImage(t, testImage(), "")
 	if r := s.CLI(t, "", "create-server", "--json", "/tmp/harness-down.json", "--as", "x"); !strings.Contains(r.Stderr, "is not valid JSON") {
 		t.Fatalf("the file after the app came back: %+v", r)
+	}
+}
+
+// TestContainerPortMovesWhatTheAppListensOn: the app listens on ContainerPort (PORT is set for it)
+// and the published port maps to it.
+func TestContainerPortMovesWhatTheAppListensOn(t *testing.T) {
+	s := harness.Start(t, harness.Options{ContainerPort: 8123})
+	if r := s.Anonymous().Do(t, "GET", "/healthz", nil); r.Status != 200 || string(r.Body) != "ok" {
+		t.Fatalf("healthz on a non-default port: %d %q", r.Status, r.Body)
 	}
 }

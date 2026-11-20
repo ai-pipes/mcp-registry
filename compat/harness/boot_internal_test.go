@@ -242,3 +242,108 @@ func TestPublicHostBootsAStackThatAnswersOnItsPublicName(t *testing.T) {
 		t.Fatal("TryCLI on a stopped app returned no error")
 	}
 }
+
+func TestCheckUpdate(t *testing.T) {
+	cases := []struct {
+		name                             string
+		update                           bool
+		reference, referenceImage, image string
+		wantErr                          string // "" = allowed
+	}{
+		{"no update needs nothing", false, "", "", "go-image:1", ""},
+		{"update without the reference flag", true, "", "", defaultImage, "COMPAT_REFERENCE=1"},
+		{"update of the default image", true, "1", "", defaultImage, ""},
+		{"update of another image with only the flag", true, "1", "", "go-image:1", "reference image is \"" + defaultImage + "\""},
+		{"update of the named reference image", true, "1", "ts-ref:7", "ts-ref:7", ""},
+		{"the default is not the reference once another is named", true, "1", "ts-ref:7", defaultImage, "reference image is \"ts-ref:7\""},
+		{"another image than the named one", true, "1", "ts-ref:7", "go-image:1", "reference image is \"ts-ref:7\""},
+		{"the flag must be exactly 1", true, "true", "", defaultImage, "COMPAT_REFERENCE=1"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := checkUpdate(c.update, c.reference, c.referenceImage, c.image)
+			switch {
+			case c.wantErr == "" && err != nil:
+				t.Fatalf("refused: %v", err)
+			case c.wantErr != "" && (err == nil || !strings.Contains(err.Error(), c.wantErr)):
+				t.Fatalf("error %v, want one containing %q", err, c.wantErr)
+			}
+		})
+	}
+}
+
+func TestCheckUpdateAllowedReadsTheEnvironment(t *testing.T) {
+	t.Setenv("COMPAT_REFERENCE", "1")
+	t.Setenv("COMPAT_REFERENCE_IMAGE", "")
+	t.Setenv("COMPAT_IMAGE", "")
+	if err := CheckUpdateAllowed(true); err != nil {
+		t.Fatalf("the default image: %v", err)
+	}
+	t.Setenv("COMPAT_IMAGE", "go-image:1")
+	if err := CheckUpdateAllowed(true); err == nil {
+		t.Fatal("-update was allowed against an image that is not the reference")
+	}
+	t.Setenv("COMPAT_REFERENCE_IMAGE", "go-image:1")
+	if err := CheckUpdateAllowed(true); err != nil {
+		t.Fatalf("a named reference image: %v", err)
+	}
+}
+
+func TestAppArgsPublishTheContainerPortAndKeepFileContentOffTheCommandLine(t *testing.T) {
+	s := &Stack{
+		app: "compat-x-app", network: "compat-x", id: "x", port: 4321, cport: 8123,
+		files: map[string][]byte{"/tmp/key": []byte("file-secret-content\n")},
+	}
+	line := strings.Join(s.appArgs("create", "img", map[string]string{"PORT": "8123", "SECRETS_KEY_FILE": "/tmp/key"}), " ")
+	for _, want := range []string{"create --name compat-x-app", "-p 127.0.0.1:4321:8123", "-e PORT=8123", "-e SECRETS_KEY_FILE=/tmp/key", " img"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("the arguments lack %q: %q", want, line)
+		}
+	}
+	if strings.Contains(line, "file-secret-content") || strings.Contains(line, " -d ") {
+		t.Errorf("file content or -d on a create: %q", line)
+	}
+	if run := strings.Join(s.appArgs("run", "img", nil), " "); !strings.Contains(run, "run -d --name") {
+		t.Errorf("run is not detached: %q", run)
+	}
+}
+
+func TestScrubRemovesTheContentOfSecretFiles(t *testing.T) {
+	s := &Stack{
+		env:   map[string]string{"SECRETS_KEY_FILE": "/tmp/k", "OTHER_FILE": "/tmp/o"},
+		files: map[string][]byte{"/tmp/k": []byte("the-key-in-a-file\n"), "/tmp/o": []byte("not-a-secret\n")},
+	}
+	got := s.scrub("a the-key-in-a-file b not-a-secret")
+	if strings.Contains(got, "the-key-in-a-file") || !strings.Contains(got, "not-a-secret") {
+		t.Fatalf("scrub: %q", got)
+	}
+}
+
+// TestFilesAreInTheContainerBeforeTheAppStarts: an app that reads a *_FILE variable at once finds
+// the file (create, cp, start), the key and the database password come from files, and the
+// URL carries no password.
+func TestFilesAreInTheContainerBeforeTheAppStarts(t *testing.T) {
+	s := Start(t, Options{ //nolint:gosec // G101: file paths in a container, not credentials
+		SecretsKeyFile: "/tmp/harness-key",
+		PasswordFile:   "/tmp/harness-pw",
+		Files:          map[string][]byte{"/tmp/harness-extra": []byte("extra\n")},
+	})
+	if r := s.Anonymous().Do(t, "GET", "/healthz", nil); r.Status != 200 {
+		t.Fatalf("healthz: %d", r.Status)
+	}
+	env, err := dockerErr("inspect", "-f", "{{range .Config.Env}}{{println .}}{{end}}", s.app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(env, "SECRETS_KEY=") || !strings.Contains(env, "SECRETS_KEY_FILE=/tmp/harness-key") ||
+		!strings.Contains(env, "PGPASSWORD_FILE=/tmp/harness-pw") || !strings.Contains(env, "DATABASE_URL=postgres://mcp@db:5432/mcp") {
+		t.Fatalf("the environment of the app: %s", s.scrub(env))
+	}
+	// The one-off CLI container gets the files too (the CLI opens the database with the password file).
+	if r := s.CLIWithEnv(t, nil, "", "--version"); r.Code != 0 {
+		t.Fatalf("one-off cli: %v", r)
+	}
+	if r := s.CLI(t, "", "create-user", "--sub", Unique("f"), "--name", "f"); r.Code != 0 {
+		t.Fatalf("cli with the password from a file: %v", r)
+	}
+}

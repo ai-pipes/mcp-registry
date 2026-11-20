@@ -29,12 +29,18 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
+// dbImage is Postgres with pgvector, pinned by digest like the Dockerfile pins Node (the tag pg17 is
+// kept for the reader; the multi-arch index digest was resolved with `docker buildx imagetools
+// inspect pgvector/pgvector:pg17`). Dependabot does not watch a Go constant: bump it by hand.
+const dbImage = "pgvector/pgvector:pg17@sha256:b513c48566e4777cd3370451400000c78eda6a08131d68f4c31d4a76f27bd8fd"
+
 const (
 	defaultImage = "mcp-registry:compat-ts"
 	defaultCLI   = "node dist/cli.js"
-	dbImage      = "pgvector/pgvector:pg17"
 	dbUser       = "mcp"
 	dbName       = "mcp"
+
+	defaultContainerPort = 3000
 
 	suiteLabel   = "compat.suite=mcp-registry"
 	staleAfter   = time.Hour
@@ -69,6 +75,19 @@ type Options struct {
 	// ExtraHosts are "name:host-gateway" entries (docker --add-host) of the app and one-off CLI
 	// containers, for names a fake advertises that the container must resolve to the host.
 	ExtraHosts []string
+	// Files are placed inside the app container (and every one-off CLI container) BEFORE the app
+	// starts: absolute path -> content, mode 0644. The values of the *_FILE variables need this;
+	// content never goes on a command line.
+	Files map[string][]byte
+	// SecretsKeyFile, when set, is the path of a file that receives the stack's SECRETS_KEY (base64,
+	// with a trailing newline), SECRETS_KEY_FILE points at it and SECRETS_KEY is not set.
+	SecretsKeyFile string
+	// PasswordFile, when set, is the path of a file that receives the database password,
+	// PGPASSWORD_FILE points at it and DATABASE_URL carries no password.
+	PasswordFile string
+	// ContainerPort is the port the app listens on inside its container (PORT is set to it); the
+	// published host port maps to it. 0 = 3000, the image's default.
+	ContainerPort int
 
 	testName string // set by Start, StartExpectingExit and Shared: names the log file of COMPAT_LOG_DIR
 }
@@ -86,6 +105,7 @@ type Stack struct {
 	cli     string
 	image   string
 	port    int
+	cport   int      // the port the app listens on inside the container
 	host    string   // host part of BaseURL
 	hosts   []string // docker --add-host values given by Options.ExtraHosts
 	env     map[string]string
@@ -229,7 +249,13 @@ func boot(o Options, expectExit bool) (s *Stack, err error) {
 	if cli == "" {
 		cli = DefaultCLI()
 	}
-	s = &Stack{id: randomHex(4), cli: cli, image: image, host: "localhost", hosts: o.ExtraHosts}
+	s = &Stack{id: randomHex(4), cli: cli, image: image, host: "localhost", hosts: o.ExtraHosts, cport: defaultContainerPort}
+	if o.ContainerPort != 0 {
+		s.cport = o.ContainerPort
+	}
+	for path, content := range o.Files {
+		s.rememberFile(path, content)
+	}
 	if o.PublicHost != "" {
 		s.host = o.PublicHost
 	}
@@ -260,6 +286,19 @@ func boot(o Options, expectExit bool) (s *Stack, err error) {
 		"COOKIE_SECURE": "false",
 		"SECRETS_KEY":   base64.StdEncoding.EncodeToString(key),
 		"LOG_LEVEL":     "debug",
+	}
+	if s.cport != defaultContainerPort {
+		s.env["PORT"] = strconv.Itoa(s.cport)
+	}
+	if o.SecretsKeyFile != "" {
+		s.rememberFile(o.SecretsKeyFile, []byte(s.env["SECRETS_KEY"]+"\n"))
+		delete(s.env, "SECRETS_KEY")
+		s.env["SECRETS_KEY_FILE"] = o.SecretsKeyFile
+	}
+	if o.PasswordFile != "" {
+		s.rememberFile(o.PasswordFile, []byte(pgPassword+"\n"))
+		s.env["DATABASE_URL"] = fmt.Sprintf("postgres://%s@db:5432/%s", dbUser, dbName)
+		s.env["PGPASSWORD_FILE"] = o.PasswordFile
 	}
 	if o.OIDC != nil {
 		s.env["OIDC_ISSUER"], s.env["OIDC_CLIENT_ID"], s.env["OIDC_CLIENT_SECRET"] = o.OIDC.OIDCSettings()
@@ -346,18 +385,22 @@ func (s *Stack) startAppOnAFreePort() error {
 	}
 }
 
-// startApp runs the app container (its name is fixed per stack) with env.
-func (s *Stack) startApp(image string, env map[string]string) error {
+// appArgs builds the docker arguments that run (or, with create, only create) the app container;
+// env values are on the command line like the harness's own settings: secrets that must not be
+// there travel as files (Options.Files).
+func (s *Stack) appArgs(verb, image string, env map[string]string) []string {
 	names := make([]string, 0, len(env))
 	for k := range env {
 		names = append(names, k)
 	}
 	sort.Strings(names)
-	args := []string{
-		"run", "-d", "--name", s.app, "--network", s.network,
-		"--add-host", "host.docker.internal:host-gateway",
-		"-p", fmt.Sprintf("127.0.0.1:%d:3000", s.port),
+	args := []string{verb}
+	if verb == "run" {
+		args = append(args, "-d")
 	}
+	args = append(args, "--name", s.app, "--network", s.network,
+		"--add-host", "host.docker.internal:host-gateway",
+		"-p", fmt.Sprintf("127.0.0.1:%d:%d", s.port, s.cport))
 	for _, h := range s.hosts {
 		args = append(args, "--add-host", h)
 	}
@@ -365,8 +408,35 @@ func (s *Stack) startApp(image string, env map[string]string) error {
 	for _, k := range names {
 		args = append(args, "-e", k+"="+env[k])
 	}
-	_, err := dockerErr(append(args, image)...)
+	return append(args, image)
+}
+
+// startApp runs the app container (its name is fixed per stack) with env. Files placed with
+// PutFile or Options.Files are copied in BEFORE the process starts (create, cp, start), so an app
+// that reads a *_FILE variable at once finds them.
+func (s *Stack) startApp(image string, env map[string]string) error {
+	if len(s.files) == 0 {
+		_, err := dockerErr(s.appArgs("run", image, env)...)
+		return err
+	}
+	if _, err := dockerErr(s.appArgs("create", image, env)...); err != nil {
+		return err
+	}
+	for path, content := range s.files {
+		if err := copyInto(s.app, path, content); err != nil {
+			return err
+		}
+	}
+	_, err := dockerErr("start", s.app)
 	return err
+}
+
+// rememberFile records a file for every container of the stack (see startApp).
+func (s *Stack) rememberFile(path string, content []byte) {
+	if s.files == nil {
+		s.files = map[string][]byte{}
+	}
+	s.files[path] = bytes.Clone(content)
 }
 
 // loopbackURL is where the test process reaches the app whatever PublicHost is.
@@ -385,14 +455,41 @@ func (s *Stack) running() (bool, error) {
 // code (ll_...) or an API token (sk_...), from text that goes into failure messages and logs.
 func (s *Stack) scrub(text string) string {
 	text = credentialShape.ReplaceAllString(text, "<redacted>")
-	for k, v := range s.env {
-		u := strings.ToUpper(k)
-		if v != "" && (strings.Contains(u, "KEY") || strings.Contains(u, "SECRET") ||
-			strings.Contains(u, "PASSWORD") || u == "DATABASE_URL") {
-			text = strings.ReplaceAll(text, v, "<redacted>")
-		}
+	for _, v := range s.SecretValues() {
+		text = strings.ReplaceAll(text, v, "<redacted>")
 	}
 	return text
+}
+
+// Scrub is scrub for scenarios: text for a failure message with the stack's secrets and credential
+// shapes removed.
+func (s *Stack) Scrub(text string) string { return s.scrub(text) }
+
+// SecretValues returns the values of the stack's secret-looking settings (names with KEY, SECRET or
+// PASSWORD, and DATABASE_URL) and the trimmed content of the files that such a NAME_FILE setting
+// points at, for assertions that an output carries none of them. The database password alone is
+// not listed when it is part of DATABASE_URL: the URL as a whole is.
+func (s *Stack) SecretValues() []string {
+	var out []string
+	secretName := func(u string) bool {
+		return strings.Contains(u, "KEY") || strings.Contains(u, "SECRET") || strings.Contains(u, "PASSWORD")
+	}
+	for k, v := range s.env {
+		u := strings.ToUpper(k)
+		if v == "" {
+			continue
+		}
+		if secretName(u) && !strings.HasSuffix(u, "_FILE") || u == "DATABASE_URL" {
+			out = append(out, v)
+		}
+		if content, ok := s.files[v]; ok && strings.HasSuffix(u, "_FILE") && secretName(u) {
+			if secret := strings.TrimSpace(string(content)); secret != "" {
+				out = append(out, secret)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 func (s *Stack) tailLogs() string {
@@ -537,15 +634,7 @@ func (s *Stack) swap(image, cli string, overrides []map[string]string) error {
 			}
 		}
 	}
-	if err := s.startApp(image, env); err != nil {
-		return err
-	}
-	for path, content := range s.files { // files placed with PutFile survive the new container
-		if err := copyInto(s.app, path, content); err != nil {
-			return err
-		}
-	}
-	return nil
+	return s.startApp(image, env) // files placed with PutFile survive: startApp copies them in
 }
 
 // TryLogs is Logs for callers that are not the test goroutine: it returns the error instead of

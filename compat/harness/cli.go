@@ -21,6 +21,8 @@ type CLIResult struct {
 	Code           int
 }
 
+// secretLike masks any value with the prefix, of any length: a shown result must never carry even a
+// truncated credential (the exact shape is the e2e guard's, see credentialShape).
 var secretLike = regexp.MustCompile(`\b(sk|ll)_[A-Za-z0-9_-]+`)
 
 // String shows a result for failure messages with API tokens (sk_...) and sign-in link codes
@@ -142,10 +144,7 @@ func (s *Stack) PutFile(t *testing.T, path string, content []byte) {
 			t.Fatalf("PutFile: %v", err)
 		}
 	}
-	if s.files == nil {
-		s.files = map[string][]byte{}
-	}
-	s.files[path] = bytes.Clone(content)
+	s.rememberFile(path, content)
 }
 
 // copyInto writes content to path in a container with docker cp (the target needs no shell).

@@ -966,3 +966,106 @@ func TestStartUpstreamEReturnsAWorkingUpstreamAndRegistersItsStop(t *testing.T) 
 	}
 	stops[0]()
 }
+
+// ---- embedder ----
+
+func postEmbeddings(t *testing.T, e *fakes.Embedder, body string) (int, []byte) {
+	t.Helper()
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, e.URL+"/embeddings", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := localClient().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	raw, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, raw
+}
+
+func TestEmbedderAnswersTheOpenAIShapeAndRecordsRequests(t *testing.T) {
+	e := fakes.StartEmbedder(t)
+	status, raw := postEmbeddings(t, e, `{"model":"m1","input":["passage: alpha beta","query: alpha"]}`)
+	if status != 200 {
+		t.Fatalf("status %d: %s", status, raw)
+	}
+	var out struct {
+		Data []struct {
+			Index     int       `json:"index"`
+			Embedding []float64 `json:"embedding"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Data) != 2 || out.Data[0].Index != 0 || out.Data[1].Index != 1 {
+		t.Fatalf("data: %s", raw)
+	}
+	for i, d := range out.Data {
+		if len(d.Embedding) != fakes.EmbedderDimensions {
+			t.Fatalf("vector %d has %d numbers", i, len(d.Embedding))
+		}
+		var sum float64
+		for _, x := range d.Embedding {
+			sum += x * x
+		}
+		if sum < 0.999999 || sum > 1.000001 {
+			t.Fatalf("vector %d has squared length %v", i, sum)
+		}
+	}
+	reqs := e.Requests()
+	if len(reqs) != 1 || reqs[0].Model != "m1" || len(reqs[0].Input) != 2 || reqs[0].Input[0] != "passage: alpha beta" || reqs[0].Status != 200 {
+		t.Fatalf("requests: %+v", reqs)
+	}
+}
+
+func TestEmbeddingOfIsDeterministicAndPrefixBlindAndSimilarForSharedWords(t *testing.T) {
+	a, b := fakes.EmbeddingOf("passage: Create an issue in the tracker"), fakes.EmbeddingOf("query: create an issue in the tracker")
+	if len(a) != fakes.EmbedderDimensions {
+		t.Fatalf("%d dimensions", len(a))
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			t.Fatalf("the prefix or the case changes the vector at %d", i)
+		}
+	}
+	cos := func(x, y []float64) float64 {
+		var s float64
+		for i := range x {
+			s += x[i] * y[i]
+		}
+		return s
+	}
+	related := cos(fakes.EmbeddingOf("query: flux capacitor"), fakes.EmbeddingOf("passage: calibrates the flux capacitor"))
+	unrelated := cos(fakes.EmbeddingOf("query: flux capacitor"), fakes.EmbeddingOf("passage: borscht with beetroot and sour cream"))
+	if related < 0.4 || unrelated > 0.2 {
+		t.Fatalf("cosine of related %.3f, of unrelated %.3f", related, unrelated)
+	}
+	if empty := fakes.EmbeddingOf("query: "); empty[0] != 1 {
+		t.Fatalf("an input without words: %v", empty[:3])
+	}
+}
+
+func TestEmbedderDownAnswers503AndStillRecords(t *testing.T) {
+	e := fakes.StartEmbedder(t)
+	e.SetDown(true)
+	if status, _ := postEmbeddings(t, e, `{"model":"m","input":["passage: x"]}`); status != 503 {
+		t.Fatalf("status %d while down", status)
+	}
+	e.SetDown(false)
+	if status, _ := postEmbeddings(t, e, `{"model":"m","input":["passage: x"]}`); status != 200 {
+		t.Fatalf("status %d after coming back", status)
+	}
+	reqs := e.Requests()
+	if len(reqs) != 2 || reqs[0].Status != 503 || reqs[1].Status != 200 {
+		t.Fatalf("requests: %+v", reqs)
+	}
+	if status, _ := postEmbeddings(t, e, `{not json`); status != 400 {
+		t.Fatalf("a body that is not JSON: %d", status)
+	}
+	if len(e.Requests()) != 2 {
+		t.Fatal("a refused body was recorded as a request")
+	}
+}
