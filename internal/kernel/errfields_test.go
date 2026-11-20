@@ -47,3 +47,22 @@ func TestErrorLabelShape(t *testing.T) {
 		t.Fatal("nil")
 	}
 }
+
+type pgLike struct{ state, msg string }
+
+func (e *pgLike) Error() string    { return e.msg }
+func (e *pgLike) SQLState() string { return e.state }
+
+func TestErrorLabelSQLState(t *testing.T) {
+	if l := kernel.ErrorLabel(&pgLike{"22P02", "m"}); l != "kernel_test.pgLike: 22P02" {
+		t.Fatalf("got %q", l)
+	}
+	joined := errors.Join(errors.New("a"), fmt.Errorf("x: %w", &pgLike{"23505", `dup "hunter2"`}))
+	if l := kernel.ErrorLabel(joined); l != "kernel_test.pgLike: 23505" {
+		t.Fatalf("join: %q", l)
+	}
+	multi := fmt.Errorf("%w; %w", errors.New("a"), &pgLike{"40001", "m"})
+	if l := kernel.ErrorLabel(multi); l != "kernel_test.pgLike: 40001" {
+		t.Fatalf("multi: %q", l)
+	}
+}

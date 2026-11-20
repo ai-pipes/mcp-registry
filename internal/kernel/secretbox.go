@@ -21,7 +21,8 @@ type ResealOutcome struct {
 }
 
 // Reseal moves one stored secret from the old key to the new one. The new key is tried first,
-// so a repeated run is harmless. The plain text never leaves this function.
+// so a repeated run is harmless. The plain text never leaves this function. The signature has
+// no error channel, so a failing to.Seal also yields "unreadable".
 func Reseal(sealed []byte, from, to SecretBox) ResealOutcome {
 	if _, err := to.Open(sealed); err == nil {
 		return ResealOutcome{Kind: ResealCurrent}

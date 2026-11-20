@@ -39,3 +39,23 @@ func TestReseal(t *testing.T) {
 		t.Fatalf("unreadable: %+v", o)
 	}
 }
+
+type failingSeal struct{ fakeBox }
+
+func (failingSeal) Seal(string) ([]byte, error) { return nil, errors.New("seal failed") }
+
+func TestResealSealFailureIsUnreadable(t *testing.T) {
+	sOld, _ := fakeBox{"old"}.Seal("secret")
+	if o := kernel.Reseal(sOld, fakeBox{"old"}, failingSeal{fakeBox{"new"}}); o.Kind != "unreadable" || o.Sealed != nil {
+		t.Fatalf("got %+v", o)
+	}
+}
+
+// The new key is tried first: with from == to == new key, trying from first would reseal.
+func TestResealTriesNewKeyFirst(t *testing.T) {
+	newB := fakeBox{"new"}
+	sNew, _ := newB.Seal("secret")
+	if o := kernel.Reseal(sNew, newB, newB); o.Kind != "current" {
+		t.Fatalf("got %+v", o)
+	}
+}

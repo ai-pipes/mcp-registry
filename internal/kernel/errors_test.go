@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/ai-pipes/mcp-registry/internal/kernel"
 )
@@ -20,9 +21,10 @@ func TestAsDomainErrorThroughWrap(t *testing.T) {
 }
 
 func TestFixedClock(t *testing.T) {
-	var c kernel.Clock = kernel.FixedClock{}
-	if !c.Now().IsZero() {
-		t.Fatal("fixed zero")
+	want := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
+	var c kernel.Clock = kernel.FixedClock{T: want}
+	if !c.Now().Equal(want) {
+		t.Fatalf("got %v", c.Now())
 	}
 	if (kernel.SystemClock{}).Now().IsZero() {
 		t.Fatal("system clock zero")
