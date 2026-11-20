@@ -1,5 +1,15 @@
 // Package outbox is the transactional outbox (platform.outbox): events are appended in the
 // transaction of the change and delivered at least once by a polling worker.
+//
+// Notes for handler authors:
+//   - The payload is decoded from JSON: every number arrives as float64, so ids must travel as
+//     strings.
+//   - Handlers must be idempotent and insensitive to order. A failed event does not hold back
+//     the next one of the same batch, and a handler that runs longer than the 60 s lease can be
+//     delivered concurrently by another replica.
+//   - The context handed to a handler is cancelled by stop. An error returned after that is not
+//     counted as a failed attempt.
+//   - The composition root closes the pool only after the stop function has returned.
 package outbox
 
 import (
@@ -23,7 +33,7 @@ type row struct {
 	id       int64
 	typ      string
 	payload  map[string]any
-	attempts int
+	attempts int32
 }
 
 // Append writes the events in tx, so they commit or roll back with the change. No events, no query.
@@ -124,10 +134,18 @@ func markFailed(ctx context.Context, pool *pgxpool.Pool, id int64, err error) er
 }
 
 // release gives back rows that were claimed but not delivered because the worker stopped: the
-// attempt is not counted and they are due at once.
-func release(ctx context.Context, pool *pgxpool.Pool, ids []int64) error {
-	_, err := pool.Exec(ctx, `update platform.outbox
-		set attempts = attempts - 1, next_attempt_at = now()
-		where id = any($1::bigint[]) and processed_at is null`, ids)
+// attempt is not counted and they are due at once. It is compare-and-set: a row is released
+// only while its attempts still equal the value the claim returned, so a row another replica
+// claimed after the lease ran out is left alone.
+func release(ctx context.Context, pool *pgxpool.Pool, rows []row) error {
+	ids := make([]int64, len(rows))
+	attempts := make([]int32, len(rows))
+	for i, r := range rows {
+		ids[i], attempts[i] = r.id, r.attempts
+	}
+	_, err := pool.Exec(ctx, `update platform.outbox o
+		set attempts = o.attempts - 1, next_attempt_at = now()
+		from unnest($1::bigint[], $2::int[]) as c(id, attempts)
+		where o.id = c.id and o.attempts = c.attempts and o.processed_at is null`, ids, attempts)
 	return err
 }

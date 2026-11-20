@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"io"
 	"strings"
 	"testing"
 	"time"
@@ -107,18 +106,30 @@ func TestAnErrorDoesNotStopTheSchedule(t *testing.T) {
 	}
 }
 
-func TestAPanicIsAFailedRun(t *testing.T) {
+func panicHere() { panic("leaky-panic-value") }
+
+func TestAPanicIsAFailedRunAndTheRecordNamesTheFunctionNotTheValue(t *testing.T) {
 	timers := newFakeTimers()
+	var buf bytes.Buffer
 	runs := make(chan struct{}, 4)
-	stop := start(logging.New("silent", io.Discard), []Job{{Name: "p", Every: time.Hour, Run: func(context.Context) error {
+	stop := start(logging.New("info", &buf), []Job{{Name: "p", Every: time.Hour, Run: func(context.Context) error {
 		runs <- struct{}{}
-		panic("boom")
+		panicHere()
+		return nil
 	}}}, timers.newTimer)
 	recv(t, runs, "first run")
 	timers.next(t).fire <- time.Time{}
 	recv(t, runs, "run after the panic")
 	if err := stop(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "scheduler: job panicked") || !strings.Contains(out, "scheduler.panicHere") ||
+		!strings.Contains(out, "scheduler_test.go:") {
+		t.Fatalf("log: %s", out)
+	}
+	if strings.Contains(out, "leaky-panic-value") || strings.Contains(out, "/Users/") {
+		t.Fatalf("log leaks: %s", out)
 	}
 }
 

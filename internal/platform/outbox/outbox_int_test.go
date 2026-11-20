@@ -6,6 +6,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -17,6 +19,7 @@ import (
 	"github.com/ai-pipes/mcp-registry/internal/platform/logging"
 	"github.com/ai-pipes/mcp-registry/internal/platform/migrate"
 	"github.com/ai-pipes/mcp-registry/internal/platform/pgtest"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -205,6 +208,10 @@ func TestFailureBacksOffAndStoresOnlyALabel(t *testing.T) {
 	pool := fresh(t)
 	ctx := context.Background()
 	appendEvents(t, pool, ev("t", 1))
+	// The claim makes it the third attempt: the wait is 2^3 = 8 s (4 or 16 would be a wrong exponent).
+	if _, err := pool.Exec(ctx, `update platform.outbox set attempts = 2`); err != nil {
+		t.Fatal(err)
+	}
 	var buf bytes.Buffer
 	timers := newFakeTimers()
 	stop := startWorker(WorkerOptions{
@@ -224,17 +231,17 @@ func TestFailureBacksOffAndStoresOnlyALabel(t *testing.T) {
 		processed_at is not null from platform.outbox`).Scan(&attempts, &lastErr, &delay, &processed); err != nil {
 		t.Fatal(err)
 	}
-	if attempts != 1 || processed || lastErr != "errors.errorString" {
+	if attempts != 3 || processed || lastErr != "errors.errorString" {
 		t.Fatalf("attempts=%d processed=%v last_error=%q", attempts, processed, lastErr)
 	}
-	if delay < 0.5 || delay > 2.5 { // 2^1 seconds
+	if delay < 7 || delay > 8.5 {
 		t.Fatalf("next attempt in %vs", delay)
 	}
 	out := buf.String()
 	if strings.Contains(out, "secret-value-123") || strings.Contains(lastErr, "secret") {
 		t.Fatalf("message leaked: %s", out)
 	}
-	for _, want := range []string{`"msg":"outbox: handler failed, will retry"`, `"outboxId":"`, `"type":"t"`, `"attempts":1`} {
+	for _, want := range []string{`"msg":"outbox: handler failed, will retry"`, `"outboxId":"`, `"type":"t"`, `"attempts":3`} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("log lacks %s: %s", want, out)
 		}
@@ -514,5 +521,206 @@ func TestSweepRunsOnFirstPassThenAtMostOncePerEvery(t *testing.T) {
 	timers.passDone(t)
 	if runs.Load() != 2 {
 		t.Fatalf("sweep after Every: %d", runs.Load())
+	}
+}
+
+func TestBackoffIsCappedAt300Seconds(t *testing.T) {
+	pool := fresh(t)
+	ctx := context.Background()
+	appendEvents(t, pool, ev("t", 1))
+	if _, err := pool.Exec(ctx, `update platform.outbox set attempts = 8`); err != nil { // claim: 9, 2^9 > 300
+		t.Fatal(err)
+	}
+	timers := newFakeTimers()
+	stop := startWorker(WorkerOptions{
+		Pool: pool, Interval: time.Hour, Logger: logging.New("silent", io.Discard),
+		Handlers: map[string]Handler{"t": func(context.Context, map[string]any) error { return errors.New("x") }},
+	}, timers.clock())
+	defer stopWorker(t, stop)
+	timers.passDone(t)
+	var delay float64
+	if err := pool.QueryRow(ctx, `select extract(epoch from next_attempt_at - now()) from platform.outbox`).Scan(&delay); err != nil {
+		t.Fatal(err)
+	}
+	if delay < 295 || delay > 301 {
+		t.Fatalf("next attempt in %vs, want about 300", delay)
+	}
+}
+
+func TestClaimSkipsRowsLockedByAnotherTransaction(t *testing.T) {
+	pool := fresh(t)
+	ctx, cancel := context.WithTimeout(context.Background(), wait)
+	defer cancel()
+	var evs []kernel.Event
+	for i := 0; i < 30; i++ {
+		evs = append(evs, ev("t", i))
+	}
+	appendEvents(t, pool, evs...)
+	holder, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = holder.Rollback(ctx) }()
+	locked, err := holder.Query(ctx, `select id from platform.outbox order by id limit 10 for update`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lockedIDs, err := pgx.CollectRows(locked, pgx.RowTo[int64])
+	if err != nil || len(lockedIDs) != 10 {
+		t.Fatalf("locked %d rows, err=%v", len(lockedIDs), err)
+	}
+	// With the holder still open, a plain wait would block until the context ends.
+	rows, err := claim(ctx, pool, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 20 {
+		t.Fatalf("claimed %d rows", len(rows))
+	}
+	for _, r := range rows {
+		if slices.Contains(lockedIDs, r.id) {
+			t.Fatalf("claimed locked row %d", r.id)
+		}
+	}
+}
+
+func TestReleaseIsCompareAndSet(t *testing.T) {
+	pool := fresh(t)
+	ctx := context.Background()
+	appendEvents(t, pool, ev("t", 1), ev("t", 2))
+	rows, err := claim(ctx, pool, 20)
+	if err != nil || len(rows) != 2 {
+		t.Fatalf("rows=%d err=%v", len(rows), err)
+	}
+	// Another replica claims the first row after its lease ran out.
+	if _, err := pool.Exec(ctx, `update platform.outbox set attempts = attempts + 1,
+		next_attempt_at = now() + interval '60 seconds' where id = $1`, rows[0].id); err != nil {
+		t.Fatal(err)
+	}
+	if err := release(ctx, pool, rows); err != nil {
+		t.Fatal(err)
+	}
+	attempts := map[int64]int{}
+	r, err := pool.Query(ctx, `select id, attempts from platform.outbox`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	for r.Next() {
+		var id int64
+		var a int
+		if err := r.Scan(&id, &a); err != nil {
+			t.Fatal(err)
+		}
+		attempts[id] = a
+	}
+	if attempts[rows[0].id] != 2 || attempts[rows[1].id] != 0 {
+		t.Fatalf("attempts after release = %v", attempts)
+	}
+}
+
+func TestHandlerFailingBecauseOfStopIsNotAFailedAttempt(t *testing.T) {
+	pool := fresh(t)
+	ctx := context.Background()
+	appendEvents(t, pool, ev("t", 1))
+	var buf bytes.Buffer
+	timers := newFakeTimers()
+	started := make(chan struct{})
+	stop := startWorker(WorkerOptions{
+		Pool: pool, Interval: time.Hour, Logger: logging.New("info", &buf),
+		Handlers: map[string]Handler{"t": func(hctx context.Context, _ map[string]any) error {
+			close(started)
+			<-hctx.Done()
+			return hctx.Err()
+		}},
+	}, timers.clock())
+	recv(t, started, "handler start")
+	stopWorker(t, stop)
+	var attempts int
+	var lastErr *string
+	var processed bool
+	if err := pool.QueryRow(ctx, `select attempts, last_error, processed_at is not null from platform.outbox`).Scan(&attempts, &lastErr, &processed); err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 0 || lastErr != nil || processed {
+		t.Fatalf("attempts=%d last_error=%v processed=%v", attempts, lastErr, processed)
+	}
+	if strings.Contains(buf.String(), "handler failed") {
+		t.Fatalf("log: %s", buf.String())
+	}
+}
+
+func TestSlowSuccessfulHandlerIsStillMarkedProcessed(t *testing.T) {
+	pool := fresh(t)
+	ctx := context.Background()
+	appendEvents(t, pool, ev("t", 1))
+	timers := newFakeTimers()
+	clk := timers.clock()
+	clk.outcomeTimeout = 150 * time.Millisecond
+	stop := startWorker(WorkerOptions{
+		Pool: pool, Interval: time.Hour, Logger: logging.New("silent", io.Discard),
+		Handlers: map[string]Handler{"t": func(context.Context, map[string]any) error {
+			<-time.After(3 * clk.outcomeTimeout) // the handler alone outlasts the outcome timeout
+			return nil
+		}},
+	}, clk)
+	defer stopWorker(t, stop)
+	next := timers.passDone(t)
+	if _, err := pool.Exec(ctx, `update platform.outbox set next_attempt_at = now() - interval '1 hour'`); err != nil {
+		t.Fatal(err)
+	}
+	next <- time.Time{}
+	timers.passDone(t)
+	var processed bool
+	var attempts int
+	if err := pool.QueryRow(ctx, `select processed_at is not null, attempts from platform.outbox`).Scan(&processed, &attempts); err != nil {
+		t.Fatal(err)
+	}
+	if !processed || attempts != 1 {
+		t.Fatalf("processed=%v attempts=%d (redelivered or not recorded)", processed, attempts)
+	}
+}
+
+func panicHere() { panic("leaky-panic-value") }
+
+func TestPanicRecordNamesTheFunctionNotTheValue(t *testing.T) {
+	pool := fresh(t)
+	appendEvents(t, pool, ev("p", 1))
+	var buf bytes.Buffer
+	timers := newFakeTimers()
+	stop := startWorker(WorkerOptions{
+		Pool: pool, Interval: time.Hour, Logger: logging.New("info", &buf),
+		Handlers: map[string]Handler{"p": func(context.Context, map[string]any) error { panicHere(); return nil }},
+	}, timers.clock())
+	defer stopWorker(t, stop)
+	timers.passDone(t)
+	out := buf.String()
+	if !strings.Contains(out, `"msg":"outbox: handler panicked"`) || !strings.Contains(out, "outbox.panicHere") ||
+		!strings.Contains(out, "outbox_int_test.go:") {
+		t.Fatalf("log: %s", out)
+	}
+	if strings.Contains(out, "leaky-panic-value") || strings.Contains(out, "/Users/") {
+		t.Fatalf("log leaks: %s", out)
+	}
+}
+
+func TestSweepRunsAfterTheDeliveriesOfThePass(t *testing.T) {
+	pool := fresh(t)
+	appendEvents(t, pool, ev("t", 1), ev("t", 2))
+	timers := newFakeTimers()
+	var delivered atomic.Int32
+	var seenAtSweep atomic.Int32
+	stop := startWorker(WorkerOptions{
+		Pool: pool, Interval: time.Hour, Logger: logging.New("silent", io.Discard),
+		Handlers: map[string]Handler{"t": func(context.Context, map[string]any) error { delivered.Add(1); return nil }},
+		Sweep: &Sweep{Every: time.Hour, Run: func(context.Context) error {
+			seenAtSweep.Store(delivered.Load())
+			return nil
+		}},
+	}, timers.clock())
+	defer stopWorker(t, stop)
+	timers.passDone(t)
+	if seenAtSweep.Load() != 2 {
+		t.Fatalf("sweep saw %d deliveries, want 2", seenAtSweep.Load())
 	}
 }

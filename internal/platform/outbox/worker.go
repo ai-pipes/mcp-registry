@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"path/filepath"
+	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -15,9 +18,10 @@ import (
 const (
 	batchSize       = 20
 	defaultInterval = time.Second
-	// bookkeepingTimeout bounds the writes that record a delivery's outcome; they must survive
-	// the worker's own cancellation, otherwise a delivered event would be delivered again.
-	bookkeepingTimeout = 10 * time.Second
+	// defaultOutcomeTimeout bounds each write that records a delivery's outcome; it starts after
+	// the handler returned and survives the worker's own cancellation, otherwise a delivered
+	// event would be delivered again.
+	defaultOutcomeTimeout = 10 * time.Second
 )
 
 // Handler handles one event. It must be idempotent: delivery is at least once.
@@ -39,10 +43,12 @@ type WorkerOptions struct {
 	Sweep    *Sweep
 }
 
-// clock is the time seam of the worker; tests replace it.
+// clock holds the time seams of the worker; tests replace them. A zero outcomeTimeout means
+// defaultOutcomeTimeout.
 type clock struct {
-	now      func() time.Time
-	newTimer func(d time.Duration) (<-chan time.Time, func())
+	now            func() time.Time
+	newTimer       func(d time.Duration) (<-chan time.Time, func())
+	outcomeTimeout time.Duration
 }
 
 func realClock() clock {
@@ -55,11 +61,48 @@ func realClock() clock {
 	}
 }
 
-// handlerPanic is the error a panicking handler turns into; the panic value is dropped (it can
-// quote values).
-type handlerPanic struct{}
+// handlerPanic is the error a panicking handler turns into. The panic value is dropped (it can
+// quote values); frames name the call stack as "function file:line".
+type handlerPanic struct{ frames []string }
 
 func (handlerPanic) Error() string { return "handler panicked" }
+
+const maxPanicFrames = 16
+
+// panicFrames describes the stack of the panicking goroutine, without arguments and without the
+// runtime's own frames. Call it from the deferred recover function.
+func panicFrames() []string {
+	pcs := make([]uintptr, 64)
+	n := runtime.Callers(3, pcs)
+	it := runtime.CallersFrames(pcs[:n])
+	var out []string
+	for len(out) < maxPanicFrames {
+		f, more := it.Next()
+		if f.Function != "" && !strings.HasPrefix(f.Function, "runtime.") {
+			out = append(out, f.Function+" "+shortPath(f.File)+":"+strconv.Itoa(f.Line))
+		}
+		if !more {
+			break
+		}
+	}
+	return out
+}
+
+// shortPath drops the build directory: from "internal/" or "apps/" on when present, else the
+// last two elements.
+func shortPath(file string) string {
+	for _, marker := range []string{"/internal/", "/apps/", "/cmd/"} {
+		if i := strings.LastIndex(file, marker); i >= 0 {
+			return file[i+1:]
+		}
+	}
+	file = filepath.ToSlash(file)
+	parts := strings.Split(file, "/")
+	if len(parts) > 2 {
+		parts = parts[len(parts)-2:]
+	}
+	return strings.Join(parts, "/")
+}
 
 // StartWorker polls the outbox every Interval (first pass at once) and delivers events to
 // handlers one at a time, in id order. A failing handler leaves the row for retry with backoff
@@ -76,6 +119,9 @@ func startWorker(o WorkerOptions, clk clock) func(ctx context.Context) error {
 	}
 	if o.Interval <= 0 {
 		o.Interval = defaultInterval
+	}
+	if clk.outcomeTimeout <= 0 {
+		clk.outcomeTimeout = defaultOutcomeTimeout
 	}
 	w := &worker{o: o, clk: clk}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -134,48 +180,70 @@ func (w *worker) tick(ctx context.Context) {
 	// Sequential: events of one aggregate are applied in order, and each handler is short.
 	for i, r := range rows {
 		if ctx.Err() != nil {
-			w.releaseRest(rows[i:])
+			w.release(ctx, rows[i:]...)
 			return
 		}
 		w.deliver(ctx, r)
 	}
 }
 
-func (w *worker) releaseRest(rows []row) {
-	ids := make([]int64, len(rows))
-	for i, r := range rows {
-		ids[i] = r.id
-	}
-	bctx, cancel := context.WithTimeout(context.Background(), bookkeepingTimeout)
+// release gives back rows this worker claimed but did not deliver; see release in outbox.go.
+func (w *worker) release(ctx context.Context, rows ...row) {
+	octx, cancel := w.outcomeCtx(ctx)
 	defer cancel()
-	if err := release(bctx, w.o.Pool, ids); err != nil {
+	if err := release(octx, w.o.Pool, rows); err != nil {
 		w.o.Logger.Error("outbox: tick failed", logging.ErrAttr(err))
 	}
 }
 
+// outcomeCtx is the context of one outcome write. Call it after the handler returned, so the
+// deadline does not run while the handler works.
+func (w *worker) outcomeCtx(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), w.clk.outcomeTimeout)
+}
+
+func (w *worker) markProcessed(ctx context.Context, id int64) {
+	octx, cancel := w.outcomeCtx(ctx)
+	defer cancel()
+	w.bookkeep(markProcessed(octx, w.o.Pool, id))
+}
+
+func (w *worker) markFailed(ctx context.Context, id int64, err error) {
+	octx, cancel := w.outcomeCtx(ctx)
+	defer cancel()
+	w.bookkeep(markFailed(octx, w.o.Pool, id, err))
+}
+
 func (w *worker) deliver(ctx context.Context, r row) {
 	id := strconv.FormatInt(r.id, 10)
-	bctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), bookkeepingTimeout)
-	defer cancel()
-
 	h, ok := w.o.Handlers[r.typ]
 	if !ok {
 		w.o.Logger.Warn("outbox: no handler, skipping", "outboxId", id, "type", r.typ)
-		w.bookkeep(markProcessed(bctx, w.o.Pool, r.id))
+		w.markProcessed(ctx, r.id)
 		return
 	}
-	if err := w.call(ctx, h, r); err != nil {
-		// Neither the log nor the row's last_error gets the message: it can quote values.
-		attrs := []any{"outboxId", id, "type", r.typ, "attempts", r.attempts, logging.ErrAttr(err)}
-		if r.attempts >= MaxAttempts {
-			w.o.Logger.Error("outbox: handler failed, giving up", attrs...)
-		} else {
-			w.o.Logger.Warn("outbox: handler failed, will retry", attrs...)
-		}
-		w.bookkeep(markFailed(bctx, w.o.Pool, r.id, err))
+	err := w.call(ctx, h, r)
+	if err == nil {
+		w.markProcessed(ctx, r.id)
 		return
 	}
-	w.bookkeep(markProcessed(bctx, w.o.Pool, r.id))
+	if ctx.Err() != nil {
+		// The worker was stopped while the handler ran: not a failed attempt.
+		w.release(ctx, r)
+		return
+	}
+	// Neither the log nor the row's last_error gets the message: it can quote values.
+	var hp handlerPanic
+	if errors.As(err, &hp) {
+		w.o.Logger.Error("outbox: handler panicked", "outboxId", id, "type", r.typ, "stack", hp.frames)
+	}
+	attrs := []any{"outboxId", id, "type", r.typ, "attempts", r.attempts, logging.ErrAttr(err)}
+	if r.attempts >= MaxAttempts {
+		w.o.Logger.Error("outbox: handler failed, giving up", attrs...)
+	} else {
+		w.o.Logger.Warn("outbox: handler failed, will retry", attrs...)
+	}
+	w.markFailed(ctx, r.id, err)
 }
 
 func (w *worker) bookkeep(err error) {
@@ -187,7 +255,7 @@ func (w *worker) bookkeep(err error) {
 func (w *worker) call(ctx context.Context, h Handler, r row) (err error) {
 	defer func() {
 		if recover() != nil {
-			err = handlerPanic{}
+			err = handlerPanic{frames: panicFrames()}
 		}
 	}()
 	return h(ctx, r.payload)
@@ -204,6 +272,10 @@ func (w *worker) maybeSweep(ctx context.Context) {
 	}
 	w.swept, w.lastSweep = true, now
 	if err := w.runSweep(ctx, s); err != nil && !errors.Is(err, context.Canceled) {
+		var hp handlerPanic
+		if errors.As(err, &hp) {
+			w.o.Logger.Error("outbox: sweep panicked", "stack", hp.frames)
+		}
 		w.o.Logger.Warn("outbox: sweep failed", logging.ErrAttr(err))
 	}
 }
@@ -211,7 +283,7 @@ func (w *worker) maybeSweep(ctx context.Context) {
 func (w *worker) runSweep(ctx context.Context, s *Sweep) (err error) {
 	defer func() {
 		if recover() != nil {
-			err = handlerPanic{}
+			err = handlerPanic{frames: panicFrames()}
 		}
 	}()
 	return s.Run(ctx)

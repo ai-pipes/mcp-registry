@@ -1,9 +1,18 @@
 // Package scheduler runs periodic jobs in the background.
+//
+// A job either logs its own failure and returns nil, or returns the error and relies on the
+// "scheduler: job failed" record, never both. The composition root closes the pool only after
+// the stop function has returned.
 package scheduler
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+	"path/filepath"
+	"runtime"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -68,6 +77,10 @@ func runJob(ctx context.Context, logger *slog.Logger, j Job, newTimer newTimerFu
 			return
 		}
 		if err := run(ctx, j); err != nil && ctx.Err() == nil {
+			var jp jobPanic
+			if errors.As(err, &jp) {
+				logger.Error("scheduler: job panicked", "job", j.Name, "stack", jp.frames)
+			}
 			logger.Error("scheduler: job failed", "job", j.Name, logging.ErrAttr(err))
 		}
 		if j.Every <= 0 || ctx.Err() != nil {
@@ -83,14 +96,52 @@ func runJob(ctx context.Context, logger *slog.Logger, j Job, newTimer newTimerFu
 	}
 }
 
-type jobPanic struct{}
+// jobPanic is the error a panicking job turns into. The panic value is dropped (it can quote
+// values); frames name the call stack as "function file:line".
+type jobPanic struct{ frames []string }
 
 func (jobPanic) Error() string { return "job panicked" }
+
+const maxPanicFrames = 16
+
+// panicFrames describes the stack of the panicking goroutine, without arguments and without the
+// runtime's own frames. Call it from the deferred recover function.
+func panicFrames() []string {
+	pcs := make([]uintptr, 64)
+	n := runtime.Callers(3, pcs)
+	it := runtime.CallersFrames(pcs[:n])
+	var out []string
+	for len(out) < maxPanicFrames {
+		f, more := it.Next()
+		if f.Function != "" && !strings.HasPrefix(f.Function, "runtime.") {
+			out = append(out, f.Function+" "+shortPath(f.File)+":"+strconv.Itoa(f.Line))
+		}
+		if !more {
+			break
+		}
+	}
+	return out
+}
+
+// shortPath drops the build directory: from "internal/" or "apps/" on when present, else the
+// last two elements.
+func shortPath(file string) string {
+	for _, marker := range []string{"/internal/", "/apps/", "/cmd/"} {
+		if i := strings.LastIndex(file, marker); i >= 0 {
+			return file[i+1:]
+		}
+	}
+	parts := strings.Split(filepath.ToSlash(file), "/")
+	if len(parts) > 2 {
+		parts = parts[len(parts)-2:]
+	}
+	return strings.Join(parts, "/")
+}
 
 func run(ctx context.Context, j Job) (err error) {
 	defer func() {
 		if recover() != nil {
-			err = jobPanic{}
+			err = jobPanic{frames: panicFrames()}
 		}
 	}()
 	return j.Run(ctx)
