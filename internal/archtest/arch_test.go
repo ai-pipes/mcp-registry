@@ -162,6 +162,21 @@ func TestEveryRuleHasAFailingFixture(t *testing.T) {
 	}
 }
 
+// TestInjectingAnAdapterIntoAPortIsAllowed pins allow.deepScan: false in .go-arch-lint.yml. The
+// deep scan reads a concrete argument passed to an interface parameter as a dependency of the
+// callee's package, which forbids dependency inversion itself. The fixture does exactly that
+// (platform -> app.Use(infra adapter); app -> kernel function taking error with a domain error)
+// and must raise nothing.
+func TestInjectingAnAdapterIntoAPortIsAllowed(t *testing.T) {
+	rep, code := archLint(t, fixtureProject(t, "adapter-into-port"))
+	if code != 0 {
+		t.Fatalf("injecting an adapter into a port was reported (is allow.deepScan back on?): %+v", rep.Payload)
+	}
+	if n := len(rep.Payload.ArchWarningsDeps) + len(rep.Payload.ArchWarningsNotMatched) + len(rep.Payload.ArchWarningsDeepScan) + len(rep.Payload.ExecutionWarnings); n != 0 {
+		t.Fatalf("unexpected warnings: %+v", rep.Payload)
+	}
+}
+
 func TestRepositoryPassesArchLint(t *testing.T) {
 	rep, code := archLint(t, repoRoot)
 	if code != 0 {
