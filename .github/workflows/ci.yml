@@ -134,9 +134,12 @@ jobs:
         with:
           node-version: 22
       - run: make compat-image-ts
+      # The upgrade scenario starts from the published 1.0.0 image: a real in-place upgrade, not a restart.
+      - run: docker pull ghcr.io/ai-pipes/mcp-registry:1.0.0
       - run: make compat
         env:
           COMPAT_LOG_DIR: ${{ runner.temp }}/compat-logs
+          COMPAT_UPGRADE_FROM: ghcr.io/ai-pipes/mcp-registry:1.0.0
       # The harness writes the app container's log of every failed stack (secrets removed) there.
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
