@@ -1,8 +1,5 @@
 const LOGIN_STATE_TTL_MS = 10 * 60_000;
 
-/** Pending login attempts (`identity.oidc_pending`) kept at most; past it the oldest are deleted. */
-export const PENDING_LOGIN_CAP = 10_000;
-
 /**
  * Failed code exchanges per client IP that are written to the audit log: the ones past this many
  * in a window are still refused, just not recorded, so an anonymous caller cannot grow the log.

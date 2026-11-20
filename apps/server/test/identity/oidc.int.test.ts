@@ -639,22 +639,19 @@ const states = async () => {
   return rows.map((r) => r.state);
 };
 
-describe('PgPendingLoginRepository bounds the table', () => {
-  it('deletes the oldest rows when a new one would exceed the cap', async () => {
-    const repo = new PgPendingLoginRepository(pg.sql, 3);
+describe('PgPendingLoginRepository keeps the table free of expired rows', () => {
+  it('never removes an unexpired row of another client, however many logins start', async () => {
+    const repo = new PgPendingLoginRepository(pg.sql);
     const base = Date.now() + 600_000;
-    await repo.insert(pending('s1', new Date(base + 1000)));
-    await repo.insert(pending('s2', new Date(base + 2000)));
-    await repo.insert(pending('s3', new Date(base + 3000)));
-    await repo.insert(pending('s4', new Date(base + 4000)));
-    await repo.insert(pending('s5', new Date(base + 5000)));
-    expect(await states()).toEqual(['s3', 's4', 's5']);
-    expect(await repo.consume('s1')).toBeNull();
-    expect((await repo.consume('s5'))?.state).toBe('s5');
+    await Promise.all(
+      Array.from({ length: 60 }, (_, i) => repo.insert(pending(`s${i}`, new Date(base + i)))),
+    );
+    expect(await states()).toHaveLength(60);
+    expect((await repo.consume('s0'))?.state).toBe('s0');
   });
 
   it('drops expired rows on the next insert, not an hour later', async () => {
-    const repo = new PgPendingLoginRepository(pg.sql, 100);
+    const repo = new PgPendingLoginRepository(pg.sql);
     await repo.insert(pending('old', new Date(Date.now() - 60_000)));
     await repo.insert(pending('new', new Date(Date.now() + 600_000)));
     expect(await states()).toEqual(['new']);
