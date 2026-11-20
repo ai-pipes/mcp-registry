@@ -2,6 +2,21 @@
 
 All notable changes to this project are documented in this file. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses [semantic versioning](https://semver.org). What stays stable within 1.x is described in the README, section "Versioning and upgrades".
 
+## [1.0.1] - Unreleased
+
+Patch release, no migrations. After you change a server's address or OAuth endpoints you enter its secret again (see "Security").
+
+### Fixed
+
+- The audit page (`GET /api/audit`) sorted entries by the text of their id, so entry 99 appeared above entry 100 and paging with `before` skipped entries. It now sorts by the numeric id, newest first.
+- The "Done" button of the new-token dialog did nothing when it was clicked right after the token was created, while the token list was still refreshing. It closes the dialog at once; the token is still shown only once.
+- `GET /` is answered with `Cache-Control: no-cache`, like the other pages of the web UI, so a browser does not keep an old page after an upgrade. Files under `/assets/` stay cached for a year.
+
+### Security
+
+- A server's stored secret is cleared when the place it is sent to changes, so an edit can no longer make the gateway send it to a new address. For a `shared_secret` server that is the upstream URL; for an `oauth_user` server (the secret is the OAuth client secret) the token URL, the revoke URL or the client ID. Changing the authorization method already cleared it. After such a change enter the secret again in the form (the form warns before saving and reminds afterwards) or with `PUT /api/servers/:slug/secret`; until then synchronisation of a `shared_secret` server sends no secret. Other edits keep the secret.
+- Anonymous requests can no longer fill the audit log and the pending-login table. Failed sign-in callbacks from one client IP are written to the audit log only for the first 20 per minute (the sign-in itself is still checked, and a valid one always succeeds; starting a sign-in is not limited). Pending sign-ins now expire right after their 10 minutes and the table keeps at most 10,000 of them, deleting the oldest. Behind a reverse proxy without `TRUST_PROXY` all callers share one IP, so audit records of failed sign-ins can stop after 20 in a minute.
+
 ## [1.0.0] - 2026-11-17
 
 Upgrading from 0.1.0: back up the database and `SECRETS_KEY`, replace the image, start. Two migrations (`0009`, `0010`) run at startup. The first start records a check value for the configured `SECRETS_KEY` (see "Added"), so start with the key you have been using. If you set `PGSSLMODE`, read the entry under "Changed".
