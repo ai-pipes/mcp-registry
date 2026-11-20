@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented in this file. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses [semantic versioning](https://semver.org). What stays stable within 1.x is described in the README, section "Versioning and upgrades".
 
-## [1.0.1] - Unreleased
+## [1.0.1] - 2026-11-20
 
 Patch release, no migrations. After you change a server's address or OAuth endpoints you enter its secret again (see "Security").
 
@@ -58,5 +58,6 @@ Initial public release.
 - Local embeddings (`multilingual-e5-small`, baked into the image) or an OpenAI-compatible embeddings API.
 - Call log and audit log of admin actions; strict CSP web UI.
 
+[1.0.1]: https://github.com/ai-pipes/mcp-registry/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/ai-pipes/mcp-registry/compare/v0.1.0...v1.0.0
 [0.1.0]: https://github.com/ai-pipes/mcp-registry/releases/tag/v0.1.0
