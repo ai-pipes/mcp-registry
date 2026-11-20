@@ -28,7 +28,7 @@ export function auditRoutes(sql: Sql, identity: IdentityDeps) {
       const rows = await sql<Row[]>`select id::text as id, at, actor_id, action, target, meta
         from platform.audit_log
         where true ${q.before === undefined ? sql`` : sql`and id < ${q.before}::bigint`}
-        order by id desc
+        order by audit_log.id desc
         limit ${q.limit}`;
       return c.json(
         AuditList.parse(

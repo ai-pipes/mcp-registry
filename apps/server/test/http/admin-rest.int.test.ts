@@ -432,4 +432,20 @@ describe('GET /api/audit', () => {
     expect(rest.every((a) => Number(a.id) < Number(first[0]?.id))).toBe(true);
     expect(rest.length).toBeGreaterThan(0);
   });
+
+  it('orders by numeric id and pages every row exactly once across digit counts', async () => {
+    await pg.sql`insert into platform.audit_log (id, action) select g, 'test.row' from generate_series(1, 250) g`;
+    const pageFrom = async (before?: string): Promise<number[]> => {
+      const query = before === undefined ? '?limit=37' : `?limit=37&before=${before}`;
+      const page = AuditList.parse(await (await call(admin, 'GET', `/api/audit${query}`)).json());
+      const last = page[page.length - 1];
+      if (last === undefined) return [];
+      return [...page.map((a) => Number(a.id)), ...(await pageFrom(last.id))];
+    };
+    const seen = await pageFrom();
+    const expected = Array.from({ length: 250 }, (_, i) => 250 - i);
+    expect(seen.filter((id) => id <= 250)).toEqual(expected);
+    expect(new Set(seen).size).toBe(seen.length);
+    expect(seen).toEqual(seen.toSorted((x, y) => y - x));
+  });
 });
