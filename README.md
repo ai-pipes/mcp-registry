@@ -286,7 +286,7 @@ Upstreams must speak **Streamable HTTP**. Each server has a `slug` (kebab-case, 
 | `pat_user`      | Each person stores their own personal access token in **Connections**.                                            |
 | `oauth_user`    | Each person connects their account via OAuth 2.0 (Authorization Code + PKCE); tokens are refreshed automatically. |
 
-For all modes except `none` you set a header name and a template containing `{secret}`, e.g. `Authorization` / `Bearer {secret}`. Secrets in the form are write-only.
+For all modes except `none` you set a header name and a template containing `{secret}`, e.g. `Authorization` / `Bearer {secret}`. Secrets in the form are write-only. Changing the address a secret is sent to clears the stored secret, so it is never sent anywhere new: the URL of a `shared_secret` server, or the token URL, revoke URL or client ID of an OAuth server (changing the mode does too). The form warns before saving; enter the secret again.
 
 **Order matters:** add the server, then connect your own account in **Connections**, then press **Sync**. For `oauth_user` and `pat_user` servers the first sync right after creation reports that an admin connection is needed; that is expected. Scheduled syncs use the connection of the last admin who synced the server successfully; if that person loses the admin role, another admin with a connection must press Sync once.
 

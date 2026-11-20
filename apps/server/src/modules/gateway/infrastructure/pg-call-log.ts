@@ -27,6 +27,18 @@ function toEntry(r: CallRow): CallLogEntry & { id: string } {
   };
 }
 
+/**
+ * The paging cursor: the pair (start, id) when both are given, else the start alone (strictly
+ * older). `calls_started_at_idx` serves the range on the start time; ids only break ties.
+ */
+function cursor(sql: Sql, f: CallLogFilter) {
+  if (f.before === undefined) return sql``;
+  if (f.beforeId === undefined) return sql`and started_at < ${f.before}`;
+  // `started_at <= before` is implied by the pair; stated alone it is what the index can range on.
+  return sql`and started_at <= ${f.before}
+    and (started_at, gateway.calls.id) < (${f.before}, ${f.beforeId}::bigint)`;
+}
+
 /** `gateway.calls`. Arguments and results have no column: they cannot end up here. */
 export class PgCallLog implements CallLog {
   constructor(private readonly sql: Sql) {}
@@ -47,8 +59,8 @@ export class PgCallLog implements CallLog {
         ${f.userId === undefined ? sql`` : sql`and user_id = ${f.userId}`}
         ${f.server === undefined ? sql`` : sql`and server = ${f.server}`}
         ${f.outcome === undefined ? sql`` : sql`and outcome = ${f.outcome}`}
-        ${f.before === undefined ? sql`` : sql`and started_at < ${f.before}`}
-      order by started_at desc, id desc
+        ${cursor(sql, f)}
+      order by started_at desc, gateway.calls.id desc
       limit ${f.limit}`;
     return rows.map(toEntry);
   }

@@ -16,14 +16,27 @@ export type CallOutcome = z.infer<typeof CallOutcome>;
 export const DEFAULT_CALLS_LIMIT = 100;
 export const MAX_CALLS_LIMIT = 500;
 
-/** `GET /api/calls` query; newest first, `before` pages back in time. */
-export const CallsQuery = z.object({
-  user: z.uuid().optional(),
-  server: z.string().min(1).max(200).optional(),
-  outcome: CallOutcome.optional(),
-  before: z.iso.datetime({ offset: true }).optional(),
-  limit: z.coerce.number().int().min(1).max(MAX_CALLS_LIMIT).default(DEFAULT_CALLS_LIMIT),
-});
+/**
+ * `GET /api/calls` query; newest first (start time, then numeric id). `before` pages back in time;
+ * with `beforeId` (the id of the last row of the previous page) the cursor is the pair, so rows
+ * that share the boundary timestamp are not skipped. `beforeId` needs `before`.
+ */
+export const CallsQuery = z
+  .object({
+    user: z.uuid().optional(),
+    server: z.string().min(1).max(200).optional(),
+    outcome: CallOutcome.optional(),
+    before: z.iso.datetime({ offset: true }).optional(),
+    beforeId: z
+      .string()
+      .regex(/^\d{1,18}$/)
+      .optional(),
+    limit: z.coerce.number().int().min(1).max(MAX_CALLS_LIMIT).default(DEFAULT_CALLS_LIMIT),
+  })
+  .refine((q) => q.beforeId === undefined || q.before !== undefined, {
+    message: 'beforeId needs before',
+    path: ['beforeId'],
+  });
 export type CallsQuery = z.infer<typeof CallsQuery>;
 
 /** One row of the call log: who, what, when, how it ended. Never arguments or results. */

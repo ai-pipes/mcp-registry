@@ -278,6 +278,46 @@ describe('secrets never leave', () => {
 });
 
 describe('PUT /api/servers/:slug', () => {
+  it('changing the upstream URL of a shared_secret server clears the secret; a sync never sends it to the new address', async () => {
+    await create();
+    const moved = await startFakeUpstream([{ name: 'other_tool' }]);
+    try {
+      const put = (over: Record<string, unknown>) =>
+        call(admin, 'PUT', '/api/servers/gitea', {
+          name: 'Gitea',
+          description: 'Git hosting',
+          url: up.url,
+          auth: { kind: 'shared_secret', header: 'Authorization', template: 'Bearer {secret}' },
+          access: { kind: 'all' },
+          ...over,
+        });
+      // an unrelated change keeps the secret
+      const same = await put({ name: 'Gitea 2' });
+      expect(ServerView.parse(await same.json()).secretSet).toBe(true);
+
+      const res = await put({ url: moved.url });
+      expect(res.status).toBe(200);
+      expect(ServerView.parse(await res.json()).secretSet).toBe(false);
+      const stored = await pg.sql`select secret from catalog.servers where slug = 'gitea'`;
+      expect(stored[0]?.['secret']).toBeNull();
+      const audit = AuditList.parse(await (await call(admin, 'GET', '/api/audit')).json());
+      expect(audit.map((a) => a.action)).toContain('server.secret_clear');
+
+      const sync = await call(admin, 'POST', '/api/servers/gitea/sync');
+      expect(sync.status).toBe(502);
+      expect(
+        ServerView.parse(await (await call(admin, 'GET', '/api/servers/gitea')).json())
+          .lastSyncError,
+      ).toBe('The server secret is not set');
+      const failure =
+        await pg.sql`select last_sync_error from catalog.servers where slug = 'gitea'`;
+      expect(failure[0]?.['last_sync_error']).toBe('The server secret is not set');
+      expect(moved.requests).toHaveLength(0);
+    } finally {
+      await moved.close();
+    }
+  });
+
   it('changing access emits catalog.server_changed and an audit record', async () => {
     await create();
     await pg.sql`delete from platform.outbox`;
@@ -386,6 +426,23 @@ describe('catalog, status, sync, tools', () => {
 
 const at = (m: number) => new Date(Date.UTC(2026, 9, 30, 12, m));
 
+const callsPage = async (query: string) => {
+  const res = await call(admin, 'GET', `/api/calls${query}`);
+  expect(res.status).toBe(200);
+  return CallList.parse(await res.json());
+};
+
+const walkCalls = async (extra: string): Promise<number[]> => {
+  const next = async (cursor: string): Promise<number[]> => {
+    const rows = await callsPage(`?limit=7${extra}${cursor}`);
+    const last = rows[rows.length - 1];
+    if (last === undefined) return [];
+    const more = await next(`&before=${encodeURIComponent(last.startedAt)}&beforeId=${last.id}`);
+    return [...rows.map((r) => Number(r.id)), ...more];
+  };
+  return next('');
+};
+
 describe('GET /api/calls', () => {
   it('lists newest first with filters, default limit 100, without arguments', async () => {
     await Promise.all(
@@ -418,6 +475,47 @@ describe('GET /api/calls', () => {
     expect((await call(admin, 'GET', '/api/calls?outcome=bogus')).status).toBe(422);
     expect((await call(admin, 'GET', '/api/calls?limit=0')).status).toBe(422);
   });
+
+  describe('paging with a (before, beforeId) cursor', () => {
+    const BASE = Date.parse('2026-10-30T10:00:00Z');
+    // ids 1..130 (crossing 9 -> 10 and 99 -> 100), 20 rows per start time: many ties
+    const startOf = (id: number) => new Date(BASE + Math.floor(id / 20) * 1000);
+    const expected = (ids: number[]) =>
+      ids.toSorted((a, b) => startOf(b).getTime() - startOf(a).getTime() || b - a);
+
+    beforeEach(async () => {
+      await pg.sql`insert into gateway.calls
+          (id, user_id, server, tool, started_at, duration_ms, outcome)
+        select g, ${member.id}::uuid, case when g % 2 = 0 then 'other' else 'gitea' end, 't',
+          ${new Date(BASE)}::timestamptz + (g / 20) * interval '1 second', 1, 'ok'
+        from generate_series(1, 130) g`;
+    });
+
+    it('returns every row exactly once, newest first, ties broken by the numeric id', async () => {
+      const seen = await walkCalls('');
+      expect(seen).toEqual(expected(Array.from({ length: 130 }, (_, i) => i + 1)));
+    });
+
+    it('works together with a filter', async () => {
+      const seen = await walkCalls('&server=other');
+      expect(seen).toEqual(expected(Array.from({ length: 65 }, (_, i) => (i + 1) * 2)));
+    });
+
+    it('with only before it is as before: strictly older timestamps', async () => {
+      const cut = startOf(100);
+      const rows = await callsPage(`?limit=500&before=${cut.toISOString()}`);
+      const want = Array.from({ length: 130 }, (_, i) => i + 1).filter(
+        (id) => startOf(id).getTime() < cut.getTime(),
+      );
+      expect(rows.map((r) => Number(r.id))).toEqual(expected(want));
+    });
+
+    it('refuses beforeId without before, and a non-numeric one', async () => {
+      expect((await call(admin, 'GET', '/api/calls?beforeId=5')).status).toBe(422);
+      const at0 = new Date(BASE).toISOString();
+      expect((await call(admin, 'GET', `/api/calls?before=${at0}&beforeId=x`)).status).toBe(422);
+    });
+  });
 });
 
 describe('GET /api/audit', () => {
@@ -431,5 +529,21 @@ describe('GET /api/audit', () => {
     );
     expect(rest.every((a) => Number(a.id) < Number(first[0]?.id))).toBe(true);
     expect(rest.length).toBeGreaterThan(0);
+  });
+
+  it('orders by numeric id and pages every row exactly once across digit counts', async () => {
+    await pg.sql`insert into platform.audit_log (id, action) select g, 'test.row' from generate_series(1, 250) g`;
+    const pageFrom = async (before?: string): Promise<number[]> => {
+      const query = before === undefined ? '?limit=37' : `?limit=37&before=${before}`;
+      const page = AuditList.parse(await (await call(admin, 'GET', `/api/audit${query}`)).json());
+      const last = page[page.length - 1];
+      if (last === undefined) return [];
+      return [...page.map((a) => Number(a.id)), ...(await pageFrom(last.id))];
+    };
+    const seen = await pageFrom();
+    const expected = Array.from({ length: 250 }, (_, i) => 250 - i);
+    expect(seen.filter((id) => id <= 250)).toEqual(expected);
+    expect(new Set(seen).size).toBe(seen.length);
+    expect(seen).toEqual(seen.toSorted((x, y) => y - x));
   });
 });

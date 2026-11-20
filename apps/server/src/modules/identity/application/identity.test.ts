@@ -11,7 +11,11 @@ type F = ReturnType<typeof makeDeps>;
 async function signIn(f: F, sub: string, groups: string[]) {
   f.oidc.next = { sub, name: sub, email: null, groups };
   const url = startedUrl(await startOidcLogin(f.deps, { returnTo: '/' }));
-  const r = await completeOidcLogin(f.deps, { state: url.searchParams.get('state')!, code: 'c' });
+  const r = await completeOidcLogin(f.deps, {
+    state: url.searchParams.get('state')!,
+    code: 'c',
+    ip: '1.1.1.1',
+  });
   if (!r.ok) throw new Error('login failed');
   const principal = await authenticateSession(f.deps, { sessionId: r.value.sessionId });
   if (!principal) throw new Error('no session');

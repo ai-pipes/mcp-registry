@@ -44,7 +44,7 @@ const isIdpUnavailable = (error: unknown): error is IdentityError =>
 /** Finishes the login: checks the state, the provider's answer and the group policy. */
 export async function completeOidcLogin(
   deps: IdentityDeps,
-  input: { state: string; code: string; iss?: string },
+  input: { state: string; code: string; iss?: string; ip: string },
 ): Promise<Result<{ sessionId: string; returnTo: string }, IdentityError>> {
   const pending = await deps.pendingLogins.consume(input.state);
   if (!pending || isLoginStateExpired(pending.expiresAt, deps.clock.now())) {
@@ -61,11 +61,15 @@ export async function completeOidcLogin(
     });
   } catch (error) {
     if (isIdpUnavailable(error)) return err(error);
-    await deps.audit.record({
-      actorId: null,
-      action: 'auth.login_failed',
-      meta: { reason: 'exchange_failed' },
-    });
+    // Anyone can start a login and send a bad code: past the limit per IP the refusal is not
+    // recorded (it is still a refusal, and a valid code is never held back by the count).
+    if (deps.callbackLimiter.hit(input.ip).allowed) {
+      await deps.audit.record({
+        actorId: null,
+        action: 'auth.login_failed',
+        meta: { reason: 'exchange_failed' },
+      });
+    }
     return err(new IdentityError('invalid_state', 'the identity provider rejected the login'));
   }
 

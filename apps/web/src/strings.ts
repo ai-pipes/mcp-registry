@@ -237,6 +237,12 @@ export const strings = {
     removeParam: (n: number) => `Remove parameter ${n}`,
     secretResetWarning:
       'Changing the authorization method resets the stored secret: enter a new one if needed.',
+    secretResetOnUrl:
+      'Changing the URL clears the stored secret, so it is never sent to a new address. Enter the secret again below to set it with this change.',
+    secretResetOnOauth:
+      'Changing the token URL, revoke URL or client ID clears the stored client secret, so it is never sent to a new address. Enter the client secret again below to set it with this change.',
+    secretClearedAfterSave:
+      'The stored secret was cleared because the address it is sent to changed. Enter the secret again and save.',
     access: 'Access',
     accessAll: 'Everyone',
     accessGroups: 'Groups only',

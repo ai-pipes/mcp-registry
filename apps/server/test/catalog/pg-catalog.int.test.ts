@@ -167,8 +167,8 @@ describe('PgServerRepository', () => {
     await expect(servers.save(b!)).rejects.toMatchObject({ code: 'server_conflict' });
     const got = await servers.findBySlug('yt');
     expect(got?.url).toBe('https://elsewhere.example.com/mcp');
-    // The secret meant for the old upstream is not bound to the new one.
-    expect(got?.sealedSecret).toEqual(new Uint8Array([1]));
+    // The secret meant for the old upstream is gone with the URL change, and B's is not bound to the new one.
+    expect(got?.sealedSecret).toBeNull();
     // Reloaded, the change goes through.
     const fresh = await servers.findBySlug('yt');
     fresh?.setSealedSecret(new Uint8Array([3]), t1);
