@@ -36,7 +36,7 @@ The Go server is being built beside the TypeScript one; `compat/` is the Go blac
 ```sh
 make go-verify              # Go lint, architecture rules, vet, unit tests (CI job `go`)
 make compat-image-ts        # builds mcp-registry:compat-ts from this tree
-make compat                 # the suite against that image (needs Docker, 9-11 minutes; CI job `compat`)
+make compat                 # the suite against that image (needs Docker, about 11 minutes: five runs took 593-679 s with the packages one after another, `-p 1`; CI job `compat`)
 make compat-selfcheck       # proves the suite fails on a deliberately broken image (daily in CI)
 make e2e-flows              # the web UI's browser flows (Playwright, Chromium) against the same image (CI job `e2e-flows`)
 ```
