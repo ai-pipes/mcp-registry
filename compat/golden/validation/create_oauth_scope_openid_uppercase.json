@@ -1,0 +1,6 @@
+{
+  "status": 422,
+  "code": "invalid_auth",
+  "path": "",
+  "message": "the openid scope is not supported for upstream OAuth"
+}

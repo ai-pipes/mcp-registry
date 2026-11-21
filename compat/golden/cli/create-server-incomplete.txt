@@ -1,0 +1,9 @@
+exit: 1
+--- stdout ---
+--- stderr ---
+error: /tmp/compat-empty-def.json is not a valid server:
+  name: <issue>
+  description: <issue>
+  url: <issue>
+  auth: <issue>
+  access: <issue>

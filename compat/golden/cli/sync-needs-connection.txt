@@ -1,0 +1,4 @@
+exit: 1
+--- stdout ---
+--- stderr ---
+error: needs_connection: An administrator needs to connect this server

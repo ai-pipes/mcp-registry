@@ -1,0 +1,4 @@
+exit: 1
+--- stdout ---
+--- stderr ---
+error: server_exists: server "<SLUG>" already exists

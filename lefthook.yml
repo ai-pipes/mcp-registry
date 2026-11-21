@@ -4,8 +4,16 @@ pre-commit:
       glob: '*.{ts,tsx,js,mjs,cjs,json,md,yml,yaml}'
       run: pnpm vp check --fix {staged_files}
       stage_fixed: true
+    - name: gofumpt (staged)
+      glob: '*.go'
+      run: make go-fmt-check
+    - name: golangci-lint (staged)
+      glob: '*.go'
+      run: make go-lint-new
 
 pre-push:
   jobs:
     - name: verify
       run: pnpm verify
+    - name: go verify
+      run: make go-verify

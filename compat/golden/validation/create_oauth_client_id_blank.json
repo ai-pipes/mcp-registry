@@ -1,0 +1,6 @@
+{
+  "status": 422,
+  "code": "invalid_auth",
+  "path": "",
+  "message": "OAuth client id is required"
+}

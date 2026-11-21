@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "all",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "groups": {
+          "items": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 100,
+          "minItems": 1,
+          "type": "array"
+        },
+        "kind": {
+          "const": "groups",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "groups"
+      ],
+      "type": "object"
+    }
+  ]
+}

@@ -1,0 +1,4 @@
+exit: 0
+--- stdout ---
+created admin "Root Example" (sub <ADMIN-SUB>, id <UUID>)
+--- stderr ---

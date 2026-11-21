@@ -1,0 +1,6 @@
+{
+  "status": 422,
+  "code": "invalid_auth",
+  "path": "",
+  "message": "header name may contain letters, digits and dashes"
+}

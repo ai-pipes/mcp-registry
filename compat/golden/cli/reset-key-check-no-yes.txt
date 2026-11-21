@@ -1,0 +1,5 @@
+exit: 2
+--- stdout ---
+--- stderr ---
+error: --yes is required: reset-key-check removes the stored key check, so the next start records the configured SECRETS_KEY
+<USAGE>

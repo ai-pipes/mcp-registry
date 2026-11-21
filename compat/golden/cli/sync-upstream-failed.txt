@@ -1,0 +1,4 @@
+exit: 1
+--- stdout ---
+--- stderr ---
+error: sync_failed: Could not reach the upstream

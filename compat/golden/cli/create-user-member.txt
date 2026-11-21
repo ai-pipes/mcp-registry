@@ -1,0 +1,4 @@
+exit: 0
+--- stdout ---
+created member "Ann Example" (sub <SUB>, id <UUID>)
+--- stderr ---

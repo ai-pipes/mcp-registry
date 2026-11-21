@@ -1,0 +1,6 @@
+exit: 0
+--- stdout ---
+sk_<TOKEN>
+claude mcp add --transport http mcp-registry http://localhost:<PORT>/mcp --header "Authorization: Bearer sk_<TOKEN>"
+--- stderr ---
+The token is shown only once; store it now.

@@ -1,0 +1,4 @@
+exit: 0
+--- stdout ---
+updated admin "Ann Renamed" (sub <SUB>, id <UUID>)
+--- stderr ---

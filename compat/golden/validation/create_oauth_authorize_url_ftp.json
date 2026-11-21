@@ -1,0 +1,6 @@
+{
+  "status": 422,
+  "code": "invalid_request",
+  "path": "auth.oauth.authorizeUrl",
+  "message": null
+}

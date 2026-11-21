@@ -1,0 +1,6 @@
+{
+  "status": 422,
+  "code": "invalid_request",
+  "path": "slug",
+  "message": null
+}

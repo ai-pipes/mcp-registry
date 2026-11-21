@@ -1,0 +1,4 @@
+exit: 0
+--- stdout ---
+updated member "Ann Example" (sub <SUB>, id <UUID>)
+--- stderr ---

@@ -1,0 +1,4 @@
+exit: 0
+--- stdout ---
+reindexed <DOCS> server(s)
+--- stderr ---

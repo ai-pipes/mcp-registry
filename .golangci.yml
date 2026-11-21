@@ -1,0 +1,82 @@
+version: '2'
+run:
+  build-tags:
+    - compat
+    - selfcheck
+    - e2e
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - revive
+    - gosec
+    - depguard
+  settings:
+    depguard:
+      # deps-only-in-infra: infrastructure packages are imported only by infra and platform
+      # (platform is outside every glob below); the MCP SDK is also allowed in http. The
+      # vendor part is mirrored in .go-arch-lint.yml; crypto/* (standard library) is only here.
+      rules:
+        core-no-infra-deps:
+          list-mode: lax
+          files:
+            - '**/internal/kernel/**'
+            - '**/internal/modules/*/domain/**'
+            - '**/internal/modules/*/app/**'
+            - '**/internal/modules/*/http/**'
+          deny:
+            - pkg: github.com/jackc/pgx
+              desc: deps-only-in-infra, use a port implemented in infra
+            - pkg: github.com/coreos/go-oidc
+              desc: deps-only-in-infra, use a port implemented in infra
+            - pkg: golang.org/x/oauth2
+              desc: deps-only-in-infra, use a port implemented in infra
+            - pkg: github.com/yalue/onnxruntime_go
+              desc: deps-only-in-infra, use a port implemented in infra
+            - pkg: crypto
+              desc: deps-only-in-infra, use a port (SecretBox, Pkce...) implemented in infra
+        no-mcp-sdk-outside-transport:
+          list-mode: lax
+          files:
+            - '**/internal/kernel/**'
+            - '**/internal/modules/*/domain/**'
+            - '**/internal/modules/*/app/**'
+          deny:
+            - pkg: github.com/modelcontextprotocol
+              desc: deps-only-in-infra, the MCP SDK is allowed in infra and http only
+  exclusions:
+    rules:
+      # internal/archtest runs the pinned linters and writes fixtures into temp directories.
+      # Commands, paths and modes are constants of the repository, not input. Only these
+      # rules, only this directory; gosec stays on for every other test.
+      - path: internal/archtest/
+        linters:
+          - gosec
+        text: 'G204: ' # subprocess launched with variable arguments (go run, make)
+      - path: internal/archtest/
+        linters:
+          - gosec
+        text: 'G301: ' # fixture directories are created with 0o755 in a temp dir
+      - path: internal/archtest/
+        linters:
+          - gosec
+        text: 'G304: ' # fixture and config files are read by computed path
+      - path: internal/archtest/
+        linters:
+          - gosec
+        text: 'G306: ' # fixture files are written with 0o644 in a temp dir
+      # compat/ drives the application image through docker and writes golden files; commands,
+      # paths and modes are constants of the suite. Only these rules, only this directory.
+      - path: compat/
+        linters:
+          - gosec
+        text: 'G204: ' # docker is launched with variable arguments
+      - path: compat/
+        linters:
+          - gosec
+        text: 'G304: ' # golden files are read by computed path
+formatters:
+  enable:
+    - gofumpt

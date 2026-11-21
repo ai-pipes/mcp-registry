@@ -10,6 +10,8 @@ const browsers = {
 export default defineConfig({
   testDir: '.',
   testMatch: '*.spec.ts',
+  // The browser flows (flows/) need the Go orchestrator (`make e2e-flows`) and have their own config.
+  testIgnore: ['flows/**'],
   outputDir: '../node_modules/.cache/playwright/test-results',
   fullyParallel: false,
   forbidOnly: !!process.env['CI'],

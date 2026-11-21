@@ -1,0 +1,6 @@
+{
+  "status": 422,
+  "code": "invalid_slug",
+  "path": "",
+  "message": "server slug must be 2-32 characters: lowercase letters, digits and dashes, starting with a letter"
+}

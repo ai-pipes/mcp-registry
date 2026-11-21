@@ -1,0 +1,4 @@
+exit: 1
+--- stdout ---
+--- stderr ---
+error: the database was migrated by a newer version of mcp-registry (unknown migration: 9999_from_the_future.sql); start that version or restore the backup taken before the upgrade

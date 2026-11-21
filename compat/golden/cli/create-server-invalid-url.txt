@@ -1,0 +1,5 @@
+exit: 1
+--- stdout ---
+--- stderr ---
+error: /tmp/compat-bad-url.json is not a valid server:
+  url: must be an http(s) URL

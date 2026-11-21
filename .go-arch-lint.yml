@@ -1,0 +1,278 @@
+# Architecture rules for the Go rewrite, mirroring .dependency-cruiser.cjs rule names.
+# Checked by `make go-arch-lint` and by internal/archtest, which runs this very file against one
+# failing fixture per rule. A rule without a failing fixture does not count.
+#
+# Enforced elsewhere:
+#   domain-is-pure (standard library part)  internal/archtest ImpureDomainImports
+#   deps-only-in-infra (stdlib crypto, and a second line for vendors)  depguard in .golangci.yml
+#   schema ownership                        internal/archtest ForeignSchemaRefs
+#   no-circular                             the Go compiler
+#
+# Rules expressed here:
+#   domain-is-pure          domain imports only its own domain and internal/kernel
+#   application-only-domain app imports its own domain and app, kernel and the root package of
+#                           other modules
+#   no-inward-infra         domain and app never import infra, http or platform
+#   deps-only-in-infra      pgx, go-oidc, x/oauth2 and ONNX only in infra (and platform); the MCP
+#                           SDK also in http
+#   modules-via-index       another module is imported only by its root package
+version: 3
+workdir: internal
+allow:
+  depOnAnyVendor: false
+  deepScan: true
+
+# The architecture tests are not part of the layered code (their fixtures are deliberately wrong).
+exclude:
+  - archtest
+
+vendors:
+  pgx:
+    in: github.com/jackc/pgx/**
+  go-oidc:
+    in: github.com/coreos/go-oidc/**
+  x-oauth2:
+    in: golang.org/x/oauth2/**
+  onnx:
+    in: github.com/yalue/onnxruntime_go
+  mcp-sdk:
+    in: github.com/modelcontextprotocol/go-sdk/**
+
+components:
+  kernel:
+    in: kernel/**
+  platform:
+    in: platform/**
+  identity-root:
+    in: modules/identity
+  identity-domain:
+    in: modules/identity/domain/**
+  identity-app:
+    in: modules/identity/app/**
+  identity-infra:
+    in: modules/identity/infra/**
+  identity-http:
+    in: modules/identity/http/**
+  catalog-root:
+    in: modules/catalog
+  catalog-domain:
+    in: modules/catalog/domain/**
+  catalog-app:
+    in: modules/catalog/app/**
+  catalog-infra:
+    in: modules/catalog/infra/**
+  catalog-http:
+    in: modules/catalog/http/**
+  connections-root:
+    in: modules/connections
+  connections-domain:
+    in: modules/connections/domain/**
+  connections-app:
+    in: modules/connections/app/**
+  connections-infra:
+    in: modules/connections/infra/**
+  connections-http:
+    in: modules/connections/http/**
+  search-root:
+    in: modules/search
+  search-domain:
+    in: modules/search/domain/**
+  search-app:
+    in: modules/search/app/**
+  search-infra:
+    in: modules/search/infra/**
+  search-http:
+    in: modules/search/http/**
+  gateway-root:
+    in: modules/gateway
+  gateway-domain:
+    in: modules/gateway/domain/**
+  gateway-app:
+    in: modules/gateway/app/**
+  gateway-infra:
+    in: modules/gateway/infra/**
+  gateway-http:
+    in: modules/gateway/http/**
+
+commonComponents:
+  - kernel
+
+deps:
+  platform:
+    anyProjectDeps: true
+    anyVendorDeps: true
+  identity-root:
+    mayDependOn:
+      - identity-domain
+      - identity-app
+  identity-app:
+    mayDependOn:
+      - identity-domain
+      - catalog-root
+      - connections-root
+      - search-root
+      - gateway-root
+  identity-infra:
+    mayDependOn:
+      - identity-domain
+      - identity-app
+      - catalog-root
+      - connections-root
+      - search-root
+      - gateway-root
+    canUse:
+      - pgx
+      - go-oidc
+      - x-oauth2
+      - onnx
+      - mcp-sdk
+  identity-http:
+    mayDependOn:
+      - identity-domain
+      - identity-app
+      - catalog-root
+      - connections-root
+      - search-root
+      - gateway-root
+    canUse:
+      - mcp-sdk
+  catalog-root:
+    mayDependOn:
+      - catalog-domain
+      - catalog-app
+  catalog-app:
+    mayDependOn:
+      - catalog-domain
+      - identity-root
+      - connections-root
+      - search-root
+      - gateway-root
+  catalog-infra:
+    mayDependOn:
+      - catalog-domain
+      - catalog-app
+      - identity-root
+      - connections-root
+      - search-root
+      - gateway-root
+    canUse:
+      - pgx
+      - go-oidc
+      - x-oauth2
+      - onnx
+      - mcp-sdk
+  catalog-http:
+    mayDependOn:
+      - catalog-domain
+      - catalog-app
+      - identity-root
+      - connections-root
+      - search-root
+      - gateway-root
+    canUse:
+      - mcp-sdk
+  connections-root:
+    mayDependOn:
+      - connections-domain
+      - connections-app
+  connections-app:
+    mayDependOn:
+      - connections-domain
+      - identity-root
+      - catalog-root
+      - search-root
+      - gateway-root
+  connections-infra:
+    mayDependOn:
+      - connections-domain
+      - connections-app
+      - identity-root
+      - catalog-root
+      - search-root
+      - gateway-root
+    canUse:
+      - pgx
+      - go-oidc
+      - x-oauth2
+      - onnx
+      - mcp-sdk
+  connections-http:
+    mayDependOn:
+      - connections-domain
+      - connections-app
+      - identity-root
+      - catalog-root
+      - search-root
+      - gateway-root
+    canUse:
+      - mcp-sdk
+  search-root:
+    mayDependOn:
+      - search-domain
+      - search-app
+  search-app:
+    mayDependOn:
+      - search-domain
+      - identity-root
+      - catalog-root
+      - connections-root
+      - gateway-root
+  search-infra:
+    mayDependOn:
+      - search-domain
+      - search-app
+      - identity-root
+      - catalog-root
+      - connections-root
+      - gateway-root
+    canUse:
+      - pgx
+      - go-oidc
+      - x-oauth2
+      - onnx
+      - mcp-sdk
+  search-http:
+    mayDependOn:
+      - search-domain
+      - search-app
+      - identity-root
+      - catalog-root
+      - connections-root
+      - gateway-root
+    canUse:
+      - mcp-sdk
+  gateway-root:
+    mayDependOn:
+      - gateway-domain
+      - gateway-app
+  gateway-app:
+    mayDependOn:
+      - gateway-domain
+      - identity-root
+      - catalog-root
+      - connections-root
+      - search-root
+  gateway-infra:
+    mayDependOn:
+      - gateway-domain
+      - gateway-app
+      - identity-root
+      - catalog-root
+      - connections-root
+      - search-root
+    canUse:
+      - pgx
+      - go-oidc
+      - x-oauth2
+      - onnx
+      - mcp-sdk
+  gateway-http:
+    mayDependOn:
+      - gateway-domain
+      - gateway-app
+      - identity-root
+      - catalog-root
+      - connections-root
+      - search-root
+    canUse:
+      - mcp-sdk
