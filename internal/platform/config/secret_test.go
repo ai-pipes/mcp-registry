@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	jsonv2 "encoding/json/v2"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -142,6 +143,24 @@ func TestZeroSecretIsUnsetEverywhere(t *testing.T) {
 	}
 	if config.NewSecret("").IsSet() || config.NewSecretBytes(nil).IsSet() || config.NewSecretBytes([]byte{}).IsSet() {
 		t.Fatal("an empty value is not a set secret")
+	}
+}
+
+func TestRevealOfSecretBytesIsACopy(t *testing.T) {
+	b := config.NewSecretBytes([]byte("ZZ-key"))
+	b.Reveal()[0] = 'X'
+	if string(b.Reveal()) != "ZZ-key" {
+		t.Fatalf("a caller changed the secret through Reveal: %q", b.Reveal())
+	}
+}
+
+// Comparing two secrets with == would compare addresses and silently answer "different" for equal
+// values; the types must refuse it at compile time (reflect reports the same fact).
+func TestSecretsAreNotComparable(t *testing.T) {
+	for _, v := range []any{config.Secret{}, config.SecretBytes{}, config.OIDCClient{}} {
+		if reflect.TypeOf(v).Comparable() {
+			t.Fatalf("%T is comparable with ==", v)
+		}
 	}
 }
 

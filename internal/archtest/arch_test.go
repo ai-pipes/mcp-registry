@@ -154,6 +154,13 @@ var archFixtures = []struct{ rule, fixture, component, badImport string }{
 	{"platform-leaves (infra imports httpx)", "infra-imports-httpx", "catalog-infra", modPath + "platform/httpx"},
 	{"platform-leaves (module root imports a leaf other than httpx)", "root-imports-leaf-other-than-httpx", "catalog-root", modPath + "platform/db"},
 	{"no-inward-infra (module root imports infra)", "root-imports-infra", "catalog-root", modPath + "modules/catalog/infra"},
+	{"platform-leaves (app imports pgtest)", "app-imports-pgtest", "catalog-app", modPath + "platform/pgtest"},
+	{"platform-leaves (infra imports migrate)", "infra-imports-migrate", "catalog-infra", modPath + "platform/migrate"},
+	{"platform-leaves (a leaf imports migrate)", "leaf-imports-migrate", "platform-outbox", modPath + "platform/migrate"},
+	{"platform-leaves (http imports config)", "http-imports-config", "catalog-http", modPath + "platform/config"},
+	{"no-inward-infra (module root imports its http)", "root-imports-http", "catalog-root", modPath + "modules/catalog/http"},
+	{"modules-via-index (http imports another module's app)", "http-imports-other-module-internals", "catalog-http", modPath + "modules/identity/app"},
+	{"no-inward-infra (domain imports its own infra)", "domain-imports-own-infra", "catalog-domain", modPath + "modules/catalog/infra"},
 	// layer-self-dependency: a layer may import itself, nothing else follows from it.
 	{"layer-self-dependency (domain still may not import its own app)", "domain-imports-own-app", "catalog-domain", modPath + "modules/catalog/app"},
 	{"layer-self-dependency (an external test package is still checked)", "external-test-imports-app", "catalog-domain", modPath + "modules/catalog/app"},
@@ -189,6 +196,29 @@ func TestInjectingAnAdapterIntoAPortIsAllowed(t *testing.T) {
 	}
 	if n := len(rep.Payload.ArchWarningsDeps) + len(rep.Payload.ArchWarningsNotMatched) + len(rep.Payload.ArchWarningsDeepScan) + len(rep.Payload.ExecutionWarnings); n != 0 {
 		t.Fatalf("unexpected warnings: %+v", rep.Payload)
+	}
+}
+
+// TestAPackageOfNoComponentFailsTheLint pins the safety net under the component list: a new package
+// under internal/platform or in a module that no component lists is a lint failure, so it must be
+// classified before it can be imported from anywhere.
+func TestAPackageOfNoComponentFailsTheLint(t *testing.T) {
+	for _, tc := range []struct{ fixture, pkg string }{
+		{"unattached-platform-package", "platform/newpkg"},
+		{"unattached-module-package", "modules/identity/util"},
+	} {
+		t.Run(tc.fixture, func(t *testing.T) {
+			rep, code := archLint(t, fixtureProject(t, tc.fixture))
+			if code == 0 {
+				t.Fatalf("%s is attached to no component but the lint passed", tc.pkg)
+			}
+			if len(rep.Payload.ArchWarningsNotMatched) != 1 || !strings.Contains(string(rep.Payload.ArchWarningsNotMatched[0]), tc.pkg) {
+				t.Fatalf("want one not-attached report naming %s, got %s", tc.pkg, rep.Payload.ArchWarningsNotMatched)
+			}
+			if n := len(rep.Payload.ArchWarningsDeps) + len(rep.Payload.ExecutionWarnings); n != 0 {
+				t.Fatalf("unrelated warnings: %+v", rep.Payload)
+			}
+		})
 	}
 }
 

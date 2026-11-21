@@ -12,6 +12,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/ai-pipes/mcp-registry/internal/kernel"
 )
 
 const (
@@ -24,6 +26,8 @@ const (
 	// A year: a longer synchronisation period is a typo.
 	maxSyncIntervalHours = 24 * 365
 	defaultOIDCScopes    = "openid profile email groups"
+	// maxSafeInteger is 2^53-1, JavaScript's Number.MAX_SAFE_INTEGER.
+	maxSafeInteger = 1<<53 - 1
 )
 
 // OIDCClient is the gateway's client at the identity provider.
@@ -85,7 +89,7 @@ func Load(env map[string]string, readFile func(string) (string, error)) (Config,
 	}
 	cfg.PublicURL = urlVar(set, "PUBLIC_URL", true, &c)
 	for _, h := range strings.Split(set["ALLOWED_HOSTS"], ",") {
-		if h = jsTrim(h); h != "" {
+		if h = kernel.JSTrim(h); h != "" {
 			cfg.AllowedHosts = append(cfg.AllowedHosts, h)
 		}
 	}
@@ -240,7 +244,7 @@ func urlVar(set map[string]string, name string, required bool, c *issues) string
 		}
 		return ""
 	}
-	v = strings.NewReplacer("\t", "", "\r", "", "\n", "").Replace(jsTrim(v))
+	v = strings.NewReplacer("\t", "", "\r", "", "\n", "").Replace(kernel.JSTrim(v))
 	u, err := url.Parse(v)
 	if err == nil && u.Scheme != "" && u.Hostname() != "" {
 		if p := u.Port(); p == "" {
@@ -285,7 +289,7 @@ func intVar(set map[string]string, name string, fallback, minimum, maximum int, 
 	if !ok {
 		return fallback
 	}
-	f, valid := jsNumber(v)
+	f, valid := kernel.JSNumber(v)
 	if !valid || f != math.Trunc(f) || math.Abs(f) > maxSafeInteger || f < float64(minimum) || (maximum > 0 && f > float64(maximum)) {
 		if maximum > 0 {
 			c.add(name, fmt.Sprintf("must be an integer from %d to %d", minimum, maximum))
@@ -302,7 +306,7 @@ func floatVar(set map[string]string, name string, fallback, minimum, maximum flo
 	if !ok {
 		return fallback
 	}
-	f, valid := jsNumber(v)
+	f, valid := kernel.JSNumber(v)
 	if !valid || math.IsInf(f, 0) || f < minimum || f > maximum {
 		c.add(name, fmt.Sprintf("must be a number from %g to %g", minimum, maximum))
 		return fallback

@@ -18,9 +18,13 @@ const (
 // It holds a pointer, not the string. fmt reaches a field it may not call methods on (an
 // unexported field of a struct, a struct behind a pointer under a non-pointer verb) by reflection
 // with every method switched off; a string-based type would be written raw there, a pointer is
-// written as an address at most. Secrets are not comparable by value on purpose: the API has no
-// equality, and == on two Secrets would compare addresses.
-type Secret struct{ v *string }
+// written as an address at most. Secrets are not comparable on purpose (a zero-size func field
+// makes == a compile error): == on two pointer-backed values would compare addresses and answer
+// "different" for equal secrets, which a future "has the config changed?" check would trust.
+type Secret struct {
+	_ [0]func() // makes the type not comparable: == would compare addresses, never the values
+	v *string
+}
 
 // NewSecret wraps s. An empty string is "not set": the result is the zero Secret.
 func NewSecret(s string) Secret {
@@ -69,7 +73,10 @@ func (s Secret) MarshalText() ([]byte, error) { return []byte(s.text()), nil }
 
 // SecretBytes is Secret for binary values (keys): the zero value is "not set", a set one is never
 // empty.
-type SecretBytes struct{ v *[]byte }
+type SecretBytes struct {
+	_ [0]func() // makes the type not comparable (see Secret)
+	v *[]byte
+}
 
 // NewSecretBytes wraps a copy of b, so later changes to b do not reach the secret. Nil or empty is
 // "not set": the result is the zero SecretBytes.
@@ -84,12 +91,13 @@ func NewSecretBytes(b []byte) SecretBytes {
 // IsSet reports whether the secret has a value.
 func (s SecretBytes) IsSet() bool { return s.v != nil }
 
-// Reveal returns the value (not a copy: callers must not modify it), nil when unset.
+// Reveal returns a copy of the value, nil when unset: changing the result does not change the
+// secret.
 func (s SecretBytes) Reveal() []byte {
 	if s.v == nil {
 		return nil
 	}
-	return *s.v
+	return append([]byte(nil), *s.v...)
 }
 
 func (s SecretBytes) text() string {
