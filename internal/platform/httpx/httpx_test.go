@@ -257,6 +257,19 @@ func TestPanicIs500AndLoggedWithoutText(t *testing.T) {
 		if strings.Contains(a.log.String(), "secret-token-in-panic") {
 			t.Fatalf("%s: panic text in the log: %s", path, a.log)
 		}
+		// Both kinds of panic value: the same err object, and the frames of the call path.
+		e, ok := recs[0]["err"].(map[string]any)
+		if !ok || e["type"] == nil || e["label"] == nil || len(e) != 2 {
+			t.Fatalf("%s: err is %v, want an object with type and label", path, recs[0]["err"])
+		}
+		stack, _ := recs[0]["stack"].([]any)
+		if len(stack) == 0 || len(stack) > logging.MaxPanicFrames {
+			t.Fatalf("%s: stack %v", path, recs[0]["stack"])
+		}
+		first, _ := stack[0].(string)
+		if !strings.Contains(first, "httpx_test.newApp.func") || !strings.Contains(first, "httpx_test.go:") {
+			t.Fatalf("%s: the first frame should be the panicking handler, got %q", path, first)
+		}
 	}
 }
 

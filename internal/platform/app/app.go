@@ -67,7 +67,7 @@ func signalName(ctx context.Context) string {
 }
 
 // handler assembles the HTTP handler: request id and access log, security headers, body limit
-// (everything except /mcp, which has its own limit), client address, CSRF; then the routes.
+// (1 MiB, and MCP_MAX_BODY_BYTES for /mcp), client address, CSRF; then the routes.
 // pool may be nil (then /healthz answers 503).
 func handler(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, webRoot string, mount func(*http.ServeMux, *pgxpool.Pool)) http.Handler {
 	health := httpx.Healthz(pool)
@@ -94,7 +94,7 @@ func handler(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, webRoot
 	return httpx.Chain(mux,
 		httpx.RequestID(logger),
 		httpx.SecurityHeaders(),
-		exceptMCP(httpx.BodyLimit(restBodyLimit)),
+		bodyLimits(int64(cfg.MCPMaxBodyBytes)),
 		httpx.ClientIP(cfg.TrustProxy, cfg.TrustProxyHops),
 		httpx.CSRF(cfg.PublicURL),
 	)
@@ -108,16 +108,17 @@ func routed(mux *http.ServeMux, r *http.Request) bool {
 
 func isMCP(path string) bool { return path == "/mcp" || strings.HasPrefix(path, "/mcp/") }
 
-// exceptMCP applies m to every request except those for /mcp and /mcp/...
-func exceptMCP(m httpx.Middleware) httpx.Middleware {
+// bodyLimits caps request bodies: mcpMax (MCP_MAX_BODY_BYTES, no read deadline: uploads can be
+// large and slow) for /mcp and /mcp/..., the 1 MiB default with a read deadline for everything else.
+func bodyLimits(mcpMax int64) httpx.Middleware {
 	return func(next http.Handler) http.Handler {
-		limited := m(next)
+		rest, mcp := httpx.BodyLimit(restBodyLimit)(next), httpx.LargeBodyLimit(mcpMax)(next)
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if isMCP(r.URL.Path) {
-				next.ServeHTTP(w, r)
+				mcp.ServeHTTP(w, r)
 				return
 			}
-			limited.ServeHTTP(w, r)
+			rest.ServeHTTP(w, r)
 		})
 	}
 }

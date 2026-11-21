@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -130,6 +131,24 @@ func TestAPanicIsAFailedRunAndTheRecordNamesTheFunctionNotTheValue(t *testing.T)
 	}
 	if strings.Contains(out, "leaky-panic-value") || strings.Contains(out, "/Users/") {
 		t.Fatalf("log leaks: %s", out)
+	}
+}
+
+func TestPanicWhileStoppingIsLogged(t *testing.T) {
+	var buf bytes.Buffer
+	started := make(chan struct{})
+	stop := start(slog.New(slog.NewJSONHandler(&buf, nil)), []Job{{Name: "j", Run: func(ctx context.Context) error {
+		close(started)
+		<-ctx.Done()
+		panicHere()
+		return nil
+	}}}, newFakeTimers().newTimer)
+	recv(t, started, "run start")
+	if err := stop(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if out := buf.String(); !strings.Contains(out, "scheduler: job panicked") || !strings.Contains(out, "scheduler.panicHere") {
+		t.Fatalf("the panic during stop was not logged: %s", out)
 	}
 }
 

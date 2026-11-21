@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -113,7 +112,7 @@ func (r *recorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
 // RequestID assigns each request a UUID (header X-Request-Id on every response, also refusals)
 // and writes one access log record per request after the response: message "request", fields
 // reqId, method, path (URL path only), status, ms, ip. Headers, query strings and bodies never
-// reach the log. A panic in the handlers further in is logged (by type, never the message) and
+// reach the log. A panic in the handlers further in is logged (the type and the call frames, never the value or the message) and
 // answered with a 500 "internal" carrying only the security headers and the request id; when the
 // response has already started the connection is aborted instead (a clean end would look like a
 // complete response). http.ErrAbortHandler is passed on as such, without an error record.
@@ -130,11 +129,8 @@ func RequestID(logger *slog.Logger) Middleware {
 				v := recover()
 				abort := v == http.ErrAbortHandler
 				if v != nil && !abort {
-					if err, ok := v.(error); ok {
-						logger.Error("unhandled error", "reqId", st.id, logging.ErrAttr(err))
-					} else {
-						logger.Error("unhandled error", "reqId", st.id, "err", fmt.Sprintf("panic: %T", v))
-					}
+					// Frames name the call path; neither they nor the err object carry the panic value.
+					logger.Error("unhandled error", "reqId", st.id, logging.PanicAttr(v), "stack", logging.PanicFrames())
 					if rec.wrote {
 						abort = true
 					} else {

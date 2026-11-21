@@ -9,12 +9,16 @@ import (
 	"testing"
 
 	"github.com/ai-pipes/mcp-registry/internal/platform/config"
+	"github.com/ai-pipes/mcp-registry/internal/platform/httpx"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// testMCPLimit is MCP_MAX_BODY_BYTES in these tests: above the 1 MiB of the other routes.
+const testMCPLimit = 3 << 20
+
 func testHandler(t *testing.T, mount func(*http.ServeMux, *pgxpool.Pool)) http.Handler {
 	t.Helper()
-	cfg := config.Config{PublicURL: "http://localhost:3000", TrustProxyHops: 1}
+	cfg := config.Config{PublicURL: "http://localhost:3000", TrustProxyHops: 1, MCPMaxBodyBytes: testMCPLimit}
 	return handler(cfg, discardLogger(), nil, t.TempDir(), mount)
 }
 
@@ -24,40 +28,50 @@ func do(h http.Handler, r *http.Request) *httptest.ResponseRecorder {
 	return w
 }
 
-// The 1 MiB limit applies to everything except /mcp and /mcp/...; those routes arrive in a later
-// milestone with their own limit.
-func TestBodyLimitAppliesExceptToMCP(t *testing.T) {
+// Everything except /mcp and /mcp/... is capped at 1 MiB; those have MCP_MAX_BODY_BYTES (a later
+// milestone brings the routes, the limit is in the chain already).
+func TestBodyLimits(t *testing.T) {
 	drain := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = io.Copy(io.Discard, r.Body)
+		if _, err := io.Copy(io.Discard, r.Body); err != nil {
+			httpx.WriteDomainError(w, r, err)
+			return
+		}
 		_, _ = w.Write([]byte("ok"))
 	})
 	h := testHandler(t, func(mux *http.ServeMux, _ *pgxpool.Pool) {
-		mux.Handle("POST /mcp", drain)
-		mux.Handle("POST /mcp/sub", drain)
-		mux.Handle("POST /mcpx", drain)
-		mux.Handle("POST /other", drain)
+		for _, p := range []string{"/mcp", "/mcp/sub", "/mcpx", "/other"} {
+			mux.Handle("POST "+p, drain)
+		}
 	})
-	big := strings.Repeat("a", restBodyLimit+1)
 	for _, tc := range []struct {
-		path string
-		want int
+		path        string
+		size, limit int
 	}{
-		{"/mcp", 200}, {"/mcp/sub", 200}, {"/mcpx", 413}, {"/other", 413},
+		{"/mcp", restBodyLimit + 1, testMCPLimit},
+		{"/mcp/sub", restBodyLimit + 1, testMCPLimit},
+		{"/mcpx", restBodyLimit, restBodyLimit},
+		{"/other", restBodyLimit, restBodyLimit},
 	} {
-		if w := do(h, httptest.NewRequest("POST", tc.path, strings.NewReader(big))); w.Code != tc.want {
-			t.Errorf("POST %s with a known length: %d, want %d", tc.path, w.Code, tc.want)
+		for _, declared := range []bool{true, false} {
+			for _, size := range []int{tc.size, tc.limit, tc.limit + 1} {
+				var body io.Reader = strings.NewReader(strings.Repeat("a", size))
+				if !declared {
+					body = io.NopCloser(body)
+				}
+				r := httptest.NewRequest("POST", tc.path, body)
+				if !declared {
+					r.ContentLength = -1
+				}
+				r.Header.Set("Origin", "http://localhost:3000")
+				want := 200
+				if size > tc.limit {
+					want = 413
+				}
+				if w := do(h, r); w.Code != want {
+					t.Errorf("POST %s, %d bytes, declared=%v: %d, want %d", tc.path, size, declared, w.Code, want)
+				}
+			}
 		}
-		// Without a length the body is cut while it is read.
-		r := httptest.NewRequest("POST", tc.path, io.NopCloser(strings.NewReader(big)))
-		r.ContentLength = -1
-		w := do(h, r)
-		if tc.want == 200 && w.Code != 200 {
-			t.Errorf("POST %s without a length: %d, want 200", tc.path, w.Code)
-		}
-	}
-	small := do(h, httptest.NewRequest("POST", "/other", strings.NewReader("{}")))
-	if small.Code != 200 {
-		t.Errorf("a small body: %d", small.Code)
 	}
 }
 

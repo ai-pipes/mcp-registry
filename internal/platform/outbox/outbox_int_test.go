@@ -724,3 +724,40 @@ func TestSweepRunsAfterTheDeliveriesOfThePass(t *testing.T) {
 		t.Fatalf("sweep saw %d deliveries, want 2", seenAtSweep.Load())
 	}
 }
+
+// A handler that panics because the worker is being stopped is still a defect: its frames are
+// logged, while the event is given back without an attempt, as for any stop-time failure.
+func TestPanicWhileStoppingIsLogged(t *testing.T) {
+	pool := fresh(t)
+	ctx := context.Background()
+	appendEvents(t, pool, ev("t", 1))
+	var buf bytes.Buffer
+	timers := newFakeTimers()
+	started := make(chan struct{})
+	stop := startWorker(WorkerOptions{
+		Pool: pool, Interval: time.Hour, Logger: logging.New("info", &buf),
+		Handlers: map[string]Handler{"t": func(hctx context.Context, _ map[string]any) error {
+			close(started)
+			<-hctx.Done()
+			panicHere()
+			return nil
+		}},
+	}, timers.clock())
+	recv(t, started, "handler start")
+	stopWorker(t, stop)
+	out := buf.String()
+	if !strings.Contains(out, `"msg":"outbox: handler panicked"`) || !strings.Contains(out, "outbox.panicHere") {
+		t.Fatalf("the panic during stop was not logged: %s", out)
+	}
+	if strings.Contains(out, "leaky-panic-value") {
+		t.Fatalf("log leaks: %s", out)
+	}
+	var attempts int
+	var processed bool
+	if err := pool.QueryRow(ctx, `select attempts, processed_at is not null from platform.outbox`).Scan(&attempts, &processed); err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 0 || processed {
+		t.Fatalf("attempts=%d processed=%v: a stop-time panic must not count as an attempt", attempts, processed)
+	}
+}

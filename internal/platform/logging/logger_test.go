@@ -265,3 +265,71 @@ func TestRedactionLeavesOrdinaryNamesAlone(t *testing.T) {
 		}
 	}
 }
+
+func panicInDefer(value any) (frames []string, attr slog.Attr) {
+	defer func() {
+		if v := recover(); v != nil {
+			frames, attr = logging.PanicFrames(), logging.PanicAttr(v)
+		}
+	}()
+	panicHere(value)
+	return nil, slog.Attr{}
+}
+
+func panicHere(value any) { panic(value) }
+
+func TestPanicFramesNameTheCallPathNotTheValue(t *testing.T) {
+	frames, _ := panicInDefer("ZZ-leaky-value")
+	if len(frames) < 3 {
+		t.Fatalf("frames: %q", frames)
+	}
+	// Innermost first, starting at the function that panicked.
+	if !strings.Contains(frames[0], "logging_test.panicHere ") || !strings.Contains(frames[1], "logging_test.panicInDefer ") {
+		t.Fatalf("frames: %q", frames)
+	}
+	for _, f := range frames {
+		if strings.HasPrefix(f, "runtime.") || strings.Contains(f, "ZZ-leaky-value") || strings.Contains(f, "/Users/") {
+			t.Fatalf("frame %q", f)
+		}
+		if !strings.Contains(f, "logger_test.go:") && !strings.Contains(f, ".go:") {
+			t.Fatalf("frame without file:line: %q", f)
+		}
+	}
+}
+
+func deepPanic(n int) {
+	if n == 0 {
+		panic("deep")
+	}
+	deepPanic(n - 1)
+	_ = n
+}
+
+func TestPanicFramesAreBounded(t *testing.T) {
+	var frames []string
+	func() {
+		defer func() {
+			_ = recover()
+			frames = logging.PanicFrames()
+		}()
+		deepPanic(200)
+	}()
+	if len(frames) != logging.MaxPanicFrames {
+		t.Fatalf("%d frames, want %d", len(frames), logging.MaxPanicFrames)
+	}
+}
+
+func TestPanicAttrHasTheShapeOfErrAttr(t *testing.T) {
+	for name, v := range map[string]any{"error": errors.New("ZZ-secret-text"), "string": "ZZ-secret-text", "struct": struct{ A string }{"ZZ-secret-text"}} {
+		var buf bytes.Buffer
+		logging.New("info", &buf).Info("x", logging.PanicAttr(v))
+		if strings.Contains(buf.String(), "ZZ-secret-text") {
+			t.Fatalf("%s: value leaked: %s", name, buf.String())
+		}
+		rec := records(t, &buf)[0]
+		e, ok := rec["err"].(map[string]any)
+		if !ok || e["type"] == nil || e["label"] == nil || len(e) != 2 {
+			t.Fatalf("%s: err is %v, want an object with type and label", name, rec["err"])
+		}
+	}
+}

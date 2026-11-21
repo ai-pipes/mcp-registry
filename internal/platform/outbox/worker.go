@@ -4,10 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"path/filepath"
-	"runtime"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -70,43 +67,6 @@ func realClock() clock {
 type handlerPanic struct{ frames []string }
 
 func (handlerPanic) Error() string { return "handler panicked" }
-
-const maxPanicFrames = 16
-
-// panicFrames describes the stack of the panicking goroutine, without arguments and without the
-// runtime's own frames. Call it from the deferred recover function.
-func panicFrames() []string {
-	pcs := make([]uintptr, 64)
-	n := runtime.Callers(3, pcs)
-	it := runtime.CallersFrames(pcs[:n])
-	var out []string
-	for len(out) < maxPanicFrames {
-		f, more := it.Next()
-		if f.Function != "" && !strings.HasPrefix(f.Function, "runtime.") {
-			out = append(out, f.Function+" "+shortPath(f.File)+":"+strconv.Itoa(f.Line))
-		}
-		if !more {
-			break
-		}
-	}
-	return out
-}
-
-// shortPath drops the build directory: from "internal/" or "apps/" on when present, else the
-// last two elements.
-func shortPath(file string) string {
-	for _, marker := range []string{"/internal/", "/apps/", "/cmd/"} {
-		if i := strings.LastIndex(file, marker); i >= 0 {
-			return file[i+1:]
-		}
-	}
-	file = filepath.ToSlash(file)
-	parts := strings.Split(file, "/")
-	if len(parts) > 2 {
-		parts = parts[len(parts)-2:]
-	}
-	return strings.Join(parts, "/")
-}
 
 // StartWorker polls the outbox every Interval (first pass at once) and delivers events to
 // handlers one at a time, in id order. A failing handler leaves the row for retry with backoff
@@ -231,15 +191,16 @@ func (w *worker) deliver(ctx context.Context, r row) {
 		w.markProcessed(ctx, r.id)
 		return
 	}
-	if ctx.Err() != nil {
-		// The worker was stopped while the handler ran: not a failed attempt.
-		w.release(ctx, r)
-		return
-	}
+	// A panic is logged whether or not the worker is being stopped: it is a defect either way.
 	// Neither the log nor the row's last_error gets the message: it can quote values.
 	var hp handlerPanic
 	if errors.As(err, &hp) {
 		w.o.Logger.Error("outbox: handler panicked", "outboxId", id, "type", r.typ, "stack", hp.frames)
+	}
+	if ctx.Err() != nil {
+		// The worker was stopped while the handler ran: not a failed attempt.
+		w.release(ctx, r)
+		return
 	}
 	attrs := []any{"outboxId", id, "type", r.typ, "attempts", r.attempts, logging.ErrAttr(err)}
 	if r.attempts >= MaxAttempts {
@@ -259,7 +220,7 @@ func (w *worker) bookkeep(err error) {
 func (w *worker) call(ctx context.Context, h Handler, r row) (err error) {
 	defer func() {
 		if recover() != nil {
-			err = handlerPanic{frames: panicFrames()}
+			err = handlerPanic{frames: logging.PanicFrames()}
 		}
 	}()
 	return h(ctx, r.payload)
@@ -287,7 +248,7 @@ func (w *worker) maybeSweep(ctx context.Context) {
 func (w *worker) runSweep(ctx context.Context, s *Sweep) (err error) {
 	defer func() {
 		if recover() != nil {
-			err = handlerPanic{frames: panicFrames()}
+			err = handlerPanic{frames: logging.PanicFrames()}
 		}
 	}()
 	return s.Run(ctx)
