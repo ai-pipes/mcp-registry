@@ -49,7 +49,7 @@ type OIDCConfig struct {
 	// GroupsClaim is the claim holding the groups; empty means DefaultGroupsClaim.
 	GroupsClaim string
 	Logger      *slog.Logger
-	// HTTPClient is optional (tests); its Transport, Jar and CheckRedirect are used, and a
+	// HTTPClient is optional (tests); its Transport and Jar are used (never its redirect policy), and a
 	// request timeout of requestTimeout is applied when it has none.
 	HTTPClient *http.Client
 }
@@ -62,9 +62,11 @@ type OIDCProvider struct {
 	cfg    OIDCConfig
 	log    *slog.Logger
 	client *http.Client
-	// outages counts what looks like a provider outage on the wire (no answer, or a 5xx), so a
-	// failure inside go-oidc, which hides its causes in text, can be classified.
+	// outages counts what looks like an outage of the key set on the wire (no answer, or a 5xx
+	// from the JWKS endpoint only), so a failure inside go-oidc, which hides its causes in text,
+	// can be classified; other requests, other logins' token or UserInfo failures, do not count.
 	outages atomic.Int64
+	jwksURL atomic.Value // string, set by discovery
 
 	mu     sync.Mutex
 	found  *discovered
@@ -97,8 +99,11 @@ func NewOIDCProvider(cfg OIDCConfig) *OIDCProvider {
 		timeout = requestTimeout
 	}
 	p.client = &http.Client{
-		Transport:     &watchTransport{next: rt, outages: &p.outages},
-		CheckRedirect: base.CheckRedirect, Jar: base.Jar, Timeout: timeout,
+		Transport: &watchTransport{next: rt, outages: &p.outages, jwksURL: &p.jwksURL},
+		// A redirect is never followed, whatever the injected client says: a 307 would re-send the
+		// request body (client secret, code, verifier) to wherever Location points.
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		Jar:           base.Jar, Timeout: timeout,
 	}
 	return p
 }
@@ -171,16 +176,31 @@ func (p *OIDCProvider) discover(f *discoveryFlight) {
 }
 
 func (p *OIDCProvider) fetchDiscovery(ctx context.Context) (*discovered, error) {
-	prov, err := oidc.NewProvider(oidc.ClientContext(ctx, p.client), p.cfg.Issuer)
+	cctx := oidc.ClientContext(ctx, p.client)
+	issuer := p.cfg.Issuer
+	prov, err := oidc.NewProvider(cctx, issuer)
+	var mismatch *oidc.IssuerMismatchError
+	if errors.As(err, &mismatch) && issuersEqual(mismatch.Provided, mismatch.Discovered) {
+		// The TypeScript library compares normalised URLs: https://idp.example and
+		// https://idp.example/ are the same issuer. From here on the DISCOVERED spelling is the
+		// issuer (the ID token's iss and the callback's iss carry it).
+		issuer = mismatch.Discovered
+		prov, err = oidc.NewProvider(oidc.InsecureIssuerURLContext(cctx, issuer), p.cfg.Issuer)
+	}
 	if err != nil {
 		return nil, err
 	}
 	var meta struct {
-		IssParam bool `json:"authorization_response_iss_parameter_supported"`
+		IssParam bool   `json:"authorization_response_iss_parameter_supported"`
+		JWKSURI  string `json:"jwks_uri"`
 	}
 	if err := prov.Claims(&meta); err != nil {
 		return nil, err
 	}
+	if err := requireSecureEndpoints(p.cfg.Issuer, prov.Endpoint().AuthURL, prov.Endpoint().TokenURL, prov.UserInfoEndpoint(), meta.JWKSURI); err != nil {
+		return nil, err
+	}
+	p.jwksURL.Store(meta.JWKSURI)
 	endpoint := prov.Endpoint()
 	endpoint.AuthStyle = oauth2.AuthStyleInParams // client_secret_post, one request, no probing
 	return &discovered{
@@ -191,7 +211,7 @@ func (p *OIDCProvider) fetchDiscovery(ctx context.Context) (*discovered, error) 
 		},
 		// Provider.Verifier takes the signing algorithms from id_token_signing_alg_values_supported.
 		verifier: prov.Verifier(&oidc.Config{ClientID: p.cfg.ClientID}),
-		issuer:   p.cfg.Issuer,
+		issuer:   issuer,
 		issParam: meta.IssParam,
 	}, nil
 }
@@ -256,6 +276,14 @@ func (p *OIDCProvider) Exchange(ctx context.Context, in app.OIDCExchangeInput) (
 	var id map[string]json.RawMessage
 	if err := idt.Claims(&id); err != nil {
 		return domain.OIDCClaims{}, errors.New("oidc: the ID token claims cannot be read")
+	}
+
+	if len(idt.Audience) > 1 {
+		// OpenID Connect Core 3.1.3.7: with several audiences azp must be present and be us.
+		var azp string
+		if err := json.Unmarshal(id["azp"], &azp); err != nil || azp != p.cfg.ClientID {
+			return domain.OIDCClaims{}, errors.New("oidc: the ID token has several audiences and its azp is not our client")
+		}
 	}
 
 	claim := p.cfg.GroupsClaim
@@ -385,16 +413,72 @@ func text(raw json.RawMessage) *string {
 	return &s
 }
 
-// watchTransport counts requests that got no answer or a 5xx.
+// watchTransport counts JWKS requests that got no answer or a 5xx.
 type watchTransport struct {
 	next    http.RoundTripper
 	outages *atomic.Int64
+	jwksURL *atomic.Value
 }
 
 func (w *watchTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	resp, err := w.next.RoundTrip(r)
-	if err != nil || resp.StatusCode >= http.StatusInternalServerError {
+	if jwks, _ := w.jwksURL.Load().(string); jwks != "" && r.URL.String() == jwks &&
+		(err != nil || resp.StatusCode >= http.StatusInternalServerError) {
 		w.outages.Add(1)
 	}
 	return resp, err
+}
+
+// issuersEqual compares two issuers as URLs the way WHATWG's new URL(a).href === new URL(b).href
+// does: lower-case scheme and host, a default port dropped, an empty path read as "/". Nothing else
+// is normalised (no trailing-slash stripping on a non-empty path, no case folding of the path).
+func issuersEqual(a, b string) bool {
+	na, ok := normalizeIssuer(a)
+	if !ok {
+		return false
+	}
+	nb, ok := normalizeIssuer(b)
+	return ok && na == nb
+}
+
+func normalizeIssuer(raw string) (string, bool) {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return "", false
+	}
+	u.Scheme = strings.ToLower(u.Scheme)
+	host := strings.ToLower(u.Hostname())
+	port := u.Port()
+	if (u.Scheme == "http" && port == "80") || (u.Scheme == "https" && port == "443") {
+		port = ""
+	}
+	u.Host = host
+	if strings.Contains(host, ":") {
+		u.Host = "[" + host + "]"
+	}
+	if port != "" {
+		u.Host += ":" + port
+	}
+	if u.Path == "" {
+		u.Path = "/"
+	}
+	return u.String(), true
+}
+
+// requireSecureEndpoints refuses endpoints that are not https unless the issuer itself is http
+// (a provider on a private network or in tests); the TypeScript library refuses insecure requests
+// the same way.
+func requireSecureEndpoints(issuer string, endpoints ...string) error {
+	if u, err := url.Parse(issuer); err == nil && strings.EqualFold(u.Scheme, "http") {
+		return nil
+	}
+	for _, e := range endpoints {
+		if e == "" {
+			continue
+		}
+		if u, err := url.Parse(e); err != nil || !strings.EqualFold(u.Scheme, "https") {
+			return errors.New("oidc: the provider announces an endpoint that is not https")
+		}
+	}
+	return nil
 }

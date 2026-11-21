@@ -4,9 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -129,6 +134,9 @@ func TestAuthorizationURL(t *testing.T) {
 			t.Errorf("%s = %q, want %q", k, q.Get(k), v)
 		}
 	}
+	if len(q) != len(want) {
+		t.Errorf("parameters %v, want exactly %d", q, len(want))
+	}
 	if strings.Contains(u.String(), r.idp.ClientSecret) || q.Has("client_secret") {
 		t.Fatal("the client secret is in the authorization URL")
 	}
@@ -166,8 +174,12 @@ func TestLoginWithGroupsAsArray(t *testing.T) {
 
 func TestLoginWithGroupsAsObjectSorted(t *testing.T) {
 	r := newRig(t, nil)
-	r.idp.SetClaims(oidctest.Claims{Sub: "u1", Groups: strs("zeta", "alpha", "mid"), Shape: oidctest.GroupsObject})
-	if c := r.login(t); !equal(c.Groups, strs("alpha", "mid", "zeta")) {
+	// A fixed, unsorted wire order: sorting is ours, not an accident of the provider's encoder.
+	r.idp.SetClaims(oidctest.Claims{
+		Sub: "u1", Shape: oidctest.GroupsNone,
+		IDTokenExtra: map[string]any{"groups": json.RawMessage(`{"zeta":{},"alpha":{},"mid":{},"beta":{}}`)},
+	})
+	if c := r.login(t); !equal(c.Groups, strs("alpha", "beta", "mid", "zeta")) {
 		t.Fatalf("groups %v", c.Groups)
 	}
 }
@@ -450,8 +462,9 @@ func TestDiscoveryGivesUpAfterFiveSeconds(t *testing.T) {
 	}
 }
 
-func TestIssuerMismatchInMetadataIsUnavailable(t *testing.T) {
-	r := newRig(t, func(c *infra.OIDCConfig) { c.Issuer += "/" })
+func TestARealIssuerMismatchInMetadataIsUnavailable(t *testing.T) {
+	r := newRig(t, nil)
+	r.idp.SetMetadataIssuer("http://other.example")
 	_, err := r.prov.AuthorizationURL(context.Background(), app.OIDCAuthorizationInput{State: "s", CodeChallenge: "c", Nonce: "n"})
 	wantUnavailable(t, err)
 }
@@ -553,4 +566,245 @@ func parseJSON(t *testing.T, line string) map[string]any {
 		t.Fatalf("log line %q: %v", line, err)
 	}
 	return m
+}
+
+func TestRedirectsAreNeverFollowed(t *testing.T) {
+	for _, ep := range []oidctest.Endpoint{oidctest.Discovery, oidctest.JWKS, oidctest.Token, oidctest.UserInfo} {
+		t.Run(string(ep), func(t *testing.T) {
+			var hits atomic.Int64
+			var seen atomic.Value
+			other := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+				hits.Add(1)
+				body, _ := io.ReadAll(r.Body)
+				seen.Store(string(body))
+			}))
+			defer other.Close()
+			// The injected client follows redirects; the adapter must not trust it.
+			r := newRig(t, func(c *infra.OIDCConfig) {
+				c.HTTPClient = &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return nil }}
+			})
+			r.idp.SetClaims(oidctest.Claims{Sub: "u1", Groups: strs("g"), Where: oidctest.InUserInfo})
+			r.idp.SetRedirect(ep, other.URL)
+			iss := r.idp.Issuer
+			_, err := r.exchange(r.code(), &iss)
+			if ep == oidctest.UserInfo {
+				if err != nil {
+					t.Fatalf("a refused UserInfo is only a missing group list: %v", err)
+				}
+			} else if err == nil {
+				t.Fatal("a redirect was accepted")
+			}
+			if n := hits.Load(); n != 0 {
+				t.Fatalf("the redirect target received %d requests: %v", n, seen.Load())
+			}
+		})
+	}
+}
+
+func TestIssuerDifferingOnlyByNormalisationIsAccepted(t *testing.T) {
+	for name, tc := range map[string]struct{ configured, announced func(string) string }{
+		"configured with a trailing slash": {func(i string) string { return i + "/" }, func(i string) string { return i }},
+		"announced with a trailing slash":  {func(i string) string { return i }, func(i string) string { return i + "/" }},
+	} {
+		t.Run(name, func(t *testing.T) {
+			idp := oidctest.Start(t)
+			idp.SetMetadataIssuer(tc.announced(idp.Issuer))
+			idp.SetClaims(oidctest.Claims{Sub: "u1", Groups: strs("g")})
+			prov := infra.NewOIDCProvider(infra.OIDCConfig{
+				Issuer: tc.configured(idp.Issuer), ClientID: idp.ClientID,
+				ClientSecret: idp.ClientSecret, RedirectURI: redirectURI,
+			})
+			u, err := prov.AuthorizationURL(context.Background(), app.OIDCAuthorizationInput{State: "s", CodeChallenge: oidctest.Challenge(verifier), Nonce: nonce})
+			if err != nil {
+				t.Fatal(err)
+			}
+			// The whole flow, with the DISCOVERED issuer as the ID token's iss and the callback's iss.
+			code, iss := browse(t, u)
+			if iss != tc.announced(idp.Issuer) {
+				t.Fatalf("callback iss %q", iss)
+			}
+			c, err := prov.Exchange(context.Background(), app.OIDCExchangeInput{Code: code, CodeVerifier: verifier, Nonce: nonce, Iss: &iss})
+			if err != nil || c.Sub != "u1" {
+				t.Fatalf("claims %+v, err %v", c, err)
+			}
+		})
+	}
+}
+
+// browse plays the browser: the authorization request, and the code and iss of the redirect back.
+func browse(t *testing.T, u *url.URL) (code, iss string) {
+	t.Helper()
+	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	resp, err := client.Get(u.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	loc, err := resp.Location()
+	if err != nil {
+		t.Fatalf("no redirect (status %d): %v", resp.StatusCode, err)
+	}
+	return loc.Query().Get("code"), loc.Query().Get("iss")
+}
+
+func TestFullFlowThroughTheAuthorizeStep(t *testing.T) {
+	r := newRig(t, nil)
+	r.idp.SetClaims(oidctest.Claims{Sub: "u1", Name: "Anna", Groups: strs("g")})
+	u, err := r.prov.AuthorizationURL(context.Background(), app.OIDCAuthorizationInput{State: "st", CodeChallenge: oidctest.Challenge(verifier), Nonce: nonce})
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, iss := browse(t, u)
+	if code == "" || iss != r.idp.Issuer {
+		t.Fatalf("code %q iss %q", code, iss)
+	}
+	c, err := r.exchange(code, &iss)
+	if err != nil || c.Sub != "u1" || c.Name != "Anna" || !equal(c.Groups, strs("g")) {
+		t.Fatalf("claims %+v err %v", c, err)
+	}
+}
+
+// stubDiscovery serves a discovery document over TLS with the given endpoint scheme.
+func stubDiscovery(t *testing.T, endpointScheme string) *httptest.Server {
+	t.Helper()
+	var srv *httptest.Server
+	srv = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		host := strings.TrimPrefix(srv.URL, "https://")
+		base := endpointScheme + "://" + host
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"issuer": srv.URL, "authorization_endpoint": base + "/authorize", "token_endpoint": base + "/token",
+			"jwks_uri": base + "/jwks", "userinfo_endpoint": base + "/userinfo",
+			"id_token_signing_alg_values_supported": []string{"ES256"},
+		})
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestAnHTTPSIssuerRefusesInsecureEndpoints(t *testing.T) {
+	for scheme, ok := range map[string]bool{"https": true, "http": false} {
+		t.Run(scheme+" endpoints", func(t *testing.T) {
+			srv := stubDiscovery(t, scheme)
+			prov := infra.NewOIDCProvider(infra.OIDCConfig{
+				Issuer: srv.URL, ClientID: "c", ClientSecret: "s",
+				RedirectURI: redirectURI, HTTPClient: srv.Client(),
+			})
+			_, err := prov.AuthorizationURL(context.Background(), app.OIDCAuthorizationInput{State: "s", CodeChallenge: "c", Nonce: "n"})
+			if ok && err != nil {
+				t.Fatal(err)
+			}
+			if !ok {
+				wantUnavailable(t, err)
+			}
+		})
+	}
+}
+
+func TestAnHTTPIssuerKeepsWorkingWithHTTPEndpoints(t *testing.T) {
+	r := newRig(t, nil) // the test provider is http everywhere
+	r.idp.SetClaims(oidctest.Claims{Sub: "u1", Groups: strs("g")})
+	r.login(t)
+}
+
+func TestAudienceListNeedsAzp(t *testing.T) {
+	cases := map[string]struct {
+		tamper oidctest.Tamper
+		ok     bool
+	}{
+		"two audiences, no azp":            {oidctest.Tamper{Audiences: []string{"mcp-gateway", "other"}}, false},
+		"two audiences, foreign azp":       {oidctest.Tamper{Audiences: []string{"mcp-gateway", "other"}, Azp: "other"}, false},
+		"two audiences, azp is the client": {oidctest.Tamper{Audiences: []string{"mcp-gateway", "other"}, Azp: "mcp-gateway"}, true},
+		"one audience, no azp":             {oidctest.Tamper{Audiences: []string{"mcp-gateway"}}, true},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			r := newRig(t, nil)
+			r.idp.SetClaims(oidctest.Claims{Sub: "u1", Groups: strs("g")})
+			r.idp.SetTamper(tc.tamper)
+			iss := r.idp.Issuer
+			_, err := r.exchange(r.code(), &iss)
+			if tc.ok && err != nil {
+				t.Fatal(err)
+			}
+			if !tc.ok {
+				wantRejected(t, err)
+			}
+		})
+	}
+}
+
+func TestAnotherLoginsFailureDoesNotMakeThisRefusalAnOutage(t *testing.T) {
+	r := newRig(t, nil)
+	r.idp.SetClaims(oidctest.Claims{Sub: "u1", Groups: strs("g"), Where: oidctest.InUserInfo})
+	r.login(t) // warms the key set
+	iss := r.idp.Issuer
+	bad := oidctest.Tamper{WrongKey: true}
+	badCode := r.idp.IssueCode(oidctest.Grant{RedirectURI: redirectURI, Nonce: nonce, CodeChallenge: oidctest.Challenge(verifier), Tamper: &bad})
+
+	// The bad-signature login stops at the key set (it re-fetches the keys); meanwhile another login
+	// meets a 5xx on UserInfo; then the key set answers.
+	r.idp.SetFault(oidctest.JWKS, oidctest.FaultGate)
+	r.idp.Drain()
+	result := make(chan error, 1)
+	go func() {
+		_, err := r.exchange(badCode, &iss)
+		result <- err
+	}()
+	if !r.idp.WaitFor(oidctest.JWKS, 10*time.Second) {
+		t.Fatal("the bad-signature login never asked for the key set")
+	}
+	r.idp.SetFault(oidctest.UserInfo, oidctest.Fault500)
+	r.login(t)
+	if n := r.idp.Requests(oidctest.UserInfo); n == 0 {
+		t.Fatal("the other login never met the 5xx")
+	}
+	r.idp.ReleaseGate()
+	wantRejected(t, <-result)
+}
+
+func TestIDTokenWeaknessesAreRefused(t *testing.T) {
+	cases := map[string]struct {
+		tamper oidctest.Tamper
+		claims oidctest.Claims
+	}{
+		"no nonce claim":        {oidctest.Tamper{OmitNonce: true}, oidctest.Claims{Sub: "u1", Groups: strs("g")}},
+		"empty subject":         {oidctest.Tamper{}, oidctest.Claims{Sub: "", Groups: strs("g")}},
+		"alg none":              {oidctest.Tamper{Alg: "none"}, oidctest.Claims{Sub: "u1", Groups: strs("g")}},
+		"HS256 with our secret": {oidctest.Tamper{Alg: "HS256"}, oidctest.Claims{Sub: "u1", Groups: strs("g")}},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			r := newRig(t, nil)
+			// The provider even advertises the weak algorithms.
+			r.idp.SetAdvertisedAlgs("ES256", "HS256", "none")
+			r.idp.SetClaims(tc.claims)
+			r.idp.SetTamper(tc.tamper)
+			iss := r.idp.Issuer
+			_, err := r.exchange(r.code(), &iss)
+			wantRejected(t, err)
+		})
+	}
+}
+
+func TestACancelledTokenRequestIsNotAnOutage(t *testing.T) {
+	r := newRig(t, nil)
+	r.idp.SetClaims(oidctest.Claims{Sub: "u1", Groups: strs("g")})
+	r.login(t) // discovery done
+	r.idp.SetFault(oidctest.Token, oidctest.FaultHang)
+	r.idp.Drain()
+	ctx, cancel := context.WithCancel(context.Background())
+	iss := r.idp.Issuer
+	result := make(chan error, 1)
+	go func() {
+		_, err := r.prov.Exchange(ctx, app.OIDCExchangeInput{Code: r.code(), CodeVerifier: verifier, Nonce: nonce, Iss: &iss})
+		result <- err
+	}()
+	if !r.idp.WaitFor(oidctest.Token, 10*time.Second) {
+		t.Fatal("the token request never arrived")
+	}
+	cancel()
+	wantRejected(t, <-result)
+	r.idp.SetFault(oidctest.Token, oidctest.FaultNone)
+	r.login(t) // nothing was left behind
 }

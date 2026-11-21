@@ -7,6 +7,7 @@ package oidctest
 import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -14,6 +15,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -35,11 +38,13 @@ type Fault int
 
 // The faults an endpoint can show.
 const (
-	FaultNone    Fault = iota
-	Fault500           // answers 500
-	FaultDrop          // closes the connection without an answer
-	FaultHang          // never answers (until the provider stops)
-	Fault400JSON       // answers 400 {"error":"invalid_grant"}
+	FaultNone     Fault = iota
+	Fault500            // answers 500
+	FaultDrop           // closes the connection without an answer
+	FaultHang           // never answers (until the provider stops)
+	Fault400JSON        // answers 400 {"error":"invalid_grant"}
+	FaultGate           // waits for ReleaseGate, then answers normally
+	FaultRedirect       // answers 307 to the target given to SetRedirect
 )
 
 // GroupsShape is how groups are written into the claims.
@@ -84,6 +89,13 @@ type Tamper struct {
 	Expired     bool   // exp in the past
 	WrongKey    bool   // signed with a key the JWKS does not advertise
 	OmitIDToken bool   // the token response has no id_token
+	OmitNonce   bool   // the ID token has no nonce claim
+	// Alg signs the ID token with "none" (no signature) or "HS256" (keyed with the client secret)
+	// instead of ES256; the header says so.
+	Alg string
+	// Audiences, when set, is aud as an array (instead of the client ID alone); Azp is the azp claim.
+	Audiences []string
+	Azp       string
 }
 
 // Grant is what a code stands for; the test plays the browser step and issues the code itself.
@@ -91,6 +103,8 @@ type Grant struct {
 	RedirectURI   string
 	Nonce         string
 	CodeChallenge string // S256 challenge of the verifier the test will send
+	// Tamper, when set, replaces the provider's tamper settings for this code only.
+	Tamper *Tamper
 }
 
 // Challenge is the S256 code challenge of a verifier.
@@ -117,6 +131,12 @@ type Provider struct {
 	access    map[string]Claims
 	issParam  bool
 	release   chan struct{}
+	redirect  string
+	metaIss   string
+	algs      []string
+	arrivals  chan Endpoint
+	gate      chan struct{}
+	gateOnce  sync.Once
 	closeOnce sync.Once
 	srv       *httptest.Server
 }
@@ -131,7 +151,7 @@ func Start(t testing.TB) *Provider {
 		ClientID: "mcp-gateway", ClientSecret: "client-secret-value",
 		claims: DefaultClaims, faults: map[Endpoint]Fault{}, requests: map[Endpoint]int{},
 		grants: map[string]Grant{}, access: map[string]Claims{}, issParam: true,
-		release: make(chan struct{}),
+		release: make(chan struct{}), algs: []string{"ES256"}, arrivals: make(chan Endpoint, 256), gate: make(chan struct{}),
 	}
 	var err error
 	if p.key, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader); err != nil {
@@ -142,6 +162,7 @@ func Start(t testing.TB) *Provider {
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /.well-known/openid-configuration", p.guard(Discovery, p.discovery))
+	mux.HandleFunc("GET /authorize", p.authorize)
 	mux.HandleFunc("GET /jwks", p.guard(JWKS, p.jwks))
 	mux.HandleFunc("POST /token", p.guard(Token, p.token))
 	mux.HandleFunc("GET /userinfo", p.guard(UserInfo, p.userinfo))
@@ -168,6 +189,57 @@ func (p *Provider) SetTamper(t Tamper) { p.with(func() { p.tamper = t }) }
 
 // SetFault makes an endpoint misbehave (FaultNone ends it).
 func (p *Provider) SetFault(e Endpoint, f Fault) { p.with(func() { p.faults[e] = f }) }
+
+// SetRedirect makes an endpoint answer 307 to target (FaultRedirect) until SetFault ends it.
+func (p *Provider) SetRedirect(e Endpoint, target string) {
+	p.with(func() { p.faults[e] = FaultRedirect; p.redirect = target })
+}
+
+// SetMetadataIssuer sets the issuer the provider announces (metadata, ID token iss, authorize
+// redirect) when it differs from the address it listens on, e.g. by a trailing slash.
+func (p *Provider) SetMetadataIssuer(iss string) { p.with(func() { p.metaIss = iss }) }
+
+func (p *Provider) announced() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.metaIss != "" {
+		return p.metaIss
+	}
+	return p.Issuer
+}
+
+// ReleaseGate lets the requests held by FaultGate through (and later ones pass at once).
+func (p *Provider) ReleaseGate() { p.gateOnce.Do(func() { close(p.gate) }) }
+
+// Drain forgets the arrivals recorded so far, so WaitFor sees only later requests.
+func (p *Provider) Drain() {
+	for {
+		select {
+		case <-p.arrivals:
+		default:
+			return
+		}
+	}
+}
+
+// SetAdvertisedAlgs sets id_token_signing_alg_values_supported (default ES256).
+func (p *Provider) SetAdvertisedAlgs(algs ...string) { p.with(func() { p.algs = algs }) }
+
+// WaitFor blocks until a request to the endpoint has arrived (requests that arrived before the
+// call count too, once each) or the timeout passes.
+func (p *Provider) WaitFor(e Endpoint, timeout time.Duration) bool {
+	deadline := time.After(timeout)
+	for {
+		select {
+		case got := <-p.arrivals:
+			if got == e {
+				return true
+			}
+		case <-deadline:
+			return false
+		}
+	}
+}
 
 // SetIssParamSupported sets authorization_response_iss_parameter_supported in the metadata.
 func (p *Provider) SetIssParamSupported(v bool) { p.with(func() { p.issParam = v }) }
@@ -204,9 +276,22 @@ func (p *Provider) guard(e Endpoint, h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		p.mu.Lock()
 		p.requests[e]++
-		f := p.faults[e]
+		f, target := p.faults[e], p.redirect
 		p.mu.Unlock()
+		select {
+		case p.arrivals <- e:
+		default:
+		}
 		switch f {
+		case FaultGate:
+			select {
+			case <-p.gate:
+				h(w, r)
+			case <-p.release:
+			case <-r.Context().Done():
+			}
+		case FaultRedirect:
+			http.Redirect(w, r, target, http.StatusTemporaryRedirect)
 		case Fault500:
 			http.Error(w, "boom", http.StatusInternalServerError)
 		case FaultDrop:
@@ -229,17 +314,17 @@ func (p *Provider) guard(e Endpoint, h http.HandlerFunc) http.HandlerFunc {
 
 func (p *Provider) discovery(w http.ResponseWriter, _ *http.Request) {
 	p.mu.Lock()
-	iss := p.issParam
+	iss, algs := p.issParam, p.algs
 	p.mu.Unlock()
 	writeJSON(w, http.StatusOK, map[string]any{
-		"issuer":                                         p.Issuer,
+		"issuer":                                         p.announced(),
 		"authorization_endpoint":                         p.Issuer + "/authorize",
 		"token_endpoint":                                 p.Issuer + "/token",
 		"jwks_uri":                                       p.Issuer + "/jwks",
 		"userinfo_endpoint":                              p.Issuer + "/userinfo",
 		"response_types_supported":                       []string{"code"},
 		"subject_types_supported":                        []string{"public"},
-		"id_token_signing_alg_values_supported":          []string{"ES256"},
+		"id_token_signing_alg_values_supported":          algs,
 		"token_endpoint_auth_methods_supported":          []string{"client_secret_post"},
 		"code_challenge_methods_supported":               []string{"S256"},
 		"authorization_response_iss_parameter_supported": iss,
@@ -269,6 +354,9 @@ func (p *Provider) token(w http.ResponseWriter, r *http.Request) {
 	grant, ok := p.grants[form.Get("code")]
 	delete(p.grants, form.Get("code"))
 	claims, tamper := p.claims, p.tamper
+	if ok && grant.Tamper != nil {
+		tamper = *grant.Tamper
+	}
 	p.mu.Unlock()
 	// client_secret_post only: credentials in the form, never in a header.
 	if r.Header.Get("Authorization") != "" || form.Get("client_id") != p.ClientID || form.Get("client_secret") != p.ClientSecret {
@@ -285,8 +373,17 @@ func (p *Provider) token(w http.ResponseWriter, r *http.Request) {
 	p.with(func() { p.access[access] = claims })
 	now := time.Now()
 	payload := map[string]any{
-		"iss": orDefault(tamper.Issuer, p.Issuer), "aud": orDefault(tamper.Audience, p.ClientID),
+		"iss": orDefault(tamper.Issuer, p.announced()), "aud": orDefault(tamper.Audience, p.ClientID),
 		"iat": now.Unix(), "exp": now.Add(5 * time.Minute).Unix(), "nonce": orDefault(tamper.Nonce, grant.Nonce),
+	}
+	if len(tamper.Audiences) > 0 {
+		payload["aud"] = tamper.Audiences
+	}
+	if tamper.Azp != "" {
+		payload["azp"] = tamper.Azp
+	}
+	if tamper.OmitNonce {
+		delete(payload, "nonce")
 	}
 	if tamper.Expired {
 		payload["exp"] = now.Add(-time.Hour).Unix()
@@ -301,7 +398,14 @@ func (p *Provider) token(w http.ResponseWriter, r *http.Request) {
 		if tamper.WrongKey {
 			key = p.otherKey
 		}
-		resp["id_token"] = sign(key, payload)
+		switch tamper.Alg {
+		case "none":
+			resp["id_token"] = signUnsigned(payload)
+		case "HS256":
+			resp["id_token"] = signHMAC([]byte(p.ClientSecret), payload)
+		default:
+			resp["id_token"] = sign(key, payload)
+		}
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -363,6 +467,46 @@ func sign(key *ecdsa.PrivateKey, payload map[string]any) string {
 	}
 	sig := append(rr.FillBytes(make([]byte, 32)), ss.FillBytes(make([]byte, 32))...)
 	return signing + "." + b64(sig)
+}
+
+func signUnsigned(payload map[string]any) string {
+	head, _ := json.Marshal(map[string]string{"alg": "none", "typ": "JWT"})
+	body, _ := json.Marshal(payload)
+	return b64(head) + "." + b64(body) + "."
+}
+
+func signHMAC(secret []byte, payload map[string]any) string {
+	head, _ := json.Marshal(map[string]string{"alg": "HS256", "kid": "k1", "typ": "JWT"})
+	body, _ := json.Marshal(payload)
+	signing := b64(head) + "." + b64(body)
+	mac := hmac.New(sha256.New, secret)
+	mac.Write([]byte(signing))
+	return signing + "." + b64(mac.Sum(nil))
+}
+
+// authorize is the browser step: the person consents at once and the answer is the redirect back
+// with a code, the state and iss (RFC 9207).
+func (p *Provider) authorize(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	redirect := q.Get("redirect_uri")
+	if q.Get("client_id") != p.ClientID || q.Get("response_type") != "code" ||
+		q.Get("code_challenge_method") != "S256" || q.Get("code_challenge") == "" || redirect == "" ||
+		!slices.Contains(strings.Fields(q.Get("scope")), "openid") {
+		http.Error(w, "bad authorization request", http.StatusBadRequest)
+		return
+	}
+	target, err := url.Parse(redirect)
+	if err != nil {
+		http.Error(w, "bad redirect_uri", http.StatusBadRequest)
+		return
+	}
+	code := p.IssueCode(Grant{RedirectURI: redirect, Nonce: q.Get("nonce"), CodeChallenge: q.Get("code_challenge")})
+	rq := target.Query()
+	rq.Set("code", code)
+	rq.Set("state", q.Get("state"))
+	rq.Set("iss", p.announced())
+	target.RawQuery = rq.Encode()
+	http.Redirect(w, r, target.String(), http.StatusFound) //nolint:gosec // G710: a test provider sends the browser where the client registered
 }
 
 func b64(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }
