@@ -28,6 +28,7 @@ const (
 	DevConfigErrors         Deviation = "config-errors"
 	DevAuditLoginVia        Deviation = "audit-login-via"
 	DevRetryAfter429        Deviation = "token-429-retry-after"
+	DevOIDCBindingKept      Deviation = "oidc-binding-kept"
 )
 
 // DeviationInfo is one registry entry.
@@ -48,6 +49,7 @@ var AllDeviations = []DeviationInfo{
 	{DevConfigErrors, "EMBEDDER=openai-compatible without EMBEDDER_URL/EMBEDDER_MODEL ends in an unhandled exception and OIDC_SCOPES without openid is refused without OIDC -> an ordinary `Invalid configuration:` error naming both variables, and OIDC_SCOPES is validated only when OIDC is configured"},
 	{DevAuditLoginVia, "an OIDC sign-in writes auth.login with empty meta -> meta.via is \"oidc\""},
 	{DevRetryAfter429, "the 429 for failed token checks on /mcp has no Retry-After -> it carries Retry-After with a positive integer"},
+	{DevOIDCBindingKept, "any OIDC callback (a forged one included) clears the browser's mcp_login binding cookie before checking it, so a foreign callback breaks the sign-in in progress with invalid_state -> the cookie is cleared only when the callback's state matches it; a callback that does not match leaves it alone and the genuine sign-in completes"},
 }
 
 // FixedEnv is the environment variable that selects the decided behaviours.

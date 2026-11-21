@@ -96,7 +96,7 @@ COMPAT_GO_TESTS := TestConfigRefused TestPlatformStartsOnReferenceDatabase TestP
 	TestCLIVersion TestCLICreateUser TestCLICreateUserRoleFlags TestCLICreateToken TestCLILoginLink TestCLILoginLinkWithOIDC \
 	TestFirstStartAnnouncement TestFirstStartAnnouncementNeedsAnEmptyDatabaseAndNoOIDC \
 	TestConfigEmptyMeansUnset TestPlatformMethodsWithoutOIDC TestPlatformCSRF TestPlatformHealthz \
-	TestPlatformAccessLog TestPlatformBodyLimit TestPlatformSecurityHeaders
+	TestPlatformAccessLog TestPlatformBodyLimit TestPlatformSecurityHeaders TestIdentityOIDCBindingKept
 
 # Subtests of the scenarios above that need a later milestone, as a go test -skip expression: one
 # entry per line below, joined with `|` (slash-separated regular expressions per level; spaces of a
@@ -159,7 +159,8 @@ COMPAT_GO_RUN := ^($(subst $(space),|,$(strip $(COMPAT_GO_TESTS))))$$
 # The suite against the Go image. The reference image (mcp-registry:compat-ts) must exist as well:
 # some scenarios compare with it on the same machine, and the new-database scenario starts from it.
 # COMPAT_FIXED: the deviations (compat/harness/deviations.go) whose decided behaviour the Go server
-# has: config-errors (milestone 1), audit-login-via and create-user-keeps-role (milestone 2).
+# has: config-errors (milestone 1), audit-login-via, create-user-keeps-role and oidc-binding-kept
+# (milestone 2).
 # Left out, each until the milestone that implements it: token-429-retry-after and
 # request-id-on-refusals (the /mcp route, milestone 6), oauth-state-kept (connections, milestone 5),
 # create-server-sync-exit and reindex-wording (the operator CLI, milestone 7), ready-before-serving
@@ -172,7 +173,7 @@ compat-go:
 	@listed="$$(go test -tags compat -count=1 -list '$(COMPAT_GO_RUN)' ./compat/ | grep -c '^Test')"; \
 	if [ "$$listed" != "$(words $(COMPAT_GO_TESTS))" ]; then \
 		echo "compat-go: the pattern '$(COMPAT_GO_RUN)' matches $$listed scenario(s), COMPAT_GO_TESTS names $(words $(COMPAT_GO_TESTS)): $(COMPAT_GO_TESTS)"; exit 1; fi
-	COMPAT_IMAGE=mcp-registry:compat-go COMPAT_CLI=mcp-registry COMPAT_FIXED=config-errors,audit-login-via,create-user-keeps-role \
+	COMPAT_IMAGE=mcp-registry:compat-go COMPAT_CLI=mcp-registry COMPAT_FIXED=config-errors,audit-login-via,create-user-keeps-role,oidc-binding-kept \
 		go test -tags compat -count=1 -p 1 -timeout 30m -run '$(COMPAT_GO_RUN)' $(if $(COMPAT_GO_SKIP),-skip '$(COMPAT_GO_SKIP)') $(COMPAT_ARGS) ./compat/
 
 # COMPAT_ARGS adds go test arguments, e.g. make compat COMPAT_ARGS='-run ^TestPlatform' (the -run
