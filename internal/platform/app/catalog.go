@@ -40,14 +40,27 @@ func newCatalogWiring(rt Runtime, id identityWiring) catalogWiring {
 	return catalogWiringOver(rt, id, catinfra.NewPg(rt.Pool), upstream.New(upstream.Options{}))
 }
 
+// syncCredentialsFor is the port over identity's service; nil when there is none.
+func syncCredentialsFor(id identityWiring) catalog.SyncCredentials {
+	if id.service == nil {
+		return nil
+	}
+	return personalSyncCredentials{identity: id.service}
+}
+
 // catalogWiringOver builds the module over the given repositories and upstream client (tests hand
-// in memory repositories and a fake client).
+// in memory repositories and a fake client). It panics when Deps.Credentials would be nil.
 func catalogWiringOver(rt Runtime, id identityWiring, repos catinfra.Repos, client kernel.UpstreamClient) catalogWiring {
+	creds := syncCredentialsFor(id)
+	if creds == nil {
+		// A catalog without credentials would panic at the first personal-auth synchronisation.
+		panic("catalog wiring: no sync credentials (the identity service is missing)")
+	}
 	deps := catalog.Deps{
 		Servers: repos.Servers, Tools: repos.Tools,
 		Box: rt.Box, Clock: rt.Clock, Audit: rt.Audit,
 		Upstream:         client,
-		Credentials:      personalSyncCredentials{identity: id.service},
+		Credentials:      creds,
 		MaxResponseBytes: int64(rt.Config.UpstreamMaxResponseBytes),
 		Logger:           rt.Logger,
 	}

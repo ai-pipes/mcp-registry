@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	"github.com/ai-pipes/mcp-registry/internal/kernel"
 	"github.com/ai-pipes/mcp-registry/internal/modules/catalog"
 	catapp "github.com/ai-pipes/mcp-registry/internal/modules/catalog/app"
+	"github.com/ai-pipes/mcp-registry/internal/modules/catalog/domain"
 	catinfra "github.com/ai-pipes/mcp-registry/internal/modules/catalog/infra"
 	"github.com/ai-pipes/mcp-registry/internal/platform/httpx"
 	"github.com/ai-pipes/mcp-registry/internal/platform/upstream"
@@ -25,9 +27,17 @@ import (
 // its guard).
 type memServers struct{ catapp.ServerRepository }
 
+// FindBySlug knows no server: the routes that look one up answer not-found.
+func (memServers) FindBySlug(context.Context, string) (*domain.Server, error) { return nil, nil }
+
 func (memServers) List(context.Context) ([]catapp.ServerListing, error) { return nil, nil }
 
 type memTools struct{ catapp.ToolRepository }
+
+func (memTools) Find(context.Context, string, string) (*domain.Tool, error) { return nil, nil }
+func (memTools) ListByServer(context.Context, string) ([]*domain.Tool, error) {
+	return nil, nil
+}
 
 type noUpstream struct{ kernel.UpstreamClient }
 
@@ -37,13 +47,29 @@ func catinfraRepos(s catapp.ServerRepository) catinfra.Repos {
 
 var sessionOf = cookie
 
+// catalogPaths is the catalog's route table as the server's own module list (modules(), the
+// function Run uses) builds it. The table cannot be SERVED from that list without a database (its
+// repositories are Postgres ones), so the requests below go to a handler assembled from the same
+// wiring over in-memory repositories; the two tables must be equal.
 func catalogPaths(t *testing.T, e *wiringEnv) []httpx.Route {
 	t.Helper()
-	out := e.c.module().Routes
-	if len(out) != 10 {
-		t.Fatalf("the catalog registers %d routes, want 10", len(out))
+	composed := modules(e.c.rt)[2].Routes
+	if len(composed) != 10 {
+		t.Fatalf("the catalog registers %d routes, want 10", len(composed))
 	}
-	return out
+	served := e.c.module().Routes
+	key := func(r httpx.Route) string { return r.Method + " " + r.Path }
+	var a, b []string
+	for _, r := range composed {
+		a = append(a, key(r))
+	}
+	for _, r := range served {
+		b = append(b, key(r))
+	}
+	if !slices.Equal(a, b) {
+		t.Fatalf("modules() routes %v differ from the served ones %v", a, b)
+	}
+	return composed
 }
 
 // concrete turns a route pattern into a request path.
@@ -52,25 +78,43 @@ func concrete(p string) string {
 	return strings.ReplaceAll(p, "{name}", "search")
 }
 
+// The refusal of a token is the session guard's own, by name: the handlers' checks answer 401
+// too, so the status alone would not tell a guard that was stripped of its Authorization check.
+const tokenRefusal = //nolint:gosec // G101: an error message, not a credential
+"tokens do not work on the web API"
+
 func TestEveryCatalogRouteOfTheComposedServerIsGuarded(t *testing.T) {
 	e := newWiringEnv(t)
+	withToken := func(q *http.Request) { q.Header.Set("Authorization", "Bearer sk_x") }
 	for _, r := range catalogPaths(t, e) {
 		path := concrete(r.Path)
-		admin := strings.HasPrefix(r.Path, "/api/servers")
-		anonymous := e.do(r.Method, path, `{}`, "198.51.100.1", nil).Code
-		bearer := e.do(r.Method, path, `{}`, "198.51.100.1", func(q *http.Request) { q.Header.Set("Authorization", "Bearer sk_x") }).Code
-		member := e.do(r.Method, path, `{}`, "198.51.100.1", sessionOf("mcp_session", memberCookie)).Code
-		if anonymous != http.StatusUnauthorized {
-			t.Errorf("%s %s without a session: %d, want 401", r.Method, r.Path, anonymous)
+		isAdminRoute := strings.HasPrefix(r.Path, "/api/servers")
+		do := func(mod func(*http.Request)) *httptest.ResponseRecorder {
+			return e.do(r.Method, path, `{}`, "198.51.100.1", mod)
 		}
-		if bearer != http.StatusUnauthorized {
-			t.Errorf("%s %s with an sk_ token: %d, want 401", r.Method, r.Path, bearer)
+		if got := do(nil); got.Code != http.StatusUnauthorized || !strings.Contains(got.Body.String(), "sign in required") {
+			t.Errorf("%s %s without a session: %d %s, want 401 sign in required", r.Method, r.Path, got.Code, got.Body)
 		}
-		if admin && member != http.StatusForbidden {
+		if got := do(withToken); got.Code != http.StatusUnauthorized || !strings.Contains(got.Body.String(), tokenRefusal) {
+			t.Errorf("%s %s with an sk_ token: %d %s, want 401 %q", r.Method, r.Path, got.Code, got.Body, tokenRefusal)
+		}
+		// A token next to a valid admin session is refused too (as in TypeScript: the web API
+		// takes the cookie alone).
+		both := func(q *http.Request) { sessionOf("mcp_session", adminCookie)(q); withToken(q) }
+		if got := do(both); got.Code != http.StatusUnauthorized || !strings.Contains(got.Body.String(), tokenRefusal) {
+			t.Errorf("%s %s with a token and an admin session: %d %s, want 401 %q", r.Method, r.Path, got.Code, got.Body, tokenRefusal)
+		}
+		member := do(sessionOf("mcp_session", memberCookie)).Code
+		if isAdminRoute && member != http.StatusForbidden {
 			t.Errorf("%s %s as a member: %d, want 403", r.Method, r.Path, member)
 		}
-		if !admin && member != http.StatusOK {
+		if !isAdminRoute && member != http.StatusOK {
 			t.Errorf("%s %s as a member: %d, want 200", r.Method, r.Path, member)
+		}
+		// An admin passes the guards: whatever the handler answers over empty repositories
+		// (a not-found, a validation error, a list), it is neither a refusal nor a crash.
+		if got := do(sessionOf("mcp_session", adminCookie)).Code; got == http.StatusUnauthorized || got == http.StatusForbidden || got >= 500 {
+			t.Errorf("%s %s as an admin: %d", r.Method, r.Path, got)
 		}
 	}
 }
@@ -229,4 +273,14 @@ func TestTheServerModuleListHasTheCatalog(t *testing.T) {
 	if len(asm.handlers) != 0 {
 		t.Errorf("handlers %v: the outbox worker must stay off until milestone 4", sortedKeys(asm.handlers))
 	}
+}
+
+func TestCatalogWiringRefusesToBeBuiltWithoutCredentials(t *testing.T) {
+	e := newWiringEnv(t)
+	defer func() {
+		if recover() == nil {
+			t.Fatal("no panic for a wiring without the identity service")
+		}
+	}()
+	catalogWiringOver(e.c.rt, identityWiring{}, catinfraRepos(memServers{}), noUpstream{})
 }

@@ -244,9 +244,11 @@ func TestCatalogOnTheComposedServer(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, path := range []string{"/api/servers", "/api/catalog", "/api/servers/files/tools"} {
-			status, _, raw := call(t, "GET", rs.base+path, "", nil, "Authorization", "Bearer "+created.Token)
-			if status != 401 {
-				t.Errorf("GET %s with a token: %d %s", path, status, raw)
+			for name, cookie := range map[string]string{"alone": "", "next to an admin session": admin.cookie} {
+				status, raw, _ := call(t, "GET", rs.base+path, cookie, nil, "Authorization", "Bearer "+created.Token)
+				if status != 401 || !strings.Contains(string(raw), "tokens do not work on the web API") {
+					t.Errorf("GET %s with a token %s: %d %s", path, name, status, raw)
+				}
 			}
 		}
 	})
