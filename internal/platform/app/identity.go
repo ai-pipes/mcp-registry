@@ -87,6 +87,7 @@ func (w identityWiring) module() Module {
 			Name: "session-retention", Every: sessionRetentionEvery, Run: w.pruneSessions,
 		}},
 		FirstStart: w.firstStart,
+		Commands:   w.commands(),
 	}
 }
 
