@@ -43,6 +43,33 @@ USER node
 EXPOSE 8080
 CMD ["node", "--experimental-strip-types", "--no-warnings", "apps/server/test/smoke/upstream.ts"]
 
+# --- go-build: the Go server (milestone 1: the platform layer), CGO_ENABLED=0. The cgo build with
+#     ONNX Runtime arrives in milestone 4. Built only with `--target go` (make compat-image-go);
+#     the default target stays `runtime` below, the last stage of this file. ----------------------
+FROM golang:1.27-bookworm@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea AS go-build
+ARG VERSION=dev
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY cmd cmd
+COPY internal internal
+# The migrations are embedded from the TypeScript server's folder (apps/server/migrations/embed.go).
+COPY apps/server/migrations apps/server/migrations
+RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/mcp-registry ./cmd/mcp-registry
+
+# --- go: the Go image. No ENTRYPOINT (the compat suite runs the CLI in the same image by replacing
+#     the command), no HEALTHCHECK yet (the TypeScript one runs node). ---------------------------
+FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc AS go
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin mcp
+COPY --from=go-build /out/mcp-registry /usr/local/bin/mcp-registry
+COPY --from=build /app/apps/web/dist /app/web
+USER 10001
+EXPOSE 3000
+CMD ["mcp-registry"]
+
 # --- runtime ----------------------------------------------------------------------------------
 FROM node:22-slim@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee AS runtime
 ENV NODE_ENV=production \

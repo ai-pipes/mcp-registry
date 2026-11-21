@@ -3,7 +3,7 @@ GO_ARCH_LINT := github.com/fe3dback/go-arch-lint@v1.19.2
 GOFUMPT := mvdan.cc/gofumpt@v0.12.0
 VERSION := $(shell node -p "require('./apps/server/package.json').version")
 
-.PHONY: compat compat-selfcheck compat-schemas compat-image-ts e2e-flows go-lint go-lint-new go-fmt-check go-arch-lint go-verify go-test-int go-build print-go-arch-lint print-golangci-lint
+.PHONY: compat compat-selfcheck compat-schemas compat-image-ts compat-image-go compat-go e2e-flows go-lint go-lint-new go-fmt-check go-arch-lint go-verify go-test-int go-build print-go-arch-lint print-golangci-lint
 
 go-lint:
 	go run $(GOLANGCI_LINT) run
@@ -57,6 +57,25 @@ compat-schemas:
 
 compat-image-ts:
 	docker build -t mcp-registry:compat-ts .
+
+# The Go image (Dockerfile target go), tagged mcp-registry:compat-go; the version comes from the same
+# place as for go-build. The default target (runtime, the TypeScript image) is untouched.
+compat-image-go:
+	docker build --target go --build-arg VERSION=$(VERSION) -t mcp-registry:compat-go .
+
+# The scenarios the Go server passes so far (the milestone pattern); it grows with every milestone.
+# `$$` is a literal `$` for make; the pattern is passed to go test inside single quotes.
+COMPAT_GO_RUN := ^(TestPlatformStartsOnReferenceDatabase)$$
+
+# The suite against the Go image. The reference image (mcp-registry:compat-ts) must exist as well:
+# some scenarios compare with it on the same machine, and the new-database scenario starts from it.
+# COMPAT_FIXED=config-errors: the Go server has the owner's decided behaviour for the two
+# configuration-error deviations (see compat/harness/deviations.go).
+compat-go:
+	@docker image inspect mcp-registry:compat-ts >/dev/null 2>&1 || { echo "compat-go: the reference image mcp-registry:compat-ts is missing: run make compat-image-ts"; exit 1; }
+	@docker image inspect mcp-registry:compat-go >/dev/null 2>&1 || { echo "compat-go: the image mcp-registry:compat-go is missing: run make compat-image-go"; exit 1; }
+	COMPAT_IMAGE=mcp-registry:compat-go COMPAT_CLI=mcp-registry COMPAT_FIXED=config-errors \
+		go test -tags compat -count=1 -p 1 -timeout 30m -run '$(COMPAT_GO_RUN)' $(COMPAT_ARGS) ./compat/...
 
 # COMPAT_ARGS adds go test arguments, e.g. make compat COMPAT_ARGS='-run ^TestPlatform' (the -run
 # patterns per area are in CONTRIBUTING.md). Nothing here sets COMPAT_REFERENCE: it matters only
