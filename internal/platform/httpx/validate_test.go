@@ -28,19 +28,36 @@ func TestUTF16LenCountsCodeUnits(t *testing.T) {
 	}
 }
 
-func TestFieldsStringCountsUTF16(t *testing.T) {
+// zod 4 counts string min and max in code points, so Fields (which mirrors zod) does too; UTF16Len
+// stays for rules the TypeScript server writes by hand with .length.
+func TestFieldsStringCountsCodePoints(t *testing.T) {
 	var f httpx.Fields
-	// 50 emoji are 100 UTF-16 units (allowed) and 50 code points; 51 are 102 units (too long).
-	if got := f.String("name", strings.Repeat("😀", 50), 1, 100); got == "" {
-		t.Error("100 units were refused")
+	if got := f.String("name", strings.Repeat("😀", 100), 1, 100); got == "" {
+		t.Error("100 emoji were refused")
 	}
+	f.TrimmedString("name", " "+strings.Repeat("😀", 100)+" ", 1, 100)
+	f.OptionalString("iss", ptr(strings.Repeat("😀", 100)), 100)
+	f.RequiredString("code", ptr(strings.Repeat("😀", 100)), 1, 100)
 	if f.Err() != nil {
 		t.Fatalf("unexpected %v", f.Err())
 	}
-	f.String("name", strings.Repeat("😀", 51), 1, 100)
-	c, m := code(t, f.Err())
-	if c != "invalid_request" || m != "name: must be at most 100 characters" {
-		t.Errorf("%s %q", c, m)
+	for name, run := range map[string]func(*httpx.Fields){
+		"String":         func(f *httpx.Fields) { f.String("name", strings.Repeat("😀", 101), 1, 100) },
+		"TrimmedString":  func(f *httpx.Fields) { f.TrimmedString("name", strings.Repeat("😀", 101), 1, 100) },
+		"OptionalString": func(f *httpx.Fields) { f.OptionalString("name", ptr(strings.Repeat("😀", 101)), 100) },
+		"RequiredString": func(f *httpx.Fields) { f.RequiredString("name", ptr(strings.Repeat("😀", 101)), 1, 100) },
+	} {
+		var f httpx.Fields
+		run(&f)
+		c, m := code(t, f.Err())
+		if c != "invalid_request" || m != "name: must be at most 100 characters" {
+			t.Errorf("%s: %s %q", name, c, m)
+		}
+	}
+	var f2 httpx.Fields
+	f2.String("name", strings.Repeat("😀", 2), 3, 10)
+	if _, m := code(t, f2.Err()); m != "name: must be at least 3 characters" {
+		t.Errorf("min counts code points too: %q", m)
 	}
 }
 

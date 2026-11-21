@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"strconv"
 	"unicode/utf16"
+	"unicode/utf8"
 
 	"github.com/ai-pipes/mcp-registry/internal/kernel"
 )
@@ -18,6 +19,10 @@ func UTF16Len(s string) int {
 	}
 	return n
 }
+
+// RuneLen is the length of s in code points, which is what zod 4 counts for a string's min and
+// max (Fields uses it); a hand-written JavaScript .length is UTF16Len.
+func RuneLen(s string) int { return utf8.RuneCountInString(s) }
 
 // Fields collects input problems in call order. The TypeScript server reports the first zod
 // issue as `invalid_request` with the message "<dotted.path>: <reason>"; so does Err. The path
@@ -47,43 +52,43 @@ func plural(n int, unit string) string {
 	return strconv.Itoa(n) + " " + unit + "s"
 }
 
-// String checks value as given (no trimming) against minUTF16 and maxUTF16 and returns it. An
-// empty value is "is required" when minUTF16 is at least 1.
-func (f *Fields) String(path, value string, minUTF16, maxUTF16 int) string {
-	n := UTF16Len(value)
+// String checks value as given (no trimming), counted in code points like zod 4, against minLen and maxLen and returns it. An
+// empty value is "is required" when minLen is at least 1.
+func (f *Fields) String(path, value string, minLen, maxLen int) string {
+	n := RuneLen(value)
 	switch {
-	case n == 0 && minUTF16 >= 1:
+	case n == 0 && minLen >= 1:
 		f.fail(path, "is required")
-	case n < minUTF16:
-		f.fail(path, "must be at least "+plural(minUTF16, "character"))
-	case n > maxUTF16:
-		f.fail(path, "must be at most "+plural(maxUTF16, "character"))
+	case n < minLen:
+		f.fail(path, "must be at least "+plural(minLen, "character"))
+	case n > maxLen:
+		f.fail(path, "must be at most "+plural(maxLen, "character"))
 	}
 	return value
 }
 
 // TrimmedString is z.string().trim().min().max(): JavaScript trim first, then String.
-func (f *Fields) TrimmedString(path, value string, minUTF16, maxUTF16 int) string {
-	return f.String(path, kernel.JSTrim(value), minUTF16, maxUTF16)
+func (f *Fields) TrimmedString(path, value string, minLen, maxLen int) string {
+	return f.String(path, kernel.JSTrim(value), minLen, maxLen)
 }
 
 // RequiredString is String for a member decoded into a pointer: absent (or null) is "is required".
-func (f *Fields) RequiredString(path string, value *string, minUTF16, maxUTF16 int) string {
+func (f *Fields) RequiredString(path string, value *string, minLen, maxLen int) string {
 	if value == nil {
 		f.fail(path, "is required")
 		return ""
 	}
-	return f.String(path, *value, minUTF16, maxUTF16)
+	return f.String(path, *value, minLen, maxLen)
 }
 
 // OptionalString is z.string().max().optional(): nil when absent, else the value checked against
-// maxUTF16.
-func (f *Fields) OptionalString(path string, value *string, maxUTF16 int) *string {
+// maxLen.
+func (f *Fields) OptionalString(path string, value *string, maxLen int) *string {
 	if value == nil {
 		return nil
 	}
-	if UTF16Len(*value) > maxUTF16 {
-		f.fail(path, "must be at most "+plural(maxUTF16, "character"))
+	if RuneLen(*value) > maxLen {
+		f.fail(path, "must be at most "+plural(maxLen, "character"))
 	}
 	return value
 }
