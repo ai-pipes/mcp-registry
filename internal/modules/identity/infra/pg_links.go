@@ -30,9 +30,6 @@ func (r *pgLoginLinkRepository) Consume(ctx context.Context, codeHash string) (*
 }
 
 func (r *pgLoginLinkRepository) DeleteByUser(ctx context.Context, userID string) error {
-	if !isUUID(userID) {
-		return nil
-	}
 	_, err := r.pool.Exec(ctx, `delete from identity.login_links where user_id = $1`, userID)
 	return err
 }

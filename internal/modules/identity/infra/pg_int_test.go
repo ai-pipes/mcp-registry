@@ -456,7 +456,7 @@ func TestReadsRowsWrittenByTheTypeScriptServer(t *testing.T) {
 	}
 	exec(`insert into identity.users (id, oidc_sub, name, email, groups, role, disabled, created_at, last_login_at)
 		values ('AAAAAAAA-1111-4111-8111-AAAAAAAAAAAA', 'ts-sub', 'Ts User', null, '{}', 'admin', true, '2026-01-02T03:04:05.678Z', null),
-		       ('bbbbbbbb-1111-4111-8111-bbbbbbbbbbbb', 'ts-sub2', 'Ts Two', 'a@b.c', '{"x y","z\"q",""}', 'member', false, '2026-01-02T03:04:05.678Z', '2026-01-03T00:00:00Z')`)
+		       ('bbbbbbbb-1111-4111-8111-bbbbbbbbbbbb', 'ts-sub2', 'Ts Two', 'a@b.c', '{"x y","z\"q","","a,b","ünï"}', 'member', false, '2026-01-02T03:04:05.678Z', '2026-01-03T00:00:00Z')`)
 	hash := strings.Repeat("0123456789abcdef", 4)
 	exec(`insert into identity.tokens (user_id, name, prefix, hash) values ('bbbbbbbb-1111-4111-8111-bbbbbbbbbbbb', 'n', 'sk_1234567', $1)`, hash)
 	exec(`insert into identity.sessions (id_hash, user_id, expires_at) values ($1, 'bbbbbbbb-1111-4111-8111-bbbbbbbbbbbb', now() + interval '1 day')`, hash)
@@ -472,7 +472,7 @@ func TestReadsRowsWrittenByTheTypeScriptServer(t *testing.T) {
 		t.Fatalf("upper-case id: %+v", v)
 	}
 	u2 := must(a.Users.FindBySub(ctx, "ts-sub2"))
-	if strings.Join(u2.Groups, "|") != `x y|z"q|` || u2.Email == nil || *u2.Email != "a@b.c" || u2.LastLoginAt == nil {
+	if strings.Join(u2.Groups, "|") != `x y|z"q||a,b|ünï` || u2.Email == nil || *u2.Email != "a@b.c" || u2.LastLoginAt == nil {
 		t.Fatalf("ts user 2 = %+v", u2)
 	}
 	tok := must(a.Tokens.FindByHash(ctx, hash))
@@ -482,5 +482,26 @@ func TestReadsRowsWrittenByTheTypeScriptServer(t *testing.T) {
 	s := must(a.Sessions.FindByHash(ctx, hash))
 	if s == nil || s.IDHash != hash || s.UserID != u2.ID {
 		t.Fatalf("ts session = %+v", s)
+	}
+}
+
+// Where TypeScript has no id-shape guard a malformed id reaches the database and fails: a silent
+// no-op would make "revoke everything of this person" succeed without revoking anything.
+func TestMalformedIDsFailWhereTypeScriptHasNoGuard(t *testing.T) {
+	ctx := context.Background()
+	_, a := setup(t)
+	const bad = "not-a-uuid"
+	checks := map[string]func() error{
+		"Tokens.Revoke":           func() error { return a.Tokens.Revoke(ctx, bad, t0) },
+		"Tokens.RevokeAllByUser":  func() error { return a.Tokens.RevokeAllByUser(ctx, bad, t0) },
+		"Tokens.Touch":            func() error { return a.Tokens.Touch(ctx, bad, t0) },
+		"Tokens.ListByUser":       func() error { _, err := a.Tokens.ListByUser(ctx, bad); return err },
+		"Sessions.DeleteByUser":   func() error { return a.Sessions.DeleteByUser(ctx, bad) },
+		"LoginLinks.DeleteByUser": func() error { return a.LoginLinks.DeleteByUser(ctx, bad) },
+	}
+	for name, fn := range checks {
+		if fn() == nil {
+			t.Errorf("%s accepted a malformed id", name)
+		}
 	}
 }

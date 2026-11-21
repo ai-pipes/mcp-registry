@@ -48,9 +48,6 @@ func (r *pgTokenRepository) FindByID(ctx context.Context, id string) (*app.Token
 
 func (r *pgTokenRepository) ListByUser(ctx context.Context, userID string) ([]app.TokenRecord, error) {
 	out := []app.TokenRecord{}
-	if !isUUID(userID) {
-		return out, nil
-	}
 	rows, err := r.pool.Query(ctx, `select `+apiRowColumns+` from identity.tokens where user_id = $1 order by created_at desc`, userID)
 	if err != nil {
 		return nil, err
@@ -67,25 +64,16 @@ func (r *pgTokenRepository) ListByUser(ctx context.Context, userID string) ([]ap
 }
 
 func (r *pgTokenRepository) Revoke(ctx context.Context, id string, at time.Time) error {
-	if !isUUID(id) {
-		return nil
-	}
 	_, err := r.pool.Exec(ctx, `update identity.tokens set revoked_at = $1 where id = $2 and revoked_at is null`, us(at), id)
 	return err
 }
 
 func (r *pgTokenRepository) RevokeAllByUser(ctx context.Context, userID string, at time.Time) error {
-	if !isUUID(userID) {
-		return nil
-	}
 	_, err := r.pool.Exec(ctx, `update identity.tokens set revoked_at = $1 where user_id = $2 and revoked_at is null`, us(at), userID)
 	return err
 }
 
 func (r *pgTokenRepository) Touch(ctx context.Context, id string, at time.Time) error {
-	if !isUUID(id) {
-		return nil
-	}
 	_, err := r.pool.Exec(ctx, `update identity.tokens set last_used_at = $1 where id = $2`, us(at), id)
 	return err
 }

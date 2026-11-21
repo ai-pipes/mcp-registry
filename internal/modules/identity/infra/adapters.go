@@ -23,6 +23,8 @@ type Adapters struct {
 
 // NewPg builds the adapters on one pool, with the limiters set up as compose.ts does: token checks
 // 30 per 60 s (lock 60 s), link attempts 10 per 60 s (lock 60 s), failed callbacks 20 per 60 s (lock 60 s).
+// The limiters take their time from clock; the composition must pass the system clock (the
+// TypeScript limiters always use the wall clock).
 func NewPg(pool *pgxpool.Pool, clock kernel.Clock) Adapters {
 	return Adapters{
 		Users:           &pgUserRepository{pool},

@@ -40,9 +40,6 @@ func (r *pgSessionRepository) Delete(ctx context.Context, idHash string) error {
 }
 
 func (r *pgSessionRepository) DeleteByUser(ctx context.Context, userID string) error {
-	if !isUUID(userID) {
-		return nil
-	}
 	_, err := r.pool.Exec(ctx, `delete from identity.sessions where user_id = $1`, userID)
 	return err
 }
