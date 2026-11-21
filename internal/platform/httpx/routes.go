@@ -12,8 +12,10 @@ import (
 	"unicode/utf8"
 )
 
-// Route is one handler of the REST API. Path is exact ("/api/tokens") or has one parameter
-// segment ("/api/tokens/{id}", "/api/users/{id}/disabled"); a parameter is the whole segment.
+// Route is one handler of the REST API. Path is exact ("/api/tokens") or has any number of
+// parameter segments ("/api/tokens/{id}", "/api/servers/{slug}/tools/{name}/hidden"); a parameter
+// is the whole segment. Of several patterns that fit a path the most specific wins, and the
+// earlier segment decides: "/a/b/{y}" beats "/a/{x}/c" for "/a/b/c" (see NewRouter).
 type Route struct {
 	Method, Path string
 	Handler      http.Handler
@@ -21,7 +23,8 @@ type Route struct {
 	// prefix registered by another module. Only a request that matches the route (method and
 	// path, HEAD by a GET route) skips the guards; every other path under the prefixes, and
 	// another method on the same path, is still guarded. For a route that sits under a guarded
-	// prefix but handles a missing session itself (the connections OAuth callback).
+	// prefix but handles a missing session itself (the connections OAuth callback). Only an exact
+	// path may be Unguarded: a pattern with parameters is refused at registration.
 	Unguarded bool
 }
 
@@ -137,6 +140,9 @@ func (rt *router) add(r Route) {
 		}
 		hasParam = true
 		names[i], segs[i] = name, ""
+	}
+	if hasParam && r.Unguarded {
+		panic(fmt.Sprintf("httpx: invalid route %s %q: Unguarded is for one exact path, not a pattern with parameters", r.Method, r.Path))
 	}
 	if !hasParam {
 		byMethod := rt.exact[r.Path]

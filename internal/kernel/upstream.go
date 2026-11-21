@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
+	"sort"
 	"time"
 )
 
@@ -12,11 +15,64 @@ import (
 // The implementation lives in internal/platform/upstream; catalog (synchronisation) and gateway
 // (call_tool) use it.
 
+// UpstreamHeaders are request headers that carry credentials. It is a map[string]string
+// underneath (literals, indexing, range and conversion work), but every way of printing it
+// (fmt with any verb, slog, JSON, text) shows the header names with "[redacted]" for the
+// values. Read the real values by indexing or ranging.
+type UpstreamHeaders map[string]string
+
+const redactedValue = "[redacted]"
+
+func (h UpstreamHeaders) redacted() map[string]string {
+	out := make(map[string]string, len(h))
+	for name := range h {
+		out[name] = redactedValue
+	}
+	return out
+}
+
+// String shows the names only.
+func (h UpstreamHeaders) String() string { return fmt.Sprint(h.redacted()) }
+
+// GoString shows the names only (the %#v form).
+func (h UpstreamHeaders) GoString() string {
+	return "kernel.UpstreamHeaders" + fmt.Sprintf("%#v", h.redacted())[len("map[string]string"):]
+}
+
+// Format prints the redacted form for every verb.
+func (h UpstreamHeaders) Format(f fmt.State, verb rune) {
+	if verb == 'v' && f.Flag('#') {
+		_, _ = io.WriteString(f, h.GoString())
+		return
+	}
+	_, _ = io.WriteString(f, h.String())
+}
+
+// LogValue is the slog form: a group of name = [redacted].
+func (h UpstreamHeaders) LogValue() slog.Value {
+	names := make([]string, 0, len(h))
+	for name := range h {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	attrs := make([]slog.Attr, len(names))
+	for i, name := range names {
+		attrs[i] = slog.String(name, redactedValue)
+	}
+	return slog.GroupValue(attrs...)
+}
+
+// MarshalJSON writes {"Name":"[redacted]"}.
+func (h UpstreamHeaders) MarshalJSON() ([]byte, error) { return json.Marshal(h.redacted()) }
+
+// MarshalText writes the redacted form as text.
+func (h UpstreamHeaders) MarshalText() ([]byte, error) { return []byte(h.String()), nil }
+
 // UpstreamTarget is where and how to reach an upstream for one operation. Headers already carry
 // the credentials, so a target must never be logged or put into an error.
 type UpstreamTarget struct {
 	URL              string
-	Headers          map[string]string
+	Headers          UpstreamHeaders
 	Timeout          time.Duration // one deadline for the whole operation
 	MaxResponseBytes int64         // all responses of the operation together
 }

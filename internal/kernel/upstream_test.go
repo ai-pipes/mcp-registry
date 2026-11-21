@@ -1,10 +1,14 @@
 package kernel_test
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ai-pipes/mcp-registry/internal/kernel"
 )
@@ -81,5 +85,66 @@ func TestErrorLabelOfAnUpstreamErrorIsItsKind(t *testing.T) {
 	}
 	if l := kernel.ErrorLabel(fmt.Errorf("w: %w", kernel.RejectedUpstreamError(1, "m"))); l != "kernel.UpstreamError: rejected" {
 		t.Errorf("label %q", l)
+	}
+}
+
+const secretValue = "Bearer s3cr3t-token-value"
+
+func secretTarget() kernel.UpstreamTarget {
+	return kernel.UpstreamTarget{
+		URL:              "https://up.example/mcp",
+		Headers:          kernel.UpstreamHeaders{"Authorization": secretValue},
+		Timeout:          time.Second,
+		MaxResponseBytes: 10,
+	}
+}
+
+func TestUpstreamHeadersNeverPrintTheirValues(t *testing.T) {
+	tg := secretTarget()
+	tg.Headers = map[string]string{"Authorization": secretValue} // assignable from a plain map
+	var back map[string]string = tg.Headers                      // and back: range, index and len keep working
+	if back["Authorization"] != secretValue || len(tg.Headers) != 1 {
+		t.Fatal("the underlying map must stay usable")
+	}
+	for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%q", "%x", "%d"} {
+		for name, arg := range map[string]any{"target": tg, "pointer": &tg, "headers": tg.Headers} {
+			got := fmt.Sprintf(verb, arg)
+			if strings.Contains(got, secretValue) || strings.Contains(got, "s3cr3t") {
+				t.Errorf("%s of %s leaked: %s", verb, name, got)
+			}
+			if verb != "%x" && verb != "%d" && !strings.Contains(got, "Authorization") {
+				t.Errorf("%s of %s lacks the header name: %s", verb, name, got)
+			}
+		}
+	}
+	if got := fmt.Sprint(tg.Headers); got != "map[Authorization:[redacted]]" {
+		t.Errorf("String = %q", got)
+	}
+}
+
+func TestUpstreamTargetInJSONAndSlogRedactsHeaders(t *testing.T) {
+	tg := secretTarget()
+	b, err := json.Marshal(tg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "s3cr3t") || !strings.Contains(string(b), `"Authorization":"[redacted]"`) {
+		t.Errorf("json.Marshal: %s", b)
+	}
+	if text, err := tg.Headers.MarshalText(); err != nil || strings.Contains(string(text), "s3cr3t") || !strings.Contains(string(text), "Authorization") {
+		t.Errorf("MarshalText: %q %v", text, err)
+	}
+	for name, mk := range map[string]func(*bytes.Buffer) *slog.Logger{
+		"json": func(b *bytes.Buffer) *slog.Logger { return slog.New(slog.NewJSONHandler(b, nil)) },
+		"text": func(b *bytes.Buffer) *slog.Logger { return slog.New(slog.NewTextHandler(b, nil)) },
+	} {
+		var buf bytes.Buffer
+		l := mk(&buf)
+		l.Info("sync", "target", tg)
+		l.Info("sync", "headers", tg.Headers)
+		l.Info("sync", slog.Group("g", slog.Any("h", tg.Headers)))
+		if strings.Contains(buf.String(), "s3cr3t") || !strings.Contains(buf.String(), "Authorization") {
+			t.Errorf("slog %s: %s", name, buf.String())
+		}
 	}
 }

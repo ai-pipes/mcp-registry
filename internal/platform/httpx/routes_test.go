@@ -1,6 +1,7 @@
 package httpx_test
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -170,26 +171,32 @@ func TestRouterPrefixesRunOutermostFirstInRegistrationOrder(t *testing.T) {
 
 func TestRouterRejectsInvalidRegistrations(t *testing.T) {
 	ok := say("x")
-	for name, routes := range map[string][]httpx.Route{
-		"same name twice":     {{Method: "GET", Path: "/a/{x}/b/{x}", Handler: ok}},
-		"empty name":          {{Method: "GET", Path: "/a/{}", Handler: ok}},
-		"nested braces":       {{Method: "GET", Path: "/a/{x{y}}", Handler: ok}},
-		"names differ in two": {{Method: "GET", Path: "/a/{x}/b/{y}", Handler: ok}, {Method: "GET", Path: "/a/{p}/b/{q}", Handler: ok}},
-		"partial segment":     {{Method: "GET", Path: "/a/x{id}", Handler: ok}},
-		"relative":            {{Method: "GET", Path: "a", Handler: ok}},
-		"trailing slash":      {{Method: "GET", Path: "/a/", Handler: ok}},
-		"no method":           {{Path: "/a", Handler: ok}},
-		"no handler":          {{Method: "GET", Path: "/a"}},
-		"duplicate":           {{Method: "GET", Path: "/a", Handler: ok}, {Method: "GET", Path: "/a", Handler: ok}},
-		"duplicate parameter": {{Method: "GET", Path: "/a/{x}", Handler: ok}, {Method: "GET", Path: "/a/{y}", Handler: ok}},
+	for name, tc := range map[string]struct {
+		routes []httpx.Route
+		want   string // a distinct text per cause
+	}{
+		"same name twice":       {[]httpx.Route{{Method: "GET", Path: "/a/{x}/b/{x}", Handler: ok}}, "appears twice"},
+		"empty name":            {[]httpx.Route{{Method: "GET", Path: "/a/{}", Handler: ok}}, "whole segment"},
+		"nested braces":         {[]httpx.Route{{Method: "GET", Path: "/a/{x{y}}", Handler: ok}}, "whole segment"},
+		"partial segment":       {[]httpx.Route{{Method: "GET", Path: "/a/x{id}", Handler: ok}}, "whole segment"},
+		"relative":              {[]httpx.Route{{Method: "GET", Path: "a", Handler: ok}}, "invalid route"},
+		"trailing slash":        {[]httpx.Route{{Method: "GET", Path: "/a/", Handler: ok}}, "invalid route"},
+		"no method":             {[]httpx.Route{{Path: "/a", Handler: ok}}, "invalid route"},
+		"no handler":            {[]httpx.Route{{Method: "GET", Path: "/a"}}, "invalid route"},
+		"duplicate":             {[]httpx.Route{{Method: "GET", Path: "/a", Handler: ok}, {Method: "GET", Path: "/a", Handler: ok}}, "registered twice"},
+		"duplicate parameter":   {[]httpx.Route{{Method: "GET", Path: "/a/{x}/b/{y}", Handler: ok}, {Method: "GET", Path: "/a/{x}/b/{y}", Handler: ok}}, "registered twice"},
+		"names differ, GET/PUT": {[]httpx.Route{{Method: "GET", Path: "/a/{x}/b/{y}", Handler: ok}, {Method: "PUT", Path: "/a/{p}/b/{q}", Handler: ok}}, "other parameter names"},
+		"one name differs":      {[]httpx.Route{{Method: "GET", Path: "/a/{x}", Handler: ok}, {Method: "POST", Path: "/a/{y}", Handler: ok}}, "other parameter names"},
+		"unguarded parameter":   {[]httpx.Route{{Method: "GET", Path: "/a/{x}", Handler: ok, Unguarded: true}}, "Unguarded"},
 	} {
 		func() {
 			defer func() {
-				if recover() == nil {
-					t.Errorf("%s: NewRouter did not panic", name)
+				msg := fmt.Sprint(recover())
+				if msg == "<nil>" || !strings.Contains(msg, tc.want) {
+					t.Errorf("%s: panic %q, want one containing %q", name, msg, tc.want)
 				}
 			}()
-			httpx.NewRouter(routes, nil, httpx.NotFound())
+			httpx.NewRouter(tc.routes, nil, httpx.NotFound())
 		}()
 	}
 }
@@ -377,7 +384,7 @@ func TestRouterFallsBackToALessSpecificPatternForTheMethod(t *testing.T) {
 func TestRouterPrefixAndUnguardedWithSeveralParameters(t *testing.T) {
 	h := httpx.NewRouter([]httpx.Route{
 		{Method: "PUT", Path: "/api/servers/{slug}/tools/{name}/hidden", Handler: sayParams("slug", "name")},
-		{Method: "GET", Path: "/api/servers/{slug}/public/{id}", Handler: sayParams("slug", "id"), Unguarded: true},
+		{Method: "GET", Path: "/api/servers/public", Handler: say("pub"), Unguarded: true},
 	}, []httpx.Prefix{
 		{Path: "/api/servers", Middleware: []httpx.Middleware{tag("guard"), refuse(403)}},
 	}, httpx.NotFound())
@@ -387,11 +394,41 @@ func TestRouterPrefixAndUnguardedWithSeveralParameters(t *testing.T) {
 	if w := serveRaw(h, "GET", "/api/servers/a/tools/b/hidden"); w.Code != 403 { // another method: the guard answers
 		t.Errorf("other method: %d", w.Code)
 	}
-	w := serveRaw(h, "GET", "/api/servers/a/public/b")
-	if w.Code != 200 || out(w) != "slug=a;id=b" || w.Header().Get("X-Trace") != "" {
-		t.Errorf("unguarded: %d %q trace %q", w.Code, w.Body, w.Header().Get("X-Trace"))
+	w := serveRaw(h, "GET", "/api/servers/public")
+	if w.Code != 200 || out(w) != "pub" || w.Header().Get("X-Trace") != "" {
+		t.Errorf("unguarded: %d %q trace %q", w.Code, out(w), w.Header().Get("X-Trace"))
 	}
-	if w := serveRaw(h, "POST", "/api/servers/a/public/b"); w.Code != 403 {
-		t.Errorf("unguarded route, other method: %d", w.Code)
+	if w := serveRaw(h, "GET", "/api/servers/public/tools/b/hidden"); w.Code != 403 {
+		t.Errorf("a parameter route next to the unguarded one stays guarded: %d", w.Code)
+	}
+}
+
+// A parameter pattern without a handler for the method does not hide a less specific parameter
+// pattern that has one.
+func TestRouterFallsBackBetweenParameterPatterns(t *testing.T) {
+	h := httpx.NewRouter([]httpx.Route{
+		{Method: "POST", Path: "/api/y/{a}/fixed", Handler: say("create")},
+		{Method: "GET", Path: "/api/y/{a}/{b}", Handler: sayParams("a", "b")},
+	}, nil, httpx.NotFound())
+	if w := serveRaw(h, "GET", "/api/y/p/fixed"); w.Code != 200 || out(w) != "a=p;b=fixed" {
+		t.Errorf("GET: %d %q", w.Code, out(w))
+	}
+	if w := serveRaw(h, "POST", "/api/y/p/fixed"); out(w) != "create" {
+		t.Errorf("POST: %q", out(w))
+	}
+	if w := serveRaw(h, "POST", "/api/y/p/other"); w.Code != 404 {
+		t.Errorf("POST /api/y/p/other: %d", w.Code)
+	}
+}
+
+// The earlier segment decides: "/a/b/{y}" beats "/a/{x}/c" for "/a/b/c", in either order.
+func TestRouterEarlierSegmentDecidesTheTie(t *testing.T) {
+	r1 := httpx.Route{Method: "GET", Path: "/a/b/{y}", Handler: sayParams("y")}
+	r2 := httpx.Route{Method: "GET", Path: "/a/{x}/c", Handler: sayParams("x")}
+	for name, routes := range map[string][]httpx.Route{"literal first": {r1, r2}, "parameter first": {r2, r1}} {
+		h := httpx.NewRouter(routes, nil, httpx.NotFound())
+		if w := serveRaw(h, "GET", "/a/b/c"); out(w) != "y=c" {
+			t.Errorf("%s: %q", name, out(w))
+		}
 	}
 }
