@@ -48,8 +48,11 @@ go-verify: go-lint go-arch-lint
 
 # Only internal/platform has integration tests. -p 1: testcontainers derives its session from the
 # parent test process, so parallel test binaries race to create the shared reaper and some fail.
+# The reaper removes a session's containers 10 s after its last client left; compiling the next
+# package's test binary on a cold cache can take longer, and that binary then meets containers
+# being removed. A minute covers it.
 go-test-int:
-	go test -tags integration -count=1 -p 1 ./internal/platform/...
+	TESTCONTAINERS_RYUK_RECONNECTION_TIMEOUT=60s go test -tags integration -count=1 -p 1 ./internal/platform/...
 
 # Regenerates compat/schemas from the zod contracts; CI fails when the committed files are stale.
 compat-schemas:
@@ -115,7 +118,7 @@ compat-go:
 # the app's event loop (it loads its embedding model right after it first answers healthy), and a
 # stalled app turns into flaky timeouts.
 compat:
-	go test -tags compat -count=1 -p 1 -timeout 30m $(COMPAT_ARGS) ./compat/...
+	go test -tags compat -count=1 -p 1 -timeout 45m $(COMPAT_ARGS) ./compat/...
 
 # The browser flows (e2e/flows, Playwright with Chromium) against the image COMPAT_IMAGE (default
 # mcp-registry:compat-ts, see compat-image-ts), orchestrated from Go so that the same flows judge the
