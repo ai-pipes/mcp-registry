@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/ai-pipes/mcp-registry/internal/modules/identity"
@@ -88,7 +89,16 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func noContent(w http.ResponseWriter) { w.WriteHeader(http.StatusNoContent) }
 
+// redirect answers 302. Like the TypeScript framework, a location with a character above U+00FF
+// (which a header cannot carry) is percent-encoded as JavaScript's encodeURI does; one within
+// Latin-1 is sent as it is (an accepted difference: the bytes are UTF-8 here).
 func redirect(w http.ResponseWriter, location string) {
+	for _, r := range location {
+		if r > 0xFF {
+			location = encodeURI(location)
+			break
+		}
+	}
 	w.Header().Set("Location", location)
 	w.WriteHeader(http.StatusFound)
 }
@@ -119,3 +129,21 @@ func parseID(w http.ResponseWriter, r *http.Request, what string) (string, bool)
 }
 
 func itoa(n int) string { return strconv.Itoa(n) }
+
+// encodeURI is JavaScript's encodeURI: everything but letters, digits and ;,/?:@&=+$-_.!~*'()# is
+// percent-encoded as UTF-8 bytes.
+func encodeURI(s string) string {
+	const hex = "0123456789ABCDEF"
+	var b strings.Builder
+	for i := range len(s) {
+		c := s[i]
+		if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.IndexByte(";,/?:@&=+$-_.!~*'()#", c) >= 0 {
+			b.WriteByte(c)
+			continue
+		}
+		b.WriteByte('%')
+		b.WriteByte(hex[c>>4])
+		b.WriteByte(hex[c&15])
+	}
+	return b.String()
+}

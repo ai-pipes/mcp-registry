@@ -17,6 +17,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ai-pipes/mcp-registry/internal/modules/identity/app"
 	"github.com/ai-pipes/mcp-registry/internal/modules/identity/domain"
@@ -129,7 +130,34 @@ func jsonType(v any) string {
 	return "object"
 }
 
+var implemented = []string{"$schema", "type", "properties", "required", "additionalProperties", "enum", "items"}
+
+// unknownKeyword names the first keyword of schema (or of a sub-schema) that check does not implement.
+func unknownKeyword(schema map[string]any) string {
+	for k, v := range schema {
+		if !slices.Contains(implemented, k) {
+			return "unimplemented keyword " + k
+		}
+		switch k {
+		case "properties":
+			for _, sub := range v.(map[string]any) {
+				if p := unknownKeyword(sub.(map[string]any)); p != "" {
+					return p
+				}
+			}
+		case "items":
+			if p := unknownKeyword(v.(map[string]any)); p != "" {
+				return p
+			}
+		}
+	}
+	return ""
+}
+
 func check(schema map[string]any, v any, at string) string {
+	if p := unknownKeyword(schema); p != "" {
+		return at + ": " + p
+	}
 	if ty, ok := schema["type"]; ok {
 		var types []string
 		switch x := ty.(type) {
@@ -450,7 +478,8 @@ func TestCallback(t *testing.T) {
 		e := newEnv(t, true, true)
 		e.f.OIDC.Next = member
 		state, bind := e.startLogin("/servers")
-		r := e.do("GET", "/api/auth/callback?code=c1&state="+state, "", withCookie(bind))
+		// A returnTo on the callback itself is not the stored one and must be ignored.
+		r := e.do("GET", "/api/auth/callback?code=c1&returnTo=//evil.example&state="+state, "", withCookie(bind))
 		if r.StatusCode != 302 || r.Header.Get("Location") != "/servers" || bodyOf(t, r) != "" {
 			t.Fatalf("%d %q", r.StatusCode, r.Header.Get("Location"))
 		}
@@ -459,7 +488,7 @@ func TestCallback(t *testing.T) {
 			t.Fatalf("session cookie = %+v", s)
 		}
 		cl := cookieNamed(r, "mcp_login")
-		if cl == nil || cl.Value != "" || cl.MaxAge >= 0 || cl.Path != "/api/auth" || !cl.HttpOnly || cl.SameSite != http.SameSiteLaxMode || !cl.Secure {
+		if cl == nil || cl.Value != "" || cl.MaxAge >= 0 || !cl.Expires.IsZero() || cl.Path != "/api/auth" || !cl.HttpOnly || cl.SameSite != http.SameSiteLaxMode || !cl.Secure {
 			t.Fatalf("clearing cookie = %+v", cl)
 		}
 		if e.do("GET", "/api/auth/me", "", withCookie(reqCookie("mcp_session", s.Value))).StatusCode != 200 {
@@ -546,7 +575,7 @@ func TestLogout(t *testing.T) {
 		e := newEnv(t, false, true)
 		r := e.do("POST", "/api/auth/logout", "")
 		c := cookieNamed(r, "mcp_session")
-		if b := bodyOf(t, r); r.StatusCode != 204 || b != "" || c == nil || c.Value != "" || c.MaxAge >= 0 || c.Path != "/" ||
+		if b := bodyOf(t, r); r.StatusCode != 204 || b != "" || c == nil || c.Value != "" || c.MaxAge >= 0 || !c.Expires.IsZero() || c.Path != "/" ||
 			!c.HttpOnly || c.SameSite != http.SameSiteStrictMode || !c.Secure {
 			t.Fatalf("%d %q %+v", r.StatusCode, b, c)
 		}
@@ -714,5 +743,149 @@ func TestUsers(t *testing.T) {
 	}
 	if e.do("GET", "/api/auth/me", "", withCookie(member)).StatusCode != 401 {
 		t.Error("the disabled person's session survived")
+	}
+}
+
+// longID is a session id one character over the limit.
+var longID = strings.Repeat("a", 65)
+
+// seedSession stores a live session for a person under the id the cookie will carry.
+func (e *env) seedSession(id string, u domain.User) {
+	e.t.Helper()
+	now := e.f.Clock.Now()
+	e.f.Store.sessions[e.f.Deps.Hasher.Hex(id)] = &app.SessionRecord{
+		IDHash: e.f.Deps.Hasher.Hex(id), UserID: u.ID, CreatedAt: now, LastSeenAt: now, ExpiresAt: now.Add(time.Hour),
+	}
+}
+
+// countingSessions counts the lookups the guards and use cases make.
+type countingSessions struct {
+	app.SessionRepository
+	finds *int
+}
+
+func (c countingSessions) FindByHash(ctx context.Context, h string) (*app.SessionRecord, error) {
+	*c.finds++
+	return c.SessionRepository.FindByHash(ctx, h)
+}
+
+func TestSessionIDLengthLimit(t *testing.T) {
+	setup := func(t *testing.T) (*env, domain.User, *int) {
+		e := newEnv(t, false, true)
+		_, u := e.signIn("ann", false)
+		finds := 0
+		e.f.Deps.Sessions = countingSessions{fakeSessions{e.f.Store}, &finds}
+		e.rebuild(false, true)
+		return e, u, &finds
+	}
+	t.Run("a live 65-character id is anonymous and never looked up", func(t *testing.T) {
+		e, u, finds := setup(t)
+		e.seedSession(longID, u)
+		wantError(t, e.do("GET", "/api/auth/me", "", withCookie(reqCookie("mcp_session", longID))), 401, "unauthenticated", "sign in required")
+		if *finds != 0 {
+			t.Errorf("the store was asked %d times", *finds)
+		}
+	})
+	t.Run("a live 64-character id is accepted", func(t *testing.T) {
+		e, u, _ := setup(t)
+		id := strings.Repeat("b", 64)
+		e.seedSession(id, u)
+		if got := e.do("GET", "/api/auth/me", "", withCookie(reqCookie("mcp_session", id))).StatusCode; got != 200 {
+			t.Errorf("64 characters: %d", got)
+		}
+	})
+	t.Run("link sign-in and logout leave a live 65-character session alone", func(t *testing.T) {
+		e, u, _ := setup(t)
+		e.seedSession(longID, u)
+		code := e.newLinkCode("bob")
+		if r := e.do("POST", "/api/auth/link", `{"code":"`+code+`"}`, withCookie(reqCookie("mcp_session", longID))); r.StatusCode != 204 {
+			t.Fatalf("link: %d", r.StatusCode)
+		}
+		if r := e.do("POST", "/api/auth/logout", "", withCookie(reqCookie("mcp_session", longID))); r.StatusCode != 204 {
+			t.Fatalf("logout: %d", r.StatusCode)
+		}
+		if e.f.Store.sessions[e.f.Deps.Hasher.Hex(longID)] == nil {
+			t.Error("the 65-character session was deleted")
+		}
+		if n := len(e.f.Audit.Actions("auth.logout")); n != 0 {
+			t.Errorf("auth.logout records = %d", n)
+		}
+	})
+}
+
+// failingDelete fails every session delete.
+type failingDelete struct{ app.SessionRepository }
+
+func (failingDelete) Delete(context.Context, string) error { return errors.New("db-secret-detail") }
+
+func TestLinkEndsTheOldSessionBeforeTheNewCookie(t *testing.T) {
+	e := newEnv(t, false, true)
+	old, _ := e.signIn("ann", false)
+	code := e.newLinkCode("bob")
+	e.f.Deps.Sessions = failingDelete{fakeSessions{e.f.Store}}
+	e.rebuild(false, true)
+	r := e.do("POST", "/api/auth/link", `{"code":"`+code+`"}`, withCookie(old))
+	wantError(t, r, 500, "internal", "Internal error")
+	if len(r.Header.Values("Set-Cookie")) != 0 {
+		t.Errorf("Set-Cookie after a failed logout: %v", r.Header.Values("Set-Cookie"))
+	}
+	if strings.Contains(e.logs.String(), "db-secret-detail") {
+		t.Error("the error text reached the log")
+	}
+}
+
+func TestLogoutFailureIsNotIgnored(t *testing.T) {
+	e := newEnv(t, false, true)
+	c, _ := e.signIn("ann", false)
+	e.f.Deps.Sessions = failingDelete{fakeSessions{e.f.Store}}
+	e.rebuild(false, true)
+	r := e.do("POST", "/api/auth/logout", "", withCookie(c))
+	wantError(t, r, 500, "internal", "Internal error")
+	if len(r.Header.Values("Set-Cookie")) != 0 {
+		t.Errorf("the cookie was cleared although the session lives on: %v", r.Header.Values("Set-Cookie"))
+	}
+}
+
+func TestRedirectEncodesLikeEncodeURI(t *testing.T) {
+	member := &domain.OIDCClaims{Sub: "s1", Name: "Ann", Groups: []string{"mcp-users"}}
+	for returnTo, want := range map[string]string{
+		"/сервер":                 "/%D1%81%D0%B5%D1%80%D0%B2%D0%B5%D1%80",
+		"/a b/сервер?x=1&y=2#f":   "/a%20b/%D1%81%D0%B5%D1%80%D0%B2%D0%B5%D1%80?x=1&y=2#f",
+		"/path;a,b:c@d$e+f!g~'()": "/path;a,b:c@d$e+f!g~'()",
+		"/caf\u00e9":              "/caf\u00e9", // Latin-1 only: left as it is (accepted difference)
+	} {
+		e := newEnv(t, true, true)
+		e.f.OIDC.Next = member
+		state, bind := e.startLogin(returnTo)
+		r := e.do("GET", "/api/auth/callback?code=c1&state="+state, "", withCookie(bind))
+		if got := r.Header.Get("Location"); r.StatusCode != 302 || got != want {
+			t.Errorf("returnTo %q: %d Location %q, want %q", returnTo, r.StatusCode, got, want)
+		}
+	}
+}
+
+// keywordsChecked are the JSON Schema keywords the checker below implements.
+func TestSchemaCheckerRefusesUnknownKeywords(t *testing.T) {
+	schema := map[string]any{"type": "string", "minLength": float64(3)}
+	if p := check(schema, "ab", "$"); !strings.Contains(p, "minLength") {
+		t.Errorf("an unimplemented keyword was skipped silently: %q", p)
+	}
+	nested := map[string]any{"type": "object", "properties": map[string]any{"a": map[string]any{"type": "string", "pattern": "x"}}}
+	if p := check(nested, map[string]any{"a": "y"}, "$"); !strings.Contains(p, "pattern") {
+		t.Errorf("a nested unimplemented keyword was skipped: %q", p)
+	}
+	// Every schema the tests use passes through the checker without an unknown keyword.
+	for _, name := range []string{"AuthMethods", "MeResponse", "TokenSummary", "CreateTokenResponse", "UserSummary", "ErrorBody"} {
+		raw, err := os.ReadFile(schemaPath(name)) //nolint:gosec // G304: the path is built from the test's own location
+		if err != nil {
+			t.Fatal(err)
+		}
+		var sch map[string]any
+		if err := json.Unmarshal(raw, &sch); err != nil {
+			t.Fatal(err)
+		}
+		if p := unknownKeyword(sch); p != "" {
+			t.Errorf("%s: %s", name, p)
+		}
 	}
 }

@@ -2,6 +2,9 @@ package identity_test
 
 import (
 	"context"
+	"errors"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -15,6 +18,9 @@ import (
 	"github.com/ai-pipes/mcp-registry/internal/modules/identity/domain"
 	"github.com/ai-pipes/mcp-registry/internal/platform/httpx"
 )
+
+// quiet is the logger of the request chain: the tests read responses, not logs.
+var quiet = slog.New(slog.NewTextHandler(io.Discard, nil))
 
 var now = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
@@ -202,7 +208,7 @@ func TestRequireSessionAndAdmin(t *testing.T) {
 
 func TestRequireBearerToken(t *testing.T) {
 	s := newSetup()
-	h := httpx.Chain(http.HandlerFunc(echo), httpx.ClientIP(false, 1), identity.RequireBearerToken(s.deps))
+	h := httpx.Chain(http.HandlerFunc(echo), httpx.RequestID(quiet), httpx.ClientIP(false, 1), identity.RequireBearerToken(s.deps))
 	ok := func(v string) {
 		t.Helper()
 		if r := serve(h, request(auth(v))); r.StatusCode != 200 || body(r) != "u1/token/t1" {
@@ -263,3 +269,77 @@ func TestIsUserActiveAdmin(t *testing.T) {
 }
 
 var _ kernel.Clock = clock{}
+
+type failingSessions struct {
+	sessions
+	finds int
+}
+
+func (f *failingSessions) FindByHash(context.Context, string) (*app.SessionRecord, error) {
+	f.finds++
+	return nil, errors.New("store down")
+}
+
+type failingTokens struct{ tokens }
+
+func (failingTokens) FindByHash(context.Context, string) (*app.TokenRecord, error) {
+	return nil, errors.New("store down")
+}
+
+const internalBody = `{"error":{"code":"internal","message":"Internal error"}}`
+
+func TestStoreFailuresAreNotAuthenticationFailures(t *testing.T) {
+	s := newSetup()
+	s.deps.Sessions = &failingSessions{}
+	h := httpx.Chain(http.HandlerFunc(echo), httpx.RequestID(quiet), identity.RequireSession(s.deps))
+	r := serve(h, request(sess("sess1")))
+	if r.StatusCode != 500 || body(r) != internalBody || r.Header.Get("WWW-Authenticate") != "" {
+		t.Errorf("RequireSession: %d", r.StatusCode)
+	}
+	if _, ok, err := identity.SessionPrincipal(s.deps, request(sess("sess1"))); ok || err == nil {
+		t.Errorf("SessionPrincipal: ok=%v err=%v", ok, err)
+	}
+
+	s = newSetup()
+	s.deps.Tokens = failingTokens{}
+	h = httpx.Chain(http.HandlerFunc(echo), httpx.RequestID(quiet), httpx.ClientIP(false, 1), identity.RequireBearerToken(s.deps))
+	r = serve(h, request(auth("Bearer sk_good")))
+	if r.StatusCode != 500 || body(r) != internalBody || r.Header.Get("WWW-Authenticate") != "" {
+		t.Errorf("RequireBearerToken: %d %q", r.StatusCode, r.Header.Get("WWW-Authenticate"))
+	}
+	if len(s.limiter.hits) != 0 {
+		t.Error("a store failure was counted against the client")
+	}
+}
+
+func TestSessionIDLengthLimit(t *testing.T) {
+	s := newSetup()
+	fs := &failingSessions{sessions: s.deps.Sessions.(sessions)}
+	s.deps.Sessions = countingStore{s.deps.Sessions, &fs.finds}
+	long, ok64 := strings.Repeat("a", 65), strings.Repeat("b", 64)
+	for _, id := range []string{long, ok64} {
+		s.deps.Sessions.(countingStore).SessionRepository.(sessions)["h:"+id] = &app.SessionRecord{
+			IDHash: "h:" + id, UserID: "u1", CreatedAt: now, LastSeenAt: now, ExpiresAt: now.Add(time.Hour),
+		}
+	}
+	if _, ok, _ := identity.SessionPrincipal(s.deps, request(sess(long))); ok || fs.finds != 0 {
+		t.Errorf("65 characters: ok=%v, store asked %d times", ok, fs.finds)
+	}
+	if _, ok := identity.SessionIDOf(request(sess(long))); ok {
+		t.Error("SessionIDOf accepted 65 characters")
+	}
+	if p, ok, _ := identity.SessionPrincipal(s.deps, request(sess(ok64))); !ok || p.UserID != "u1" {
+		t.Error("64 characters refused")
+	}
+}
+
+// countingStore counts FindByHash calls of the wrapped store.
+type countingStore struct {
+	app.SessionRepository
+	finds *int
+}
+
+func (c countingStore) FindByHash(ctx context.Context, h string) (*app.SessionRecord, error) {
+	*c.finds++
+	return c.SessionRepository.FindByHash(ctx, h)
+}
