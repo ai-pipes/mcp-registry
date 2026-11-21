@@ -191,16 +191,20 @@ func (c *Client) Do(t *testing.T, method, path string, body any, hdr ...string) 
 }
 
 // Answers fails the test unless the app answers a request that touches neither the database nor
-// the embedding model: GET /api/auth/methods, 200. It is the liveness probe for right after a
-// start or a restart. /healthz is not: it runs a database query against a 1.5 s timer, and the
+// the embedding model: GET /, status 200 (the body is not judged). The UI shell is served by the
+// platform layer of any server from its first milestone, whereas /api/auth/methods belongs to a
+// module (identity) that a server may not have yet; the probe only has to show that the
+// application answers. It is the liveness probe for right after a start or a restart. /healthz is not: it runs a database query against a 1.5 s timer, and the
 // reference image blocks its event loop while it loads its embedding model right after it first
 // answers healthy, so under load /healthz can answer 503 while the database is fine (decision
 // ready-before-serving, see deviations.go). Start, SwapImage and the boot helpers have already
 // proven health once.
 func (s *Stack) Answers(t *testing.T) {
 	t.Helper()
-	if r := s.Anonymous().Do(t, "GET", "/api/auth/methods", nil); r.Status != http.StatusOK {
-		t.Fatalf("GET /api/auth/methods: %d %.200q", r.Status, r.Body)
+	// Accept: text/html, as a browser's first request: a server serves the shell to it, and the
+	// probe then does not depend on what a server answers a request that wants anything else.
+	if r := s.Anonymous().Do(t, "GET", "/", nil, "Accept: text/html"); r.Status != http.StatusOK {
+		t.Fatalf("GET /: %d %.200q", r.Status, r.Body)
 	}
 }
 
@@ -252,7 +256,24 @@ func (r Response) Decode(t *testing.T, into any) {
 // through Do, which has no retry and no tolerance for transport errors.
 func (c *Client) DoExpectingEarlyRefusal(t *testing.T, method, path string, body []byte, hdr ...string) Response {
 	t.Helper()
+	return c.doExpectingEarlyRefusal(t, method, path, body, false, hdr)
+}
+
+// DoChunkedExpectingEarlyRefusal is DoExpectingEarlyRefusal for a body sent without a declared
+// length (Transfer-Encoding: chunked, no Content-Length): the server cannot refuse it by length
+// before reading, only after it has read up to its limit.
+func (c *Client) DoChunkedExpectingEarlyRefusal(t *testing.T, method, path string, body []byte, hdr ...string) Response {
+	t.Helper()
+	return c.doExpectingEarlyRefusal(t, method, path, body, true, hdr)
+}
+
+func (c *Client) doExpectingEarlyRefusal(t *testing.T, method, path string, body []byte, chunked bool, hdr []string) Response {
+	t.Helper()
 	req := c.newRequest(t, method, path, body, hdr)
+	if chunked {
+		// A body of unknown length: net/http writes it as chunks and sends no Content-Length.
+		req.Body, req.GetBody, req.ContentLength = io.NopCloser(bytes.NewReader(body)), nil, -1
+	}
 	req.Header.Set("Connection", "close")
 	// Only http.Client.Do adds the cookies of its jar; this request is sent raw, so add them here.
 	if jar := c.http.Jar; jar != nil {

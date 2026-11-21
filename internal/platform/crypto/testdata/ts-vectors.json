@@ -1,0 +1,38 @@
+{
+  "secretbox": {
+    "layout": "iv(12) | tag(16) | ciphertext, all base64",
+    "key": "zfYiW7TsB9qNmeqc/ZyNMy4jcpxnpHcr4/i8BaeY/+Q=",
+    "previousKey": "j/CKCwnNcMYNP3wU4ONcbKPsfth+4D8GfFbFq5z6pL8=",
+    "vectors": [
+      {
+        "plain": "",
+        "sealed": "0mCbUWzccvndisw8FEEjHy+sY/QnI7dCl4CknA=="
+      },
+      {
+        "plain": "sk_test_0123456789abcdef",
+        "sealed": "PPmrrXAN1GvweDGurFQ07mIGVwBEvq3ynZNpbZiGaZbU0Gg795uDY8fwW7mRd5keKl7Ibw=="
+      },
+      {
+        "plain": "pa$$word with spaces and \"quotes\"",
+        "sealed": "XhmZTQj2KcVCBDV7bfahFZPnW5DJMIDtPL7aMQjUyIzHI9MaZKNX4e1sBnRcGmDSERHKL9pYl1MCMxnALw=="
+      },
+      {
+        "plain": "Ключ секретный: 密钥 🔐",
+        "sealed": "ygsvoyMnLyhTNw8zoGU1uOch3FqNex1w59rvoUU4ZQIYh0Zw+RjxKkOSaaeyjcSzk+GoOZ9ECEOeI5Ca32+h8Wsf6vw="
+      },
+      {
+        "plain": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "sealed": "TqEPeorTvxh1YpmIv0Zb3/uzwEtpb72uRdDl4kjtr2WNzYvCi98XUli2YL+7DqA1MBCXffBj4KlbwLeevWrbwuooOcE4iM25iOGcN7Na/lH/fm3WBlThOwBL8j1N7DXKnNd4r7atGsZkQHfIAkgqvVRMNTa7w80/lg70R3JfXz5C3FZ8acqXBSgzPIAqdx1/fAmC1MP1f+f223XkVzh8p4fTGL1W2xggGyPqWhz2pbKj1yXBGAdtajNjFC45Kjx3uNOECg7IB3YDNNCFsowCR264PdYktRaO1oZY92wUg3VrmZMlQ7gMsD5OHucaVkglx/+KW2bWWj8U2xzY3Z4jEhCGrPbeVnptCGz350RyRfUjQaPZB6iIFdy5p2SdOhL/TERDwCx1JzqqSUCpKAtNLBPRfyFWkUKRrS+vFIu3LP0IKPFfcCLgkeBOLf8XPaqXS5sUCPL1d7pvKhjTo+vJYubkG3zR/w4tIjjO1y5azEfl7EHV8qIdkDOfMLY7/mJZYkK0ZGgr8gZ+1lVcaxthAdWFjuUYN1vZH4FScN+DRo3/kbU78d445M7GL9cNCzcoztLFCOEXT9qU1ntDmmG4/ot31cwBS4JQRGTbpAwlCYxZU0dd2suz7M6v/869udxD0FOcw6djrfKzSY5mfHn27m538L6JCIcy+IlOud93+kUTXKf1nnd6wO7tLecepkhnuTJK+y1BPUs+LRbTL6rhHj37v8cBbLNhfDeLw9/72oAjMMB81myykBl59vmCXk8cAFbXHrWc4SoeMN7FAvv2S73Tfx1iNf9uMyE5Q/zKBldit3Jx74R2Tr7XjuQIi5eabEimpxuyhaNvmvyFpBSNf0/IV4d/F0XdLjdbiw6j4EVvv3JdmYn3awXrBtq7ScnxOPGGPSnvgPDYwThYaalRA+FBoMRUBIREygB+bOsVwiE37wrCplYL6FbopPP1qIbrN9oGG3aVENHMCAB7/u1avN4XDMqF9kArj7jO5bfuAhMVCoT1feeoVDWLPJeX4LDihu4uxvg26tczTgtCWV2s923BlDQdtAbQpE1wmhENsEz6Fzrr7yKd6hTsHaWsFL2JETOF8MpPCPBJ7RAFyteKpuuBaEpQhUHKQnUP2kEZzaVBt5p46rjR++Apbbqcyd3mD/1X7XCIHnCZnh6Jdj2HxKtv5h0Oj5zzfVh6YgrAkM0uQEAf97OvlmK9hqjq5XYbJk6nuevqtj9oNM3ZJrYJuRrtFi9S24o+DHzXAqvz1xDwXidybnJuQc1ES89r/0NeB58eSFNXRDQZG1q33n5MlgD4TjTyYeGWVfyGQ3kmmLBDLNf5gGAL8FwBEglTnTI1FYuwlmD2O2r9/gj8r9fm7rutVow="
+      }
+    ],
+    "sealedWithPrevious": {
+      "plain": "sealed with the previous key",
+      "sealed": "O3+aMPfJAuJJKxa0h1AHl6DlhIJ+jXCQ1+11CUTVhFBBfLNhHfCVmrphyOY07tbgSPlyoXw9mxA="
+    }
+  },
+  "keyCheck": {
+    "key": "ijmG3B41bZIgESDcrTikbKgLq+4gVwHoOeEnlJcYeYw=",
+    "plain": "mcp-registry key check v1",
+    "sealed": "ue4W83q23WM+ZUzgUiZih2zevTYe+Zs0kyUcVanX1BOTDMQ3ACxW9CCwZ7AAWONiv29IR30="
+  }
+}
