@@ -191,11 +191,17 @@ func (p *OIDCProvider) fetchDiscovery(ctx context.Context) (*discovered, error) 
 		return nil, err
 	}
 	var meta struct {
+		Issuer   string `json:"issuer"`
 		IssParam bool   `json:"authorization_response_iss_parameter_supported"`
 		JWKSURI  string `json:"jwks_uri"`
 	}
 	if err := prov.Claims(&meta); err != nil {
 		return nil, err
+	}
+	if meta.Issuer != issuer {
+		// The retry runs with issuer validation off, so the second document is checked here: it
+		// must announce exactly the issuer the first one did.
+		return nil, errors.New("oidc: the discovery document changed its issuer between two fetches")
 	}
 	if err := requireSecureEndpoints(p.cfg.Issuer, prov.Endpoint().AuthURL, prov.Endpoint().TokenURL, prov.UserInfoEndpoint(), meta.JWKSURI); err != nil {
 		return nil, err
@@ -442,27 +448,44 @@ func issuersEqual(a, b string) bool {
 }
 
 func normalizeIssuer(raw string) (string, bool) {
-	u, err := url.Parse(raw)
-	if err != nil || u.Scheme == "" || u.Host == "" {
+	scheme, rest, ok := strings.Cut(raw, "://")
+	if !ok || scheme == "" {
 		return "", false
 	}
-	u.Scheme = strings.ToLower(u.Scheme)
-	host := strings.ToLower(u.Hostname())
-	port := u.Port()
-	if (u.Scheme == "http" && port == "80") || (u.Scheme == "https" && port == "443") {
+	end := strings.IndexAny(rest, "/?#")
+	if end < 0 {
+		end = len(rest)
+	}
+	authority, tail := rest[:end], rest[end:]
+	userinfo := ""
+	if at := strings.LastIndex(authority, "@"); at >= 0 {
+		userinfo, authority = authority[:at+1], authority[at+1:]
+	}
+	host, port := authority, ""
+	if strings.HasPrefix(authority, "[") {
+		if end := strings.Index(authority, "]"); end >= 0 {
+			host = authority[:end+1]
+			port = strings.TrimPrefix(authority[end+1:], ":")
+		}
+	} else if colon := strings.LastIndex(authority, ":"); colon >= 0 {
+		host, port = authority[:colon], authority[colon+1:]
+	}
+	if host == "" {
+		return "", false
+	}
+	scheme, host = strings.ToLower(scheme), strings.ToLower(host)
+	if (scheme == "http" && port == "80") || (scheme == "https" && port == "443") {
 		port = ""
 	}
-	u.Host = host
-	if strings.Contains(host, ":") {
-		u.Host = "[" + host + "]"
-	}
 	if port != "" {
-		u.Host += ":" + port
+		host += ":" + port
 	}
-	if u.Path == "" {
-		u.Path = "/"
+	if tail == "" || tail[0] == '?' || tail[0] == '#' {
+		tail = "/" + tail
 	}
-	return u.String(), true
+	// Everything after the authority is kept byte for byte: no re-encoding, no dropped empty
+	// fragment, no dot-segment removal. Narrower than WHATWG is fine; wider is not.
+	return scheme + "://" + userinfo + host + tail, true
 }
 
 // requireSecureEndpoints refuses endpoints that are not https unless the issuer itself is http

@@ -133,6 +133,7 @@ type Provider struct {
 	release   chan struct{}
 	redirect  string
 	metaIss   string
+	discIss   []string
 	algs      []string
 	arrivals  chan Endpoint
 	gate      chan struct{}
@@ -220,6 +221,23 @@ func (p *Provider) Drain() {
 			return
 		}
 	}
+}
+
+// SetDiscoveryIssuers makes the n-th discovery request announce the n-th issuer (the last one
+// repeats); ID tokens and the authorize redirect keep using SetMetadataIssuer's value.
+func (p *Provider) SetDiscoveryIssuers(issuers ...string) { p.with(func() { p.discIss = issuers }) }
+
+func (p *Provider) discoveryIssuer() string {
+	n := p.Requests(Discovery)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.discIss) > 0 {
+		return p.discIss[min(max(n-1, 0), len(p.discIss)-1)]
+	}
+	if p.metaIss != "" {
+		return p.metaIss
+	}
+	return p.Issuer
 }
 
 // SetAdvertisedAlgs sets id_token_signing_alg_values_supported (default ES256).
@@ -317,7 +335,7 @@ func (p *Provider) discovery(w http.ResponseWriter, _ *http.Request) {
 	iss, algs := p.issParam, p.algs
 	p.mu.Unlock()
 	writeJSON(w, http.StatusOK, map[string]any{
-		"issuer":                                         p.announced(),
+		"issuer":                                         p.discoveryIssuer(),
 		"authorization_endpoint":                         p.Issuer + "/authorize",
 		"token_endpoint":                                 p.Issuer + "/token",
 		"jwks_uri":                                       p.Issuer + "/jwks",

@@ -808,3 +808,47 @@ func TestACancelledTokenRequestIsNotAnOutage(t *testing.T) {
 	r.idp.SetFault(oidctest.Token, oidctest.FaultNone)
 	r.login(t) // nothing was left behind
 }
+
+func TestTheRetriedDiscoveryDocumentIsChecked(t *testing.T) {
+	idp := oidctest.Start(t)
+	// The first document differs from the configured issuer only by a slash; the second one
+	// (fetched with issuer validation off) names another issuer.
+	idp.SetDiscoveryIssuers(idp.Issuer+"/", "http://evil.example")
+	prov := infra.NewOIDCProvider(infra.OIDCConfig{
+		Issuer: idp.Issuer, ClientID: idp.ClientID,
+		ClientSecret: idp.ClientSecret, RedirectURI: redirectURI,
+	})
+	_, err := prov.AuthorizationURL(context.Background(), app.OIDCAuthorizationInput{State: "s", CodeChallenge: "c", Nonce: "n"})
+	wantUnavailable(t, err)
+	if n := idp.Requests(oidctest.Discovery); n != 2 {
+		t.Fatalf("%d discovery requests, want 2", n)
+	}
+}
+
+func TestTheConfiguredSpellingIsNotTheDiscoveredIssuer(t *testing.T) {
+	setup := func(t *testing.T) (*oidctest.Provider, *infra.OIDCProvider) {
+		idp := oidctest.Start(t)
+		idp.SetMetadataIssuer(idp.Issuer + "/") // announced with a slash, configured without
+		idp.SetClaims(oidctest.Claims{Sub: "u1", Groups: strs("g")})
+		return idp, infra.NewOIDCProvider(infra.OIDCConfig{
+			Issuer: idp.Issuer, ClientID: idp.ClientID,
+			ClientSecret: idp.ClientSecret, RedirectURI: redirectURI,
+		})
+	}
+	grant := func(idp *oidctest.Provider) string {
+		return idp.IssueCode(oidctest.Grant{RedirectURI: redirectURI, Nonce: nonce, CodeChallenge: oidctest.Challenge(verifier)})
+	}
+	t.Run("ID token iss", func(t *testing.T) {
+		idp, prov := setup(t)
+		idp.SetTamper(oidctest.Tamper{Issuer: idp.Issuer})
+		discovered := idp.Issuer + "/"
+		_, err := prov.Exchange(context.Background(), app.OIDCExchangeInput{Code: grant(idp), CodeVerifier: verifier, Nonce: nonce, Iss: &discovered})
+		wantRejected(t, err)
+	})
+	t.Run("callback iss", func(t *testing.T) {
+		idp, prov := setup(t)
+		configured := idp.Issuer
+		_, err := prov.Exchange(context.Background(), app.OIDCExchangeInput{Code: grant(idp), CodeVerifier: verifier, Nonce: nonce, Iss: &configured})
+		wantRejected(t, err)
+	})
+}

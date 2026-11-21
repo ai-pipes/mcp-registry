@@ -2,6 +2,7 @@ package archtest
 
 import (
 	"os/exec"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -16,7 +17,11 @@ func TestNoBinaryLinksTestSupport(t *testing.T) {
 	if err != nil {
 		t.Fatalf("go list -deps ./cmd/...: %v", err)
 	}
-	if bad := testSupportDeps(strings.Fields(string(out))); len(bad) != 0 {
+	deps := strings.Fields(string(out))
+	if !slices.ContainsFunc(deps, func(d string) bool { return strings.HasSuffix(d, "/cmd/mcp-registry") }) {
+		t.Fatal("go list did not report cmd/mcp-registry: the check would pass vacuously")
+	}
+	if bad := testSupportDeps(deps); len(bad) != 0 {
 		t.Fatalf("a binary under cmd/ depends on test-support packages: %v", bad)
 	}
 }
