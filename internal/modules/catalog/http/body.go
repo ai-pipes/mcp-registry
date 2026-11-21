@@ -7,6 +7,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -450,10 +451,11 @@ func before(a, b []int) bool {
 	return len(a) > len(b)
 }
 
-// firstIssue is the first problem of a body in schema order, or nil. The shape problems come with
-// the limit problems of the application layer for the same values; a limit problem on a value
-// that did not have the right shape is dropped (zod says one thing about a value).
-func firstIssue(shapeIssues []issue, limits []app.Issue) *issue {
+// allIssues is every problem of a body in schema order: the shape problems together with the
+// limit problems of the application layer for the same values; a limit problem at or under the
+// path of a shape problem is dropped (zod says one thing about a value). Ties keep the order they
+// were found in (shape first).
+func allIssues(shapeIssues []issue, limits []app.Issue) []issue {
 	all := append([]issue{}, shapeIssues...)
 next:
 	for _, l := range limits {
@@ -464,32 +466,36 @@ next:
 		}
 		all = append(all, issue{l.Path, l.Message})
 	}
-	if len(all) == 0 {
-		return nil
+	ranks := make([][]int, len(all))
+	for i, x := range all {
+		ranks[i] = rankOf(x.path)
 	}
-	first := all[0]
-	for _, c := range all[1:] {
-		if before(rankOf(c.path), rankOf(first.path)) {
-			first = c
-		}
+	idx := make([]int, len(all))
+	for i := range idx {
+		idx[i] = i
 	}
-	return &first
+	sort.SliceStable(idx, func(i, j int) bool { return before(ranks[idx[i]], ranks[idx[j]]) })
+	out := make([]issue, len(all))
+	for i, k := range idx {
+		out[i] = all[k]
+	}
+	return out
 }
 
-// serverRequest is the body of POST (create true: slug and secret too) or PUT /api/servers.
-func serverRequest(r *http.Request, create bool) (app.ServerInput, *string, error) {
-	root, err := readBody(r)
-	if err != nil {
-		return app.ServerInput{}, nil, err
-	}
+// parseServer is the one decoder of a server definition: every issue in schema order, and the
+// input (valid only when there are none). create adds slug and secret (the REST create body);
+// withSlug without secret is a server file; neither is a PUT body.
+func parseServer(root *node, create, withSlug bool) (app.ServerInput, *string, []issue) {
 	if root.kind != kindObject {
-		return app.ServerInput{}, nil, issue{"", "expected an object"}.err()
+		return app.ServerInput{}, nil, []issue{{"", "expected an object"}}
 	}
 	var s shape
 	in := app.ServerInput{Fields: s.fields(root)}
 	var secret *string
-	if create {
+	if create || withSlug {
 		in.Slug = s.str(root, "", "slug")
+	}
+	if create {
 		if n := root.member("secret"); n != nil && n.kind != kindNull {
 			if v, ok := s.text(n, "secret"); ok {
 				secret = &v
@@ -497,16 +503,57 @@ func serverRequest(r *http.Request, create bool) (app.ServerInput, *string, erro
 		}
 	}
 	var limits []app.Issue
-	if create {
+	switch {
+	case create:
 		limits = app.ValidateCreateRequest(in, secret)
-	} else {
+	case withSlug:
+		limits = app.ValidateServerInput(in)
+	default:
 		limits = app.ValidateServerFields(in.Fields)
 	}
-	if first := firstIssue(s.issues, limits); first != nil {
-		return app.ServerInput{}, nil, first.err()
+	return in, secret, allIssues(s.issues, limits)
+}
+
+// serverRequest is the body of POST (create true: slug and secret too) or PUT /api/servers; the
+// answer is the first issue.
+func serverRequest(r *http.Request, create bool) (app.ServerInput, *string, error) {
+	root, err := readBody(r)
+	if err != nil {
+		return app.ServerInput{}, nil, err
+	}
+	in, secret, issues := parseServer(root, create, false)
+	if len(issues) > 0 {
+		return app.ServerInput{}, nil, issues[0].err()
 	}
 	return in, secret, nil
 }
+
+// ParseServerFile parses the JSON of a server definition file as the CLI's create-server does: the
+// server fields plus slug, without secret (a "secret" member is ignored like any unknown one).
+// The text is parsed like JSON.parse: empty or blank text is invalid JSON, and err (a fixed text
+// that never quotes the file) is set only then. issues holds EVERY problem in zod's order, with
+// the paths and reasons the REST decoder reports (it takes issues[0] of the same code); a root
+// that is not an object is one issue with an empty path. With no issues, in is what the REST
+// path hands to RegisterServer for the same body without a secret: the URLs as written (the use
+// case cleans them), nil TimeoutMs and DailyLimit when absent, extraAuthorizeParams in document
+// order.
+func ParseServerFile(raw []byte) (in app.ServerInput, issues []app.Issue, err error) {
+	root, perr := readTree(raw)
+	if perr != nil {
+		return app.ServerInput{}, nil, errNotJSON
+	}
+	in, _, found := parseServer(root, false, true)
+	issues = make([]app.Issue, 0, len(found))
+	for _, i := range found {
+		issues = append(issues, app.Issue{Path: i.path, Message: i.msg})
+	}
+	if len(issues) > 0 {
+		return app.ServerInput{}, issues, nil
+	}
+	return in, issues, nil
+}
+
+var errNotJSON = errors.New("not valid JSON")
 
 // objectBody is a body that must be a JSON object.
 func objectBody(r *http.Request) (*node, error) {
