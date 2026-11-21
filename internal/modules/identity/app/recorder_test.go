@@ -3,6 +3,8 @@ package app_test
 import (
 	"context"
 	"net/url"
+	"slices"
+	"testing"
 	"time"
 
 	"github.com/ai-pipes/mcp-registry/internal/kernel"
@@ -139,4 +141,49 @@ type recLimiter struct {
 func (r recLimiter) Hit(key string) (bool, int) {
 	r.s.add(r.name)
 	return r.RateLimiter.Hit(key)
+}
+
+// sizedRandom records the byte counts the use case asked the random source for.
+type sizedRandom struct {
+	app.Random
+	Sizes []int
+}
+
+func (r *sizedRandom) Base64URL(n int) (string, error) {
+	r.Sizes = append(r.Sizes, n)
+	return r.Random.Base64URL(n)
+}
+
+// sizes wraps the random source of f.Deps and returns the recorder.
+func (f *fixture) sizes() *sizedRandom {
+	r := &sizedRandom{Random: f.Deps.Random}
+	f.Deps.Random = r
+	return r
+}
+
+func wantSizes(t *testing.T, r *sizedRandom, want ...int) {
+	t.Helper()
+	if !slices.Equal(r.Sizes, want) {
+		t.Fatalf("random byte counts = %v, want %v", r.Sizes, want)
+	}
+}
+
+// failingLinks fails the named link-store calls.
+type failingLinks struct {
+	app.LoginLinkRepository
+	insertErr, deleteErr error
+}
+
+func (l failingLinks) Insert(ctx context.Context, rec app.LoginLinkRecord) error {
+	if l.insertErr != nil {
+		return l.insertErr
+	}
+	return l.LoginLinkRepository.Insert(ctx, rec)
+}
+
+func (l failingLinks) DeleteByUser(ctx context.Context, id string) error {
+	if l.deleteErr != nil {
+		return l.deleteErr
+	}
+	return l.LoginLinkRepository.DeleteByUser(ctx, id)
 }

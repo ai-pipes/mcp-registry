@@ -628,3 +628,39 @@ func TestBootstrapLocalAdminNothingWhenTheOnlyPersonIsDisabled(t *testing.T) {
 		t.Fatalf("code = %q issued = %v err = %v", code, issued, err)
 	}
 }
+
+func TestLoginCodeAndLinkSessionAre32RandomBytes(t *testing.T) {
+	f := newFixture()
+	person(t, f, "alice", false)
+	r := f.sizes()
+	link := issue(t, f, "alice")
+	wantSizes(t, r, 32)
+	r.Sizes = nil
+	if _, err := redeem(f, link.Code, "1.1.1.1"); err != nil {
+		t.Fatal(err)
+	}
+	wantSizes(t, r, 32)
+}
+
+func TestBootstrapLocalAdminLinkStoreFailureIsReturned(t *testing.T) {
+	boom := errors.New("db down")
+	for name, fl := range map[string]func(app.LoginLinkRepository) failingLinks{
+		"insert": func(l app.LoginLinkRepository) failingLinks { return failingLinks{l, boom, nil} },
+		"delete": func(l app.LoginLinkRepository) failingLinks { return failingLinks{l, nil, boom} },
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture()
+			f.Deps.LoginLinks = fl(f.Deps.LoginLinks)
+			code, issued, err := app.BootstrapLocalAdmin(ctx, f.Deps)
+			if !errors.Is(err, boom) || issued || code != "" {
+				t.Fatalf("code = %q issued = %v err = %v", code, issued, err)
+			}
+			if _, refusal := domain.AsError(err); refusal {
+				t.Fatal("a store failure must not look like a domain refusal")
+			}
+			if len(f.Store.users) != 1 {
+				t.Fatal("provisioning should have succeeded")
+			}
+		})
+	}
+}

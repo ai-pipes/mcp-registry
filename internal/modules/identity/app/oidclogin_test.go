@@ -525,3 +525,16 @@ func TestCompleteOIDCLoginStoreAndAuditFailuresAreReturnedUnchanged(t *testing.T
 		}
 	})
 }
+
+func TestOIDCSecretsAre32RandomBytes(t *testing.T) {
+	f := newFixture()
+	r := f.sizes()
+	f.OIDC.Next = claims("mcp-users")
+	state := start(t, f, "/").Query().Get("state")
+	wantSizes(t, r, 32, 32, 32) // state, nonce, code verifier
+	r.Sizes = nil
+	if _, err := callback(f, state, "1.1.1.1"); err != nil {
+		t.Fatal(err)
+	}
+	wantSizes(t, r, 32) // the session id
+}
