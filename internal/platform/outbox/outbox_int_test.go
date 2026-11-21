@@ -14,10 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ai-pipes/mcp-registry/apps/server/migrations"
 	"github.com/ai-pipes/mcp-registry/internal/kernel"
 	"github.com/ai-pipes/mcp-registry/internal/platform/logging"
-	"github.com/ai-pipes/mcp-registry/internal/platform/migrate"
 	"github.com/ai-pipes/mcp-registry/internal/platform/pgtest"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -27,11 +25,7 @@ const wait = 30 * time.Second
 
 func fresh(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	pool := pgtest.Start(t)
-	if _, err := migrate.Run(context.Background(), pool, migrations.FS); err != nil {
-		t.Fatal(err)
-	}
-	return pool
+	return pgtest.StartMigrated(t)
 }
 
 func appendEvents(t *testing.T, pool *pgxpool.Pool, events ...kernel.Event) {

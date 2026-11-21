@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -193,6 +194,28 @@ func TestWriteDomainErrorWithoutTheMiddleware(t *testing.T) {
 	httpx.WriteDomainError(w, httptest.NewRequest("GET", "/", nil), errors.New("x"))
 	if w.Code != 500 || errorOf(t, w) != "internal|Internal error" {
 		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+}
+
+// ClientIP without RequestID leaves request state with no logger: the error log falls back to
+// slog's default logger instead of panicking.
+func TestWriteDomainErrorWithClientIPOnly(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(logging.New("info", &buf))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	h := httpx.ClientIP(false, 1)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		httpx.WriteDomainError(w, r, errors.New("secret-value in message"))
+	}))
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("GET", "/", nil))
+	if w.Code != 500 || errorOf(t, w) != "internal|Internal error" {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	recs := logRecords(t, &buf)
+	if len(recs) != 1 || recs[0]["msg"] != "unhandled error" || strings.Contains(buf.String(), "secret-value") {
+		t.Fatalf("log: %s", buf.String())
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	jsonv2 "encoding/json/v2"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -81,16 +82,16 @@ func TestConfigNeverPrintsItsSecrets(t *testing.T) {
 }
 
 func TestSecretTypesAreRedactedOnEveryPath(t *testing.T) {
-	s, b := config.Secret("ZZ-s"), config.SecretBytes("ZZ-b")
+	s, b := config.NewSecret("ZZ-s"), config.NewSecretBytes([]byte("ZZ-b"))
 	for _, v := range []any{s, b, &s, &b} {
-		for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%q", "%x"} {
+		for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%q", "%x", "%d", "%p"} {
 			if out := fmt.Sprintf(verb, v); strings.Contains(out, "ZZ") || strings.Contains(out, "5a5a") {
 				t.Fatalf("%s of %T printed the value: %q", verb, v, out)
 			}
 		}
 	}
-	if s.Reveal() != "ZZ-s" || string(b.Reveal()) != "ZZ-b" {
-		t.Fatal("Reveal must return the value")
+	if s.Reveal() != "ZZ-s" || string(b.Reveal()) != "ZZ-b" || !s.IsSet() || !b.IsSet() {
+		t.Fatal("Reveal must return the value of a set secret")
 	}
 	for _, m := range []interface{ MarshalText() ([]byte, error) }{s, b} {
 		if txt, err := m.MarshalText(); err != nil || string(txt) != "[Redacted]" {
@@ -99,12 +100,85 @@ func TestSecretTypesAreRedactedOnEveryPath(t *testing.T) {
 	}
 }
 
+// holder has unexported fields: fmt reaches them by reflection with every method switched off, the
+// path on which a string- or slice-based secret type would be printed raw.
+type holder struct {
+	s config.Secret
+	b config.SecretBytes
+}
+
+func TestSecretsInsideStructsWithUnexportedFieldsAreNotPrinted(t *testing.T) {
+	h := holder{s: config.NewSecret("ZZ-inner"), b: config.NewSecretBytes([]byte("ZZ-bytes"))}
+	for _, v := range []any{h, &h, []holder{h}, map[string]holder{"k": h}, struct{ in holder }{h}} {
+		for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%q", "%x", "%d", "%p"} {
+			out := fmt.Sprintf(verb, v)
+			if strings.Contains(out, "ZZ") || strings.Contains(out, "5a5a") || strings.Contains(out, "5A5A") {
+				t.Fatalf("%s of %T printed a secret: %q", verb, v, out)
+			}
+		}
+	}
+}
+
+func TestZeroSecretIsUnsetEverywhere(t *testing.T) {
+	var s config.Secret
+	var b config.SecretBytes
+	if s.IsSet() || b.IsSet() || s.Reveal() != "" || b.Reveal() != nil {
+		t.Fatal("the zero value is not set and reveals nothing")
+	}
+	for _, v := range []any{s, b} {
+		for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%d"} {
+			if out := fmt.Sprintf(verb, v); out != "[unset]" {
+				t.Fatalf("%s of an unset %T: %q", verb, v, out)
+			}
+		}
+		j, err := json.Marshal(v)
+		if err != nil || string(j) != `"[unset]"` {
+			t.Fatalf("json of an unset %T: %s %v", v, j, err)
+		}
+	}
+	var logs bytes.Buffer
+	logging.New("info", &logs).Info("x", "s", s, "b", b)
+	if !strings.Contains(logs.String(), "[unset]") || strings.Contains(logs.String(), "[Redacted]") {
+		t.Fatalf("slog: %s", logs.String())
+	}
+	if config.NewSecret("").IsSet() || config.NewSecretBytes(nil).IsSet() || config.NewSecretBytes([]byte{}).IsSet() {
+		t.Fatal("an empty value is not a set secret")
+	}
+}
+
+func TestRevealOfSecretBytesIsACopy(t *testing.T) {
+	b := config.NewSecretBytes([]byte("ZZ-key"))
+	b.Reveal()[0] = 'X'
+	if string(b.Reveal()) != "ZZ-key" {
+		t.Fatalf("a caller changed the secret through Reveal: %q", b.Reveal())
+	}
+}
+
+// Comparing two secrets with == would compare addresses and silently answer "different" for equal
+// values; the types must refuse it at compile time (reflect reports the same fact).
+func TestSecretsAreNotComparable(t *testing.T) {
+	for _, v := range []any{config.Secret{}, config.SecretBytes{}, config.OIDCClient{}} {
+		if reflect.TypeOf(v).Comparable() {
+			t.Fatalf("%T is comparable with ==", v)
+		}
+	}
+}
+
+func TestNewSecretBytesCopiesItsInput(t *testing.T) {
+	raw := []byte("ZZ-orig")
+	b := config.NewSecretBytes(raw)
+	raw[0] = 'X'
+	if string(b.Reveal()) != "ZZ-orig" {
+		t.Fatalf("the secret changed with its source: %q", b.Reveal())
+	}
+}
+
 func TestUnsetSecretsStayDistinguishable(t *testing.T) {
 	cfg, err := config.Load(baseEnv(t), noFiles)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.DatabasePassword != nil || cfg.SecretsKeyOld != nil {
-		t.Fatal("unset secrets must be nil")
+	if cfg.DatabasePassword.IsSet() || cfg.SecretsKeyOld.IsSet() || !cfg.SecretsKey.IsSet() || !cfg.DatabaseURL.IsSet() {
+		t.Fatal("unset secrets must be the zero value, set ones must report IsSet")
 	}
 }

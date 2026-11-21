@@ -12,6 +12,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/ai-pipes/mcp-registry/internal/kernel"
 )
 
 const (
@@ -24,6 +26,8 @@ const (
 	// A year: a longer synchronisation period is a typo.
 	maxSyncIntervalHours = 24 * 365
 	defaultOIDCScopes    = "openid profile email groups"
+	// maxSafeInteger is 2^53-1, JavaScript's Number.MAX_SAFE_INTEGER.
+	maxSafeInteger = 1<<53 - 1
 )
 
 // OIDCClient is the gateway's client at the identity provider.
@@ -35,15 +39,15 @@ type OIDCClient struct {
 // Config is the validated configuration.
 type Config struct {
 	Port                     int
-	DatabaseURL              Secret  // may carry a password
-	DatabasePassword         *Secret // from PGPASSWORD_FILE; nil when unset
+	DatabaseURL              Secret // may carry a password
+	DatabasePassword         Secret // from PGPASSWORD_FILE; the zero value when unset
 	PublicURL                string
 	AllowedHosts             []string
 	TrustProxy               bool
 	TrustProxyHops           int
 	CookieSecure             bool
 	SecretsKey               SecretBytes // 32 bytes
-	SecretsKeyOld            SecretBytes // nil when unset
+	SecretsKeyOld            SecretBytes // the zero value when unset
 	OIDC                     *OIDCClient
 	OIDCLoginGroup           string
 	OIDCAdminGroup           string
@@ -79,14 +83,13 @@ func Load(env map[string]string, readFile func(string) (string, error)) (Config,
 	var cfg Config
 
 	cfg.Port = intVar(set, "PORT", 3000, 1, 65535, &c)
-	cfg.DatabaseURL = Secret(requiredVar(set, "DATABASE_URL", &c))
+	cfg.DatabaseURL = NewSecret(requiredVar(set, "DATABASE_URL", &c))
 	if pw, ok := fromFile(set, "PGPASSWORD", readFile, &c); ok {
-		secret := Secret(pw)
-		cfg.DatabasePassword = &secret
+		cfg.DatabasePassword = NewSecret(pw)
 	}
 	cfg.PublicURL = urlVar(set, "PUBLIC_URL", true, &c)
 	for _, h := range strings.Split(set["ALLOWED_HOSTS"], ",") {
-		if h = jsTrim(h); h != "" {
+		if h = kernel.JSTrim(h); h != "" {
 			cfg.AllowedHosts = append(cfg.AllowedHosts, h)
 		}
 	}
@@ -146,7 +149,7 @@ func loadKeys(set map[string]string, readFile func(string) (string, error), cfg 
 		if !ok {
 			c.add(name, "must be base64 of exactly 32 bytes (openssl rand -base64 32)"+suffix)
 		} else {
-			key, cfg.SecretsKey = k, k
+			key, cfg.SecretsKey = k, NewSecretBytes(k)
 		}
 	}
 	if old, ok := set["SECRETS_KEY_OLD"]; ok {
@@ -157,7 +160,7 @@ func loadKeys(set map[string]string, readFile func(string) (string, error), cfg 
 		case key != nil && bytes.Equal(k, key):
 			c.add("SECRETS_KEY_OLD", "must differ from SECRETS_KEY")
 		default:
-			cfg.SecretsKeyOld = k
+			cfg.SecretsKeyOld = NewSecretBytes(k)
 		}
 	}
 }
@@ -191,7 +194,7 @@ func loadOIDC(set map[string]string, cfg *Config, c *issues) {
 		}
 	}
 	if given == len(names) && !hasIssue(c, "OIDC_ISSUER") {
-		cfg.OIDC = &OIDCClient{Issuer: issuer, ClientID: set["OIDC_CLIENT_ID"], ClientSecret: Secret(set["OIDC_CLIENT_SECRET"])}
+		cfg.OIDC = &OIDCClient{Issuer: issuer, ClientID: set["OIDC_CLIENT_ID"], ClientSecret: NewSecret(set["OIDC_CLIENT_SECRET"])}
 	}
 	cfg.OIDCLoginGroup = stringVar(set, "OIDC_LOGIN_GROUP", "mcp-users")
 	cfg.OIDCAdminGroup = stringVar(set, "OIDC_ADMIN_GROUP", "mcp-admins")
@@ -241,7 +244,7 @@ func urlVar(set map[string]string, name string, required bool, c *issues) string
 		}
 		return ""
 	}
-	v = strings.NewReplacer("\t", "", "\r", "", "\n", "").Replace(jsTrim(v))
+	v = strings.NewReplacer("\t", "", "\r", "", "\n", "").Replace(kernel.JSTrim(v))
 	u, err := url.Parse(v)
 	if err == nil && u.Scheme != "" && u.Hostname() != "" {
 		if p := u.Port(); p == "" {
@@ -286,7 +289,7 @@ func intVar(set map[string]string, name string, fallback, minimum, maximum int, 
 	if !ok {
 		return fallback
 	}
-	f, valid := jsNumber(v)
+	f, valid := kernel.JSNumber(v)
 	if !valid || f != math.Trunc(f) || math.Abs(f) > maxSafeInteger || f < float64(minimum) || (maximum > 0 && f > float64(maximum)) {
 		if maximum > 0 {
 			c.add(name, fmt.Sprintf("must be an integer from %d to %d", minimum, maximum))
@@ -303,7 +306,7 @@ func floatVar(set map[string]string, name string, fallback, minimum, maximum flo
 	if !ok {
 		return fallback
 	}
-	f, valid := jsNumber(v)
+	f, valid := kernel.JSNumber(v)
 	if !valid || math.IsInf(f, 0) || f < minimum || f > maximum {
 		c.add(name, fmt.Sprintf("must be a number from %g to %g", minimum, maximum))
 		return fallback

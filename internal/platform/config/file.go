@@ -1,5 +1,7 @@
 package config
 
+import "github.com/ai-pipes/mcp-registry/internal/kernel"
+
 // fromFile supports NAME_FILE: the value of NAME is read from the file the variable points to and
 // trimmed. It returns ok=false when NAME_FILE is unset (no issue) or when it is unusable (an issue
 // named after NAME_FILE with the path, never the contents).
@@ -18,7 +20,7 @@ func fromFile(env map[string]string, name string, readFile func(string) (string,
 		c.add(fileVar, "cannot read the file "+path)
 		return "", false
 	}
-	value = jsTrim(text)
+	value = kernel.JSTrim(text)
 	if value == "" {
 		c.add(fileVar, "the file "+path+" is empty")
 		return "", false

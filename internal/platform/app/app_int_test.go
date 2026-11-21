@@ -25,10 +25,10 @@ import (
 
 	"github.com/ai-pipes/mcp-registry/apps/server/migrations"
 	"github.com/ai-pipes/mcp-registry/internal/platform/config"
+	"github.com/ai-pipes/mcp-registry/internal/platform/httpx"
 	"github.com/ai-pipes/mcp-registry/internal/platform/logging"
 	"github.com/ai-pipes/mcp-registry/internal/platform/pgtest"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const (
@@ -123,8 +123,8 @@ func newKey(t *testing.T) []byte {
 
 func baseConfig(url string, key []byte) config.Config {
 	return config.Config{
-		Port: 1, DatabaseURL: config.Secret(url), PublicURL: "http://localhost:3000", TrustProxyHops: 1,
-		SecretsKey: key, LogLevel: "info",
+		Port: 1, DatabaseURL: config.NewSecret(url), PublicURL: "http://localhost:3000", TrustProxyHops: 1,
+		SecretsKey: config.NewSecretBytes(key), LogLevel: "info",
 	}
 }
 
@@ -161,7 +161,11 @@ func launch(t *testing.T, cfg config.Config, edit func(*Options)) *instance {
 	t.Helper()
 	logs := &logBuf{}
 	ctx, cancel := context.WithCancelCause(context.Background())
-	o := Options{Config: cfg, Version: "9.9.9-test", WebRoot: t.TempDir(), Logger: logging.New("info", logs)}
+	// No modules unless a test asks for them: the lifecycle tests are about the platform alone.
+	o := Options{
+		Config: cfg, Version: "9.9.9-test", WebRoot: t.TempDir(), Logger: logging.New("info", logs),
+		modules: func(Runtime) []Module { return nil },
+	}
 	if edit != nil {
 		edit(&o)
 	}
@@ -467,7 +471,7 @@ func TestSecretsKeyOldWarnings(t *testing.T) {
 
 	// A fresh database with both keys set: the rotation warning, the check is created with the new key.
 	cfg := baseConfig(url, oldKey)
-	cfg.SecretsKeyOld = newKey(t)
+	cfg.SecretsKeyOld = config.NewSecretBytes(newKey(t))
 	in := startInstance(t, cfg, nil)
 	warn := in.logs.find(t, msgKeyOldSet)
 	if len(warn) != 1 || levelOf(warn[0]) != levelWarn {
@@ -480,7 +484,7 @@ func TestSecretsKeyOldWarnings(t *testing.T) {
 
 	// The check opens with the old key only: one more warning, and the server runs.
 	cfg = baseConfig(url, next)
-	cfg.SecretsKeyOld = oldKey
+	cfg.SecretsKeyOld = config.NewSecretBytes(oldKey)
 	in = startInstance(t, cfg, nil)
 	rot := in.logs.find(t, msgKeyNeedsRotation)
 	if len(rot) != 1 || levelOf(rot[0]) != levelWarn {
@@ -496,15 +500,15 @@ func TestInFlightRequestCompletesOnShutdown(t *testing.T) {
 	url := pgtest.StartURL(t)
 	started := make(chan struct{})
 	in := startInstance(t, baseConfig(url, newKey(t)), func(o *Options) {
-		o.mount = func(mux *http.ServeMux, pool *pgxpool.Pool) {
-			mux.HandleFunc("GET /slow", func(w http.ResponseWriter, r *http.Request) {
+		o.modules = func(rt Runtime) []Module {
+			return []Module{{Routes: []httpx.Route{{Method: "GET", Path: "/slow", Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				close(started)
-				if _, err := pool.Exec(r.Context(), "select pg_sleep(0.3)"); err != nil {
+				if _, err := rt.Pool.Exec(r.Context(), "select pg_sleep(0.3)"); err != nil {
 					w.WriteHeader(http.StatusInternalServerError)
 					return
 				}
 				_, _ = w.Write([]byte("done"))
-			})
+			})}}}}
 		}
 	})
 
@@ -541,11 +545,11 @@ func TestShutdownTimesOut(t *testing.T) {
 	started, release := make(chan struct{}), make(chan struct{})
 	in := startInstance(t, baseConfig(url, newKey(t)), func(o *Options) {
 		o.shutdownTimeout = 300 * time.Millisecond
-		o.mount = func(mux *http.ServeMux, _ *pgxpool.Pool) {
-			mux.HandleFunc("GET /stuck", func(_ http.ResponseWriter, _ *http.Request) {
+		o.modules = func(Runtime) []Module {
+			return []Module{{Routes: []httpx.Route{{Method: "GET", Path: "/stuck", Handler: http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 				close(started)
 				<-release
-			})
+			})}}}}
 		}
 	})
 	t.Cleanup(func() { close(release) })
@@ -587,6 +591,45 @@ func TestSignalDuringStartStopsBeforeListening(t *testing.T) {
 	}
 	if len(logs.find(t, "listening")) != 0 {
 		t.Fatal("listening after a signal during the start")
+	}
+	ln, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", cfg.Port)) //nolint:gosec // G102: the server binds every interface
+	if err != nil {
+		t.Fatalf("the port was opened: %v", err)
+	}
+	_ = ln.Close()
+	eventuallyNoConnections(t, url)
+}
+
+// A signal that arrives while FirstStart runs (it may take long) stops the start before the port
+// is opened, with no outbox worker or scheduler left behind.
+func TestSignalDuringFirstStartStopsBeforeListening(t *testing.T) {
+	url := pgtest.StartURL(t)
+	cfg := baseConfig(url, newKey(t))
+	cfg.Port = freePort(t)
+	logs := &logBuf{}
+	ctx, cancel := context.WithCancelCause(context.Background())
+	t.Cleanup(func() { cancel(nil) })
+	done := make(chan int, 1)
+	go func() {
+		done <- Run(ctx, Options{
+			Config: cfg, Version: "v", WebRoot: t.TempDir(), Logger: logging.New("info", logs),
+			modules: func(Runtime) []Module {
+				return []Module{{FirstStart: func(context.Context) { cancel(Signal("SIGTERM")) }}}
+			},
+		})
+	}()
+	if code := await(t, done, "Run"); code != 0 {
+		t.Fatalf("exit %d; log:\n%s", code, logs.String())
+	}
+	msgs := logs.messages(t)
+	if len(msgs) < 3 || msgs[len(msgs)-2] != "shutting down" || msgs[len(msgs)-1] != "stopped" {
+		t.Fatalf("records: %q", msgs)
+	}
+	if sd := logs.find(t, "shutting down")[0]; sd["signal"] != "SIGTERM" {
+		t.Errorf("shutting down: %v", sd)
+	}
+	if len(logs.find(t, "listening")) != 0 {
+		t.Fatal("listening after a signal during FirstStart")
 	}
 	ln, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", cfg.Port)) //nolint:gosec // G102: the server binds every interface
 	if err != nil {

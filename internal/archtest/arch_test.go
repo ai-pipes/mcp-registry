@@ -140,13 +140,39 @@ var archFixtures = []struct{ rule, fixture, component, badImport string }{
 	{"application-only-domain", "application-only-domain", "catalog-app", modPath + "modules/search/app"},
 	{"no-inward-infra", "no-inward-infra", "catalog-app", modPath + "modules/catalog/http"},
 	{"deps-only-in-infra (vendors)", "deps-only-in-infra", "catalog-app", "github.com/jackc/pgx/v5"},
+	{"deps-only-in-infra (x/oauth2 root package)", "deps-only-in-infra-oauth2", "catalog-app", "golang.org/x/oauth2"},
 	{"modules-via-index", "modules-via-index", "gateway-infra", modPath + "modules/catalog/domain"},
 	{"migrations-only-platform", "migrations-only-platform", "catalog-infra", "github.com/ai-pipes/mcp-registry/apps/server/migrations"},
+	// platform-leaves: modules reach platform only through the leaves, and only from http and infra.
+	{"platform-leaves (app imports a leaf)", "app-imports-leaf", "catalog-app", modPath + "platform/logging"},
+	{"platform-leaves (domain imports a leaf)", "domain-imports-leaf", "catalog-domain", modPath + "platform/db"},
+	{"platform-leaves (a leaf imports a module)", "leaf-imports-module", "platform-httpx", modPath + "modules/catalog"},
+	{"platform-leaves (a leaf imports the composition)", "leaf-imports-composition", "platform-db", modPath + "platform/config"},
+	{"platform-leaves (a leaf imports a leaf it does not need)", "leaf-imports-leaf", "platform-db", modPath + "platform/httpx"},
+	{"platform-leaves (http imports the composition)", "http-imports-composition", "catalog-http", modPath + "platform/app"},
+	{"platform-leaves (http imports a storage leaf)", "http-imports-db", "catalog-http", modPath + "platform/db"},
+	{"platform-leaves (infra imports the composition)", "infra-imports-composition", "catalog-infra", modPath + "platform/crypto"},
+	{"platform-leaves (infra imports httpx)", "infra-imports-httpx", "catalog-infra", modPath + "platform/httpx"},
+	{"platform-leaves (module root imports a leaf other than httpx)", "root-imports-leaf-other-than-httpx", "catalog-root", modPath + "platform/db"},
+	{"no-inward-infra (module root imports infra)", "root-imports-infra", "catalog-root", modPath + "modules/catalog/infra"},
+	{"platform-leaves (app imports pgtest)", "app-imports-pgtest", "catalog-app", modPath + "platform/pgtest"},
+	{"platform-leaves (infra imports migrate)", "infra-imports-migrate", "catalog-infra", modPath + "platform/migrate"},
+	{"platform-leaves (a leaf imports migrate)", "leaf-imports-migrate", "platform-outbox", modPath + "platform/migrate"},
+	{"platform-leaves (http imports config)", "http-imports-config", "catalog-http", modPath + "platform/config"},
+	{"no-inward-infra (module root imports its http)", "root-imports-http", "catalog-root", modPath + "modules/catalog/http"},
+	{"modules-via-index (http imports another module's app)", "http-imports-other-module-internals", "catalog-http", modPath + "modules/identity/app"},
+	{"no-inward-infra (domain imports its own infra)", "domain-imports-own-infra", "catalog-domain", modPath + "modules/catalog/infra"},
+	// layer-self-dependency: a layer may import itself, nothing else follows from it.
+	{"layer-self-dependency (domain still may not import its own app)", "domain-imports-own-app", "catalog-domain", modPath + "modules/catalog/app"},
+	{"layer-self-dependency (an external test package is still checked)", "external-test-imports-app", "catalog-domain", modPath + "modules/catalog/app"},
 }
 
 func TestEveryRuleHasAFailingFixture(t *testing.T) {
 	for _, tc := range archFixtures {
 		t.Run(tc.rule, func(t *testing.T) {
+			// Each subtest builds its own temp project (t.TempDir) and runs the pinned tool on it;
+			// nothing is shared but the read-only repository and the concurrency-safe Go caches.
+			t.Parallel()
 			rep, code := archLint(t, fixtureProject(t, tc.fixture))
 			if code == 0 {
 				t.Fatalf("fixture %s passed; a rule without a failing fixture does not count", tc.fixture)
@@ -177,6 +203,44 @@ func TestInjectingAnAdapterIntoAPortIsAllowed(t *testing.T) {
 	}
 }
 
+// TestAPackageOfNoComponentFailsTheLint pins the safety net under the component list: a new package
+// under internal/platform or in a module that no component lists is a lint failure, so it must be
+// classified before it can be imported from anywhere.
+func TestAPackageOfNoComponentFailsTheLint(t *testing.T) {
+	for _, tc := range []struct{ fixture, pkg string }{
+		{"unattached-platform-package", "platform/newpkg"},
+		{"unattached-module-package", "modules/identity/util"},
+	} {
+		t.Run(tc.fixture, func(t *testing.T) {
+			rep, code := archLint(t, fixtureProject(t, tc.fixture))
+			if code == 0 {
+				t.Fatalf("%s is attached to no component but the lint passed", tc.pkg)
+			}
+			if len(rep.Payload.ArchWarningsNotMatched) != 1 || !strings.Contains(string(rep.Payload.ArchWarningsNotMatched[0]), tc.pkg) {
+				t.Fatalf("want one not-attached report naming %s, got %s", tc.pkg, rep.Payload.ArchWarningsNotMatched)
+			}
+			if n := len(rep.Payload.ArchWarningsDeps) + len(rep.Payload.ExecutionWarnings); n != 0 {
+				t.Fatalf("unrelated warnings: %+v", rep.Payload)
+			}
+		})
+	}
+}
+
+// TestLeavesAndSelfImportsAreAllowed is the positive side of platform-leaves and of
+// layer-self-dependency: http imports httpx and logging, infra imports db, outbox and logging, the
+// module root imports httpx, a leaf imports kernel and the leaf it needs, the composition imports
+// anything, and every layer's external test package (package domain_test) imports its own layer.
+// It must raise nothing.
+func TestLeavesAndSelfImportsAreAllowed(t *testing.T) {
+	rep, code := archLint(t, fixtureProject(t, "leaves-allowed"))
+	if code != 0 {
+		t.Fatalf("an allowed import was reported: %+v", rep.Payload)
+	}
+	if n := len(rep.Payload.ArchWarningsDeps) + len(rep.Payload.ArchWarningsNotMatched) + len(rep.Payload.ArchWarningsDeepScan) + len(rep.Payload.ExecutionWarnings); n != 0 {
+		t.Fatalf("unexpected warnings: %+v", rep.Payload)
+	}
+}
+
 func TestRepositoryPassesArchLint(t *testing.T) {
 	rep, code := archLint(t, repoRoot)
 	if code != 0 {
@@ -186,12 +250,19 @@ func TestRepositoryPassesArchLint(t *testing.T) {
 
 // TestDepguardDeniesStdlibCrypto proves the crypto/* half of deps-only-in-infra, which
 // go-arch-lint cannot see (it ignores the standard library), through the repository's
-// real .golangci.yml.
+// real .golangci.yml: in a domain package and in a module's root package.
 func TestDepguardDeniesStdlibCrypto(t *testing.T) {
+	for _, fixture := range []string{"deps-only-in-infra-stdlib", "deps-only-in-infra-stdlib-root"} {
+		t.Run(fixture, func(t *testing.T) { depguardDeniesCrypto(t, fixture) })
+	}
+}
+
+func depguardDeniesCrypto(t *testing.T, fixture string) {
+	t.Helper()
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "go.mod"), readFile(t, filepath.Join(repoRoot, "go.mod")))
 	writeFile(t, filepath.Join(dir, ".golangci.yml"), readFile(t, filepath.Join(repoRoot, ".golangci.yml")))
-	copyTree(t, filepath.Join("testdata", "deps-only-in-infra-stdlib"), dir)
+	copyTree(t, filepath.Join("testdata", fixture), dir)
 
 	cmd := exec.Command("go", "run", pinnedTool(t, "print-golangci-lint"), "run", "--enable-only", "depguard",
 		"--output.json.path=stdout", "--output.text.path=", "--show-stats=false")

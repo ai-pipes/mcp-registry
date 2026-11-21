@@ -18,16 +18,6 @@ import (
 // version is set at build time with -ldflags "-X main.version=...".
 var version = "dev"
 
-// usage follows the TypeScript CLI's text; there are no operator commands yet.
-const usage = `Usage: mcp-registry
-       mcp-registry --version
-
-  Without a command the server starts. Operator commands arrive in a later release.
-`
-
-// commands is the table of operator commands (name -> function returning the exit code).
-var commands = map[string]func(args []string, stdout, stderr io.Writer) int{}
-
 func readTextFile(path string) (string, error) {
 	b, err := os.ReadFile(path) //nolint:gosec // G304: the operator names the file (SECRETS_KEY_FILE, PGPASSWORD_FILE); that is the feature
 	return string(b), err
@@ -37,7 +27,7 @@ func readTextFile(path string) (string, error) {
 // the server (cancelled with an app.Signal cause on SIGTERM or SIGINT); env is the environment as
 // a map. Exit codes: 0 stopped cleanly, 1 operation failed (configuration, start, shutdown),
 // 2 bad invocation.
-func run(ctx context.Context, args []string, env map[string]string, stdout, stderr io.Writer) int {
+func run(ctx context.Context, args []string, env map[string]string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) > 0 && args[0] == "--version" {
 		_, _ = fmt.Fprintln(stdout, version)
 		return 0
@@ -56,14 +46,16 @@ func run(ctx context.Context, args []string, env map[string]string, stdout, stde
 			Logger:  logging.New(cfg.LogLevel, stdout),
 		})
 	}
-	// Migrations before the command (as in cli.ts) arrive with the first real command, in milestone 2.
-	command, ok := commands[args[0]]
-	if !ok {
-		// The name is printed raw between double quotes, as the TypeScript template string does.
-		_, _ = io.WriteString(stderr, "error: unknown command \""+args[0]+"\"\n"+usage)
-		return 2
-	}
-	return command(args[1:], stdout, stderr)
+	// The operator commands (cli.ts): pool, migrations, key guard, then the command; see app.RunCLI.
+	return app.RunCLI(ctx, app.CLIOptions{
+		Config:  cfg,
+		Version: version,
+		Args:    args,
+		Stdin:   stdin,
+		Env:     env,
+		Stdout:  stdout,
+		Stderr:  stderr,
+	})
 }
 
 func environ(pairs []string) map[string]string {
@@ -98,5 +90,5 @@ func main() {
 	sigs := make(chan os.Signal, 2)
 	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT)
 	go watchSignals(sigs, cancel)
-	os.Exit(run(ctx, os.Args[1:], environ(os.Environ()), os.Stdout, os.Stderr))
+	os.Exit(run(ctx, os.Args[1:], environ(os.Environ()), os.Stdin, os.Stdout, os.Stderr))
 }

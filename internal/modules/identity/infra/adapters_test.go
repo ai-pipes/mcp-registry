@@ -1,0 +1,74 @@
+package infra
+
+import (
+	"testing"
+
+	"github.com/ai-pipes/mcp-registry/internal/modules/identity/app"
+)
+
+// NewPg sets the three limiters up with the TypeScript numbers: token checks 30 per 60 s (lock
+// 60 s), link attempts 10 per 60 s (lock 60 s), failed callbacks 20 per 60 s (lock 60 s). Each
+// is driven to its limit through the port with a fixed clock, so a changed number fails here.
+func TestNewPgLimiterNumbers(t *testing.T) {
+	clock := newStepClock()
+	a := NewPg(nil, clock)
+	cases := []struct {
+		name  string
+		l     app.RateLimiter
+		limit int
+	}{
+		{"token checks", a.TokenLimiter, 30},
+		{"link attempts", a.LinkLimiter, 10},
+		{"failed callbacks", a.CallbackLimiter, 20},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			clock.set(0)
+			for i := 1; i <= c.limit; i++ {
+				if ok, _ := c.l.Hit("k"); !ok {
+					t.Fatalf("hit %d of %d refused", i, c.limit)
+				}
+			}
+			if ok, retry := c.l.Hit("k"); ok || retry != 60 {
+				t.Fatalf("hit %d = (%v, %d), want refused with a 60 s lock", c.limit+1, ok, retry)
+			}
+			clock.set(59_000)
+			if ok, retry := c.l.Check("k"); ok || retry != 1 {
+				t.Fatalf("at 59 s: Check = (%v, %d), want locked for 1 s more", ok, retry)
+			}
+			clock.set(61_000)
+			if ok, _ := c.l.Check("k"); !ok {
+				t.Fatal("still locked after the 60 s lock")
+			}
+			// The window is 60 s, pinned from both sides. Inside it: limit-1 hits at its start and one
+			// more at 59 s are within the budget, and the next hit (still inside the window) is refused.
+			clock.set(200_000)
+			for i := 1; i < c.limit; i++ {
+				if ok, _ := c.l.Hit("w"); !ok {
+					t.Fatalf("window key: hit %d refused", i)
+				}
+			}
+			clock.set(259_000)
+			if ok, _ := c.l.Hit("w"); !ok {
+				t.Fatalf("window key at 59 s: hit %d refused", c.limit)
+			}
+			if ok, _ := c.l.Hit("w"); ok {
+				t.Fatalf("window key at 59 s: hit %d allowed, the window is shorter than 60 s", c.limit+1)
+			}
+			// At 60 s a new window has started: a key at its limit is counted afresh.
+			clock.set(300_000)
+			for i := 1; i <= c.limit; i++ {
+				if ok, _ := c.l.Hit("v"); !ok {
+					t.Fatalf("fresh key: hit %d refused", i)
+				}
+			}
+			clock.set(360_000)
+			if ok, _ := c.l.Hit("v"); !ok {
+				t.Fatal("key at its limit after 60 s: the hit was refused, the window is longer than 60 s")
+			}
+		})
+	}
+	if a.TokenLimiter == a.LinkLimiter || a.LinkLimiter == a.CallbackLimiter || a.TokenLimiter == a.CallbackLimiter {
+		t.Fatal("two of the limiters are one instance")
+	}
+}

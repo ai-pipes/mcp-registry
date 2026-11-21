@@ -27,6 +27,7 @@ linters:
             - '**/internal/modules/*/domain/**'
             - '**/internal/modules/*/app/**'
             - '**/internal/modules/*/http/**'
+            - '**/internal/modules/*/*.go' # the module's root package (its public surface)
           deny:
             - pkg: github.com/jackc/pgx
               desc: deps-only-in-infra, use a port implemented in infra
@@ -44,6 +45,7 @@ linters:
             - '**/internal/kernel/**'
             - '**/internal/modules/*/domain/**'
             - '**/internal/modules/*/app/**'
+            - '**/internal/modules/*/*.go' # the module's root package (its public surface)
           deny:
             - pkg: github.com/modelcontextprotocol
               desc: deps-only-in-infra, the MCP SDK is allowed in infra and http only

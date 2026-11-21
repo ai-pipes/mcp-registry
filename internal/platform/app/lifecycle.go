@@ -24,7 +24,7 @@ import (
 
 // Operator-facing texts, copied from apps/server/src/platform/main.ts and bootstrap.ts.
 const (
-	msgKeyOldSet        = "SECRETS_KEY_OLD is set: key rotation in progress. Run `node dist/cli.js rotate-secrets-key`, then remove SECRETS_KEY_OLD and restart"
+	msgKeyOldSet        = "SECRETS_KEY_OLD is set: key rotation in progress. Run `mcp-registry rotate-secrets-key`, then remove SECRETS_KEY_OLD and restart"
 	msgKeyCreated       = "secrets key check created: SECRETS_KEY is now verified at every start"
 	msgKeyNeedsRotation = "the secrets key check still opens with SECRETS_KEY_OLD only: run rotate-secrets-key"
 	msgKeyMismatch      = `SECRETS_KEY does not match the data in this database; restore the original key (stored secrets cannot be read with this one). See "Recovering from a key mismatch" in the README.`
@@ -50,7 +50,7 @@ func Run(ctx context.Context, o Options) int {
 
 	// First record of every start: a failed start shows which version failed.
 	logger.Info("starting", "version", o.Version)
-	if len(cfg.SecretsKeyOld) > 0 {
+	if cfg.SecretsKeyOld.IsSet() {
 		logger.Warn(msgKeyOldSet)
 	}
 
@@ -78,8 +78,27 @@ func Run(ctx context.Context, o Options) int {
 		return stopBeforeServing(ctx, logger, pool)
 	}
 
-	stopWorker := startOutbox(logger, pool, outboxHandlers())
-	stopScheduler := scheduler.Start(logger, nil)
+	rt, err := newRuntime(cfg, logger, pool, o.Version)
+	if err != nil {
+		logging.Fatal(logger, "cannot build the runtime", logging.ErrAttr(err))
+		pool.Close()
+		return 1
+	}
+	asm, err := assemble(modulesOf(o.modules, rt))
+	if err != nil {
+		// The text names an event type or a command, never data.
+		logging.Fatal(logger, err.Error())
+		pool.Close()
+		return 1
+	}
+	// After the key check, before the first request: a module's one-time provisioning.
+	runFirstStart(ctx, logger, asm.firstStart)
+	if ctx.Err() != nil {
+		// A signal arrived while FirstStart ran: do not start the worker or open the port.
+		return stopBeforeServing(ctx, logger, pool)
+	}
+	stopWorker := startOutbox(logger, pool, asm.handlers)
+	stopScheduler := scheduler.Start(logger, asm.jobs)
 
 	ln := o.listener
 	if ln == nil {
@@ -95,7 +114,7 @@ func Run(ctx context.Context, o Options) int {
 	}
 
 	srv := &http.Server{
-		Handler:           handler(cfg, logger, pool, webRootOf(o), o.mount),
+		Handler:           handler(cfg, logger, pool, webRootOf(o), asm.routes, asm.prefixes),
 		ReadHeaderTimeout: readHeaderTimeout,
 		IdleTimeout:       idleTimeout,
 		MaxHeaderBytes:    maxHeaderBytes,
@@ -124,16 +143,31 @@ func Run(ctx context.Context, o Options) int {
 
 // databasePassword is the PGPASSWORD_FILE value for db.Open, nil when unset.
 func databasePassword(cfg config.Config) *string {
-	if cfg.DatabasePassword == nil {
+	if !cfg.DatabasePassword.IsSet() {
 		return nil
 	}
 	pw := cfg.DatabasePassword.Reveal()
 	return &pw
 }
 
-// outboxHandlers is the handler table of the outbox subscribers. It is empty until the modules
-// that subscribe to events (search, milestone 4) arrive.
-func outboxHandlers() map[string]outbox.Handler { return map[string]outbox.Handler{} }
+// msgFirstStartPanicked is logged when a module's FirstStart panics; the panic value is never
+// part of the record (it may quote values or secrets).
+const msgFirstStartPanicked = "module first start panicked"
+
+// runFirstStart runs the modules' FirstStart functions in order. A panic is logged and the start
+// goes on.
+func runFirstStart(ctx context.Context, logger *slog.Logger, funcs []func(context.Context)) {
+	for _, f := range funcs {
+		func() {
+			defer func() {
+				if recover() != nil {
+					logger.Error(msgFirstStartPanicked, "stack", logging.PanicFrames())
+				}
+			}()
+			f(ctx)
+		}()
+	}
+}
 
 // startOutbox starts the delivery worker, but only when there is a handler. The worker marks an
 // event of a type without a handler as processed (the TypeScript server registers every handler,

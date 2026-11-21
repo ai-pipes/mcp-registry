@@ -46,13 +46,13 @@ go-verify: go-lint go-arch-lint
 	go test ./...
 	$(MAKE) go-test-int
 
-# Only internal/platform has integration tests. -p 1: testcontainers derives its session from the
+# Integration tests live in internal/platform and internal/modules. -p 1: testcontainers derives its session from the
 # parent test process, so parallel test binaries race to create the shared reaper and some fail.
 # The reaper removes a session's containers 10 s after its last client left; compiling the next
 # package's test binary on a cold cache can take longer, and that binary then meets containers
 # being removed. A minute covers it.
 go-test-int:
-	TESTCONTAINERS_RYUK_RECONNECTION_TIMEOUT=60s go test -tags integration -count=1 -p 1 ./internal/platform/...
+	TESTCONTAINERS_RYUK_RECONNECTION_TIMEOUT=60s go test -tags integration -count=1 -p 1 ./internal/platform/... ./internal/modules/...
 
 # Regenerates compat/schemas from the zod contracts; CI fails when the committed files are stale.
 compat-schemas:
@@ -76,30 +76,94 @@ compat-image-go:
 #   make compat-go COMPAT_GO_SKIP=
 # In a value given that way (or edited here), `$$` is a literal `$` for make; a value is passed to
 # go test inside single quotes, so it must not contain one.
+#
+# Milestone 2 (identity) added the scenarios that need people, sign-in, sessions and tokens but no
+# /mcp and no catalog. TestCLICreateUser is in the list with three skipped steps (below), and the
+# role flags and the effects of disabling a person, which those skipped steps and the /mcp
+# subtests of TestIdentityNoOIDC also hold, are judged by TestCLICreateUserRoleFlags and
+# TestIdentityDisablingAPerson, which need identity alone. Left out because they cannot run at all yet:
+#   - TestPlatformBearerNeverOpensTheWebAPI: its loop in the test body asks /api/servers and
+#     /api/catalog (milestone 3) and /mcp (milestone 6).
+#   - TestConfigNetworkAndRetention, TestConfigSecretsFromFiles: their cleanup demands that the
+#     scenario's MCP ledger saw an answer (milestone 6), whatever subtests are skipped.
+#   - TestUpgradeKeepsEverything, TestGatewayAuditAPI, TestConfigModelDirMissing and every
+#     catalog, connections, search, gateway, MCP and operator-CLI scenario: servers, /mcp, or the
+#     commands create-server, sync, reindex, rotate-secrets-key, reset-key-check (milestones 3 to 7).
 COMPAT_GO_TESTS := TestConfigRefused TestPlatformStartsOnReferenceDatabase TestPlatformReverseHandOver \
-	TestPlatformWithoutPeople TestPlatformMigrationsAndKeyCheck TestPlatformStaticFilesAndSPA
+	TestPlatformWithoutPeople TestPlatformMigrationsAndKeyCheck TestPlatformStaticFilesAndSPA \
+	TestIdentityOIDC TestIdentityOIDCFailedCallbackAudit TestIdentityOIDCProviderDownAtStart \
+	TestIdentityNoOIDC TestIdentityDefaultRateLimits TestIdentityDisablingAPerson \
+	TestCLIVersion TestCLICreateUser TestCLICreateUserRoleFlags TestCLICreateToken TestCLILoginLink TestCLILoginLinkWithOIDC \
+	TestFirstStartAnnouncement TestFirstStartAnnouncementNeedsAnEmptyDatabaseAndNoOIDC \
+	TestConfigEmptyMeansUnset TestPlatformMethodsWithoutOIDC TestPlatformCSRF TestPlatformHealthz \
+	TestPlatformAccessLog TestPlatformBodyLimit TestPlatformSecurityHeaders
 
-# Subtests of the scenarios above that need a later milestone, as a go test -skip expression
-# (slash-separated regular expressions per level; spaces of a subtest name are underscores). Each
-# entry names the milestone whose work removes it:
+# Subtests of the scenarios above that need a later milestone, as a go test -skip expression: one
+# entry per line below, joined with `|` (slash-separated regular expressions per level; spaces of a
+# subtest name are underscores). Parent tests are never skipped by an entry with more levels than
+# they have, and an entry with fewer levels than a subtest's name skips that subtest too, which is
+# how the names with a slash or with parentheses are matched by a prefix of their first level
+# (a subtest name containing slashes has more levels: go test reads each slash as a level
+# separator). Every entry names the milestone whose work removes it:
+#   milestone 7 (the operator CLI)
 #   - TestPlatformMigrationsAndKeyCheck, "the old key alone: healthy, one warning;
-#     rotate-secrets-key re-seals the check": runs the CLI command rotate-secrets-key: milestone 7
-#     (the operator CLI).
-#   - TestPlatformStaticFilesAndSPA, "/api, /mcp and /healthz are never the shell": asks for
-#     /api/unknown (a JSON not_found) and /mcp (401 and a bearer-token error): milestone 2 (the
-#     REST error shape of the identity routes) and milestone 6 (the /mcp route). The subtest's name
-#     contains slashes, which go test reads as level separators: its levels are the empty string
-#     after the first slash, "api,_", "mcp_and_" and "healthz_are_never_the_shell".
-# Parent tests are never skipped by an entry with more levels than they have.
-COMPAT_GO_SKIP := ^TestPlatformMigrationsAndKeyCheck$$/^the_old_key_alone:_healthy,_one_warning;_rotate-secrets-key_re-seals_the_check$$|^TestPlatformStaticFilesAndSPA$$/^$$/^api,_$$/^mcp_and_$$/^healthz_are_never_the_shell$$
+#     rotate-secrets-key re-seals the check": runs the command rotate-secrets-key.
+#   milestone 6 (the /mcp route; the token check of identity is ready but not wired before)
+#   - TestPlatformStaticFilesAndSPA, "/api, /mcp and /healthz are never the shell": also asks /mcp
+#     (401 and a bearer-token error); its /api half is identity's, but the subtest is one.
+#   - TestPlatformSecurityHeaders, "mcp 401" and "foreign host on mcp": requests to /mcp.
+#   - TestIdentityOIDCProviderDownAtStart, "the server works without the provider: health, MCP
+#     with a token": a token opens /mcp.
+#   - TestIdentityNoOIDC: "an sk_ token: shape, stored only as SHA-256, listed without its value,
+#     works on /mcp", "a revoked token is refused; ...", "disabling a person ends their sessions,
+#     tokens and links at once; ...", "control: with a trusted proxy a changing X-Forwarded-For is
+#     a new client each time", "the 11th failed link attempt within a minute from one address is
+#     429 with Retry-After" (its last assertion is a bad token on /mcp; TestIdentityDefaultRateLimits
+#     covers the 11th attempt's 429, its Retry-After: 60 and that a valid code still works, but NOT
+#     the 12th attempt's Retry-After range nor the rightmost X-Forwarded-For rule, which are judged
+#     only once this subtest runs) and "the 31st failed token check within a minute from one
+#     address is 429; a valid token still works": each uses a token on /mcp.
+#   - TestIdentityDefaultRateLimits, "the 31st failed token check is 429 whatever X-Forwarded-For
+#     says; a valid token still works": failed token checks on /mcp.
+#   - TestCLICreateToken, "the token opens /mcp; a changed token does not" and "a second token for
+#     the same person is another token that works too".
+#   milestone 3 (the catalog: GET /api/servers)
+#   - TestCLICreateUser, "creates a member who can sign in; ..." and "an existing member run again
+#     with --admin is promoted, ...": both end with a request to /api/servers as a member (403) or
+#     an admin (200), and their remaining assertions (audit rows, the create-user-keeps-role
+#     branch) sit after it. "is idempotent by sub: ..." reuses the person step 1 creates, so it is
+#     skipped with it. The steps that remain judge the golden texts of the other runs.
+COMPAT_GO_SKIP_ENTRIES := \
+	^TestPlatformMigrationsAndKeyCheck$$/^the_old_key_alone:_healthy,_one_warning;_rotate-secrets-key_re-seals_the_check$$ \
+	^TestPlatformStaticFilesAndSPA$$/^$$/^api,_$$/^mcp_and_$$/^healthz_are_never_the_shell$$ \
+	^TestPlatformSecurityHeaders$$/^mcp_401$$ \
+	^TestPlatformSecurityHeaders$$/^foreign_host_on_mcp$$ \
+	^TestIdentityOIDCProviderDownAtStart$$/^the_server_works_without_the_provider:_health,_MCP_with_a_token$$ \
+	^TestIdentityNoOIDC$$/^an_sk__token:_shape, \
+	^TestIdentityNoOIDC$$/^a_revoked_token_is_refused; \
+	^TestIdentityNoOIDC$$/^disabling_a_person_ends_their_sessions,_tokens_and_links_at_once; \
+	^TestIdentityNoOIDC$$/^control:_with_a_trusted_proxy_a_changing_X-Forwarded-For \
+	^TestIdentityNoOIDC$$/^the_11th_failed_link_attempt_within_a_minute \
+	^TestIdentityNoOIDC$$/^the_31st_failed_token_check_within_a_minute \
+	^TestIdentityDefaultRateLimits$$/^the_31st_failed_token_check_is_429 \
+	^TestCLICreateToken$$/^the_token_opens_ \
+	^TestCLICreateToken$$/^a_second_token_for_the_same_person_is_another_token_that_works_too$$ \
+	^TestCLICreateUser$$/^creates_a_member_who_can_sign_in \
+	^TestCLICreateUser$$/^is_idempotent_by_sub: \
+	^TestCLICreateUser$$/^an_existing_member_run_again_with_--admin_is_promoted
 
 space := $(subst ,, )
+COMPAT_GO_SKIP := $(subst $(space),|,$(strip $(COMPAT_GO_SKIP_ENTRIES)))
 COMPAT_GO_RUN := ^($(subst $(space),|,$(strip $(COMPAT_GO_TESTS))))$$
 
 # The suite against the Go image. The reference image (mcp-registry:compat-ts) must exist as well:
 # some scenarios compare with it on the same machine, and the new-database scenario starts from it.
-# COMPAT_FIXED=config-errors: the Go server has the owner's decided behaviour for the two
-# configuration-error deviations (see compat/harness/deviations.go). Before it runs, the pattern is
+# COMPAT_FIXED: the deviations (compat/harness/deviations.go) whose decided behaviour the Go server
+# has: config-errors (milestone 1), audit-login-via and create-user-keeps-role (milestone 2).
+# Left out, each until the milestone that implements it: token-429-retry-after and
+# request-id-on-refusals (the /mcp route, milestone 6), oauth-state-kept (connections, milestone 5),
+# create-server-sync-exit and reindex-wording (the operator CLI, milestone 7), ready-before-serving
+# (search, milestone 4). Before it runs, the pattern is
 # listed (nothing is started): it must match exactly the scenarios named in COMPAT_GO_TESTS, so a
 # renamed or mistyped scenario fails here instead of passing by running nothing.
 compat-go:
@@ -108,7 +172,7 @@ compat-go:
 	@listed="$$(go test -tags compat -count=1 -list '$(COMPAT_GO_RUN)' ./compat/ | grep -c '^Test')"; \
 	if [ "$$listed" != "$(words $(COMPAT_GO_TESTS))" ]; then \
 		echo "compat-go: the pattern '$(COMPAT_GO_RUN)' matches $$listed scenario(s), COMPAT_GO_TESTS names $(words $(COMPAT_GO_TESTS)): $(COMPAT_GO_TESTS)"; exit 1; fi
-	COMPAT_IMAGE=mcp-registry:compat-go COMPAT_CLI=mcp-registry COMPAT_FIXED=config-errors \
+	COMPAT_IMAGE=mcp-registry:compat-go COMPAT_CLI=mcp-registry COMPAT_FIXED=config-errors,audit-login-via,create-user-keeps-role \
 		go test -tags compat -count=1 -p 1 -timeout 30m -run '$(COMPAT_GO_RUN)' $(if $(COMPAT_GO_SKIP),-skip '$(COMPAT_GO_SKIP)') $(COMPAT_ARGS) ./compat/
 
 # COMPAT_ARGS adds go test arguments, e.g. make compat COMPAT_ARGS='-run ^TestPlatform' (the -run
