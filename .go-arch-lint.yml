@@ -17,7 +17,17 @@
 #                           SDK also in http
 #   modules-via-index       another module is imported only by its root package
 #   migrations-only-platform  apps/server/migrations (the embedded SQL files) is imported only by
-#                           platform: no component lists it, platform may depend on anything
+#                           the composition (platform) and the test-support package pgtest
+#   platform-leaves         the leaves platform-{httpx,outbox,logging,db} (internal/platform/...) are
+#                           what a module's http and infra layers may import from platform; domain
+#                           and app never; the leaves import neither modules nor the composition
+#   layer-self-dependency   every layer lists itself: an external test package (package domain_test)
+#                           imports the package it tests; this opens no other layer
+#
+# Platform components: the leaves (httpx, outbox, logging, db), migrate and pgtest (support) and
+# `platform`, the composition (everything else in internal/platform), which may depend on anything.
+# The components do not overlap; a package of internal/platform that no component lists is reported
+# by go-arch-lint, so a new one has to be classified.
 version: 3
 workdir: internal
 allow:
@@ -42,14 +52,39 @@ vendors:
     in: github.com/yalue/onnxruntime_go
   mcp-sdk:
     in: github.com/modelcontextprotocol/go-sdk/**
+  testcontainers:
+    in: github.com/testcontainers/**
 
 components:
   kernel:
     in: kernel/**
+  # The composition: wires modules and leaves, owns config, the lifecycle, the audit and secret
+  # box implementations and the scheduler. May depend on anything.
   platform:
-    in: platform/**
+    in:
+      - platform
+      - platform/app/**
+      - platform/audit/**
+      - platform/config/**
+      - platform/crypto/**
+      - platform/scheduler/**
+  # Leaves: what a module's http and infra layers may import (see deps below).
+  platform-httpx:
+    in: platform/httpx/**
+  platform-outbox:
+    in: platform/outbox/**
+  platform-logging:
+    in: platform/logging/**
+  platform-db:
+    in: platform/db/**
+  # Support, not leaves: the migration runner, and the throwaway migrated Postgres (pgtest) that
+  # the tests of leaves and of infra layers use. No module layer imports migrate.
+  platform-migrate:
+    in: platform/migrate/**
+  platform-pgtest:
+    in: platform/pgtest/**
   # The embedded SQL files live with the TypeScript server's migrations (one source of truth);
-  # only platform (internal/platform/migrate's caller, the composition root) may import them.
+  # only platform (internal/platform/migrate's caller, the composition root) and pgtest import them.
   migrations:
     in: ../apps/server/migrations
   identity-root:
@@ -110,12 +145,59 @@ deps:
   platform:
     anyProjectDeps: true
     anyVendorDeps: true
+  # Leaves import kernel (a common component) and the leaves named here, nothing of modules/** and
+  # nothing of the composition. The vendors are the ones the code uses today.
+  platform-logging:
+    mayDependOn:
+      - platform-logging
+  platform-httpx:
+    mayDependOn:
+      - platform-httpx
+      - platform-logging
+      - platform-pgtest
+    canUse:
+      - pgx
+  platform-outbox:
+    mayDependOn:
+      - platform-outbox
+      - platform-logging
+      - platform-pgtest
+    canUse:
+      - pgx
+  platform-db:
+    mayDependOn:
+      - platform-db
+      - platform-pgtest
+    canUse:
+      - pgx
+  platform-migrate:
+    mayDependOn:
+      - platform-migrate
+      - platform-db
+      - platform-pgtest
+      - migrations
+    canUse:
+      - pgx
+  platform-pgtest:
+    mayDependOn:
+      - platform-pgtest
+      - platform-migrate
+      - migrations
+    canUse:
+      - pgx
+      - testcontainers
   identity-root:
     mayDependOn:
+      - identity-root
       - identity-domain
       - identity-app
+      - platform-httpx
+  identity-domain:
+    mayDependOn:
+      - identity-domain
   identity-app:
     mayDependOn:
+      - identity-app
       - identity-domain
       - catalog-root
       - connections-root
@@ -123,12 +205,17 @@ deps:
       - gateway-root
   identity-infra:
     mayDependOn:
+      - identity-infra
       - identity-domain
       - identity-app
       - catalog-root
       - connections-root
       - search-root
       - gateway-root
+      - platform-outbox
+      - platform-db
+      - platform-logging
+      - platform-pgtest
     canUse:
       - pgx
       - go-oidc
@@ -137,20 +224,29 @@ deps:
       - mcp-sdk
   identity-http:
     mayDependOn:
+      - identity-http
       - identity-domain
       - identity-app
       - catalog-root
       - connections-root
       - search-root
       - gateway-root
+      - platform-httpx
+      - platform-logging
     canUse:
       - mcp-sdk
   catalog-root:
     mayDependOn:
+      - catalog-root
       - catalog-domain
       - catalog-app
+      - platform-httpx
+  catalog-domain:
+    mayDependOn:
+      - catalog-domain
   catalog-app:
     mayDependOn:
+      - catalog-app
       - catalog-domain
       - identity-root
       - connections-root
@@ -158,12 +254,17 @@ deps:
       - gateway-root
   catalog-infra:
     mayDependOn:
+      - catalog-infra
       - catalog-domain
       - catalog-app
       - identity-root
       - connections-root
       - search-root
       - gateway-root
+      - platform-outbox
+      - platform-db
+      - platform-logging
+      - platform-pgtest
     canUse:
       - pgx
       - go-oidc
@@ -172,20 +273,29 @@ deps:
       - mcp-sdk
   catalog-http:
     mayDependOn:
+      - catalog-http
       - catalog-domain
       - catalog-app
       - identity-root
       - connections-root
       - search-root
       - gateway-root
+      - platform-httpx
+      - platform-logging
     canUse:
       - mcp-sdk
   connections-root:
     mayDependOn:
+      - connections-root
       - connections-domain
       - connections-app
+      - platform-httpx
+  connections-domain:
+    mayDependOn:
+      - connections-domain
   connections-app:
     mayDependOn:
+      - connections-app
       - connections-domain
       - identity-root
       - catalog-root
@@ -193,12 +303,17 @@ deps:
       - gateway-root
   connections-infra:
     mayDependOn:
+      - connections-infra
       - connections-domain
       - connections-app
       - identity-root
       - catalog-root
       - search-root
       - gateway-root
+      - platform-outbox
+      - platform-db
+      - platform-logging
+      - platform-pgtest
     canUse:
       - pgx
       - go-oidc
@@ -207,20 +322,29 @@ deps:
       - mcp-sdk
   connections-http:
     mayDependOn:
+      - connections-http
       - connections-domain
       - connections-app
       - identity-root
       - catalog-root
       - search-root
       - gateway-root
+      - platform-httpx
+      - platform-logging
     canUse:
       - mcp-sdk
   search-root:
     mayDependOn:
+      - search-root
       - search-domain
       - search-app
+      - platform-httpx
+  search-domain:
+    mayDependOn:
+      - search-domain
   search-app:
     mayDependOn:
+      - search-app
       - search-domain
       - identity-root
       - catalog-root
@@ -228,12 +352,17 @@ deps:
       - gateway-root
   search-infra:
     mayDependOn:
+      - search-infra
       - search-domain
       - search-app
       - identity-root
       - catalog-root
       - connections-root
       - gateway-root
+      - platform-outbox
+      - platform-db
+      - platform-logging
+      - platform-pgtest
     canUse:
       - pgx
       - go-oidc
@@ -242,20 +371,29 @@ deps:
       - mcp-sdk
   search-http:
     mayDependOn:
+      - search-http
       - search-domain
       - search-app
       - identity-root
       - catalog-root
       - connections-root
       - gateway-root
+      - platform-httpx
+      - platform-logging
     canUse:
       - mcp-sdk
   gateway-root:
     mayDependOn:
+      - gateway-root
       - gateway-domain
       - gateway-app
+      - platform-httpx
+  gateway-domain:
+    mayDependOn:
+      - gateway-domain
   gateway-app:
     mayDependOn:
+      - gateway-app
       - gateway-domain
       - identity-root
       - catalog-root
@@ -263,12 +401,17 @@ deps:
       - search-root
   gateway-infra:
     mayDependOn:
+      - gateway-infra
       - gateway-domain
       - gateway-app
       - identity-root
       - catalog-root
       - connections-root
       - search-root
+      - platform-outbox
+      - platform-db
+      - platform-logging
+      - platform-pgtest
     canUse:
       - pgx
       - go-oidc
@@ -277,11 +420,14 @@ deps:
       - mcp-sdk
   gateway-http:
     mayDependOn:
+      - gateway-http
       - gateway-domain
       - gateway-app
       - identity-root
       - catalog-root
       - connections-root
       - search-root
+      - platform-httpx
+      - platform-logging
     canUse:
       - mcp-sdk

@@ -231,6 +231,9 @@ func TestRedactionCoversNaturalSecretNames(t *testing.T) {
 		"set-cookie", "Set-Cookie", "secret", "clientSecret", "client_secret", "client-secret",
 		"accessToken", "access_token", "refreshToken", "refresh_token", "X-Api-Key", "apiKey", "api_key",
 		"secretsKey", "SECRETS_KEY", "dbPassword", "bearerToken", "PGPASSWORD",
+		"credentials", "Credentials", "bearer", "Bearer", "dsn", "DSN", "databaseUrl", "DATABASE_URL", "database-url",
+		"connectionString", "connection_string", "codeVerifier", "code_verifier", "nonce", "Nonce",
+		"sessionId", "session_id", "sid", "SID",
 	}
 	for _, name := range secrets {
 		var buf bytes.Buffer
@@ -253,6 +256,7 @@ func TestRedactionLeavesOrdinaryNamesAlone(t *testing.T) {
 		"applied", "job", "stack", "method", "path", "status", "ip", "ms", "tool", "servers", "failed",
 		"sessions", "key", "tokens", "secrets", "keyId", "passwordSet", "authorized", "cookies", "userId",
 		"handler", "attempts", "ref", "server",
+		"code", "state", "tokenId", "sessionCount", "nonceCount", "dsnHost", "credentialsCount", "side", "sidecar",
 	}
 	var buf bytes.Buffer
 	l := logging.New("info", &buf)

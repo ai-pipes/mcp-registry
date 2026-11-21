@@ -142,6 +142,21 @@ var archFixtures = []struct{ rule, fixture, component, badImport string }{
 	{"deps-only-in-infra (vendors)", "deps-only-in-infra", "catalog-app", "github.com/jackc/pgx/v5"},
 	{"modules-via-index", "modules-via-index", "gateway-infra", modPath + "modules/catalog/domain"},
 	{"migrations-only-platform", "migrations-only-platform", "catalog-infra", "github.com/ai-pipes/mcp-registry/apps/server/migrations"},
+	// platform-leaves: modules reach platform only through the leaves, and only from http and infra.
+	{"platform-leaves (app imports a leaf)", "app-imports-leaf", "catalog-app", modPath + "platform/logging"},
+	{"platform-leaves (domain imports a leaf)", "domain-imports-leaf", "catalog-domain", modPath + "platform/db"},
+	{"platform-leaves (a leaf imports a module)", "leaf-imports-module", "platform-httpx", modPath + "modules/catalog"},
+	{"platform-leaves (a leaf imports the composition)", "leaf-imports-composition", "platform-db", modPath + "platform/config"},
+	{"platform-leaves (a leaf imports a leaf it does not need)", "leaf-imports-leaf", "platform-db", modPath + "platform/httpx"},
+	{"platform-leaves (http imports the composition)", "http-imports-composition", "catalog-http", modPath + "platform/app"},
+	{"platform-leaves (http imports a storage leaf)", "http-imports-db", "catalog-http", modPath + "platform/db"},
+	{"platform-leaves (infra imports the composition)", "infra-imports-composition", "catalog-infra", modPath + "platform/crypto"},
+	{"platform-leaves (infra imports httpx)", "infra-imports-httpx", "catalog-infra", modPath + "platform/httpx"},
+	{"platform-leaves (module root imports a leaf other than httpx)", "root-imports-leaf-other-than-httpx", "catalog-root", modPath + "platform/db"},
+	{"no-inward-infra (module root imports infra)", "root-imports-infra", "catalog-root", modPath + "modules/catalog/infra"},
+	// layer-self-dependency: a layer may import itself, nothing else follows from it.
+	{"layer-self-dependency (domain still may not import its own app)", "domain-imports-own-app", "catalog-domain", modPath + "modules/catalog/app"},
+	{"layer-self-dependency (an external test package is still checked)", "external-test-imports-app", "catalog-domain", modPath + "modules/catalog/app"},
 }
 
 func TestEveryRuleHasAFailingFixture(t *testing.T) {
@@ -171,6 +186,21 @@ func TestInjectingAnAdapterIntoAPortIsAllowed(t *testing.T) {
 	rep, code := archLint(t, fixtureProject(t, "adapter-into-port"))
 	if code != 0 {
 		t.Fatalf("injecting an adapter into a port was reported (is allow.deepScan back on?): %+v", rep.Payload)
+	}
+	if n := len(rep.Payload.ArchWarningsDeps) + len(rep.Payload.ArchWarningsNotMatched) + len(rep.Payload.ArchWarningsDeepScan) + len(rep.Payload.ExecutionWarnings); n != 0 {
+		t.Fatalf("unexpected warnings: %+v", rep.Payload)
+	}
+}
+
+// TestLeavesAndSelfImportsAreAllowed is the positive side of platform-leaves and of
+// layer-self-dependency: http imports httpx and logging, infra imports db, outbox and logging, the
+// module root imports httpx, a leaf imports kernel and the leaf it needs, the composition imports
+// anything, and every layer's external test package (package domain_test) imports its own layer.
+// It must raise nothing.
+func TestLeavesAndSelfImportsAreAllowed(t *testing.T) {
+	rep, code := archLint(t, fixtureProject(t, "leaves-allowed"))
+	if code != 0 {
+		t.Fatalf("an allowed import was reported: %+v", rep.Payload)
 	}
 	if n := len(rep.Payload.ArchWarningsDeps) + len(rep.Payload.ArchWarningsNotMatched) + len(rep.Payload.ArchWarningsDeepScan) + len(rep.Payload.ExecutionWarnings); n != 0 {
 		t.Fatalf("unexpected warnings: %+v", rep.Payload)

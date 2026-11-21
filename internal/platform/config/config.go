@@ -35,15 +35,15 @@ type OIDCClient struct {
 // Config is the validated configuration.
 type Config struct {
 	Port                     int
-	DatabaseURL              Secret  // may carry a password
-	DatabasePassword         *Secret // from PGPASSWORD_FILE; nil when unset
+	DatabaseURL              Secret // may carry a password
+	DatabasePassword         Secret // from PGPASSWORD_FILE; the zero value when unset
 	PublicURL                string
 	AllowedHosts             []string
 	TrustProxy               bool
 	TrustProxyHops           int
 	CookieSecure             bool
 	SecretsKey               SecretBytes // 32 bytes
-	SecretsKeyOld            SecretBytes // nil when unset
+	SecretsKeyOld            SecretBytes // the zero value when unset
 	OIDC                     *OIDCClient
 	OIDCLoginGroup           string
 	OIDCAdminGroup           string
@@ -79,10 +79,9 @@ func Load(env map[string]string, readFile func(string) (string, error)) (Config,
 	var cfg Config
 
 	cfg.Port = intVar(set, "PORT", 3000, 1, 65535, &c)
-	cfg.DatabaseURL = Secret(requiredVar(set, "DATABASE_URL", &c))
+	cfg.DatabaseURL = NewSecret(requiredVar(set, "DATABASE_URL", &c))
 	if pw, ok := fromFile(set, "PGPASSWORD", readFile, &c); ok {
-		secret := Secret(pw)
-		cfg.DatabasePassword = &secret
+		cfg.DatabasePassword = NewSecret(pw)
 	}
 	cfg.PublicURL = urlVar(set, "PUBLIC_URL", true, &c)
 	for _, h := range strings.Split(set["ALLOWED_HOSTS"], ",") {
@@ -146,7 +145,7 @@ func loadKeys(set map[string]string, readFile func(string) (string, error), cfg 
 		if !ok {
 			c.add(name, "must be base64 of exactly 32 bytes (openssl rand -base64 32)"+suffix)
 		} else {
-			key, cfg.SecretsKey = k, k
+			key, cfg.SecretsKey = k, NewSecretBytes(k)
 		}
 	}
 	if old, ok := set["SECRETS_KEY_OLD"]; ok {
@@ -157,7 +156,7 @@ func loadKeys(set map[string]string, readFile func(string) (string, error), cfg 
 		case key != nil && bytes.Equal(k, key):
 			c.add("SECRETS_KEY_OLD", "must differ from SECRETS_KEY")
 		default:
-			cfg.SecretsKeyOld = k
+			cfg.SecretsKeyOld = NewSecretBytes(k)
 		}
 	}
 }
@@ -191,7 +190,7 @@ func loadOIDC(set map[string]string, cfg *Config, c *issues) {
 		}
 	}
 	if given == len(names) && !hasIssue(c, "OIDC_ISSUER") {
-		cfg.OIDC = &OIDCClient{Issuer: issuer, ClientID: set["OIDC_CLIENT_ID"], ClientSecret: Secret(set["OIDC_CLIENT_SECRET"])}
+		cfg.OIDC = &OIDCClient{Issuer: issuer, ClientID: set["OIDC_CLIENT_ID"], ClientSecret: NewSecret(set["OIDC_CLIENT_SECRET"])}
 	}
 	cfg.OIDCLoginGroup = stringVar(set, "OIDC_LOGIN_GROUP", "mcp-users")
 	cfg.OIDCAdminGroup = stringVar(set, "OIDC_ADMIN_GROUP", "mcp-admins")

@@ -22,6 +22,18 @@ var exactSecretKeys = map[string]bool{
 	"cookie":        true,
 	"setcookie":     true,
 	"secret":        true,
+	// Names for credentials that are not worded as a password, token, secret or key. The bare
+	// words "code" and "state" are deliberately absent: "code" is an ordinary field of a sync
+	// record, and neither is secret by itself.
+	"credentials":      true,
+	"bearer":           true,
+	"dsn":              true,
+	"databaseurl":      true,
+	"connectionstring": true,
+	"codeverifier":     true,
+	"nonce":            true,
+	"sessionid":        true,
+	"sid":              true,
 }
 
 // secretSuffixes mark a compound name as secret: clientSecret, client_secret, accessToken,

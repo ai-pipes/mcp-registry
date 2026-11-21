@@ -50,7 +50,7 @@ func Run(ctx context.Context, o Options) int {
 
 	// First record of every start: a failed start shows which version failed.
 	logger.Info("starting", "version", o.Version)
-	if len(cfg.SecretsKeyOld) > 0 {
+	if cfg.SecretsKeyOld.IsSet() {
 		logger.Warn(msgKeyOldSet)
 	}
 
@@ -124,7 +124,7 @@ func Run(ctx context.Context, o Options) int {
 
 // databasePassword is the PGPASSWORD_FILE value for db.Open, nil when unset.
 func databasePassword(cfg config.Config) *string {
-	if cfg.DatabasePassword == nil {
+	if !cfg.DatabasePassword.IsSet() {
 		return nil
 	}
 	pw := cfg.DatabasePassword.Reveal()

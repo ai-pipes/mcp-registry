@@ -11,6 +11,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/ai-pipes/mcp-registry/apps/server/migrations"
+	"github.com/ai-pipes/mcp-registry/internal/platform/migrate"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -105,5 +107,16 @@ func Start(t *testing.T) *pgxpool.Pool {
 		t.Fatalf("pgtest: pool: %v", err)
 	}
 	t.Cleanup(pool.Close) // runs before the drop registered inside StartURL
+	return pool
+}
+
+// StartMigrated is Start with every migration applied: the schema the application runs on. A test
+// of a module's or a leaf's SQL uses it instead of importing the migration packages itself.
+func StartMigrated(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+	pool := Start(t)
+	if _, err := migrate.Run(context.Background(), pool, migrations.FS); err != nil {
+		t.Fatalf("pgtest: migrations: %v", err)
+	}
 	return pool
 }

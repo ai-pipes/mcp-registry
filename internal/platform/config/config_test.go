@@ -89,10 +89,10 @@ func TestLoadDefaults(t *testing.T) {
 		c.OIDCScopes != "openid profile email groups" || c.OIDCGroupsClaim != "groups" {
 		t.Fatalf("defaults: %+v", c)
 	}
-	if c.OIDC == nil || *c.OIDC != (config.OIDCClient{Issuer: "https://id.example.com", ClientID: "mcp-gateway", ClientSecret: "client-secret"}) {
+	if c.OIDC == nil || c.OIDC.Issuer != "https://id.example.com" || c.OIDC.ClientID != "mcp-gateway" || c.OIDC.ClientSecret.Reveal() != "client-secret" {
 		t.Fatalf("oidc: %+v", c.OIDC)
 	}
-	if base64.StdEncoding.EncodeToString(c.SecretsKey) != e["SECRETS_KEY"] || c.SecretsKeyOld != nil || c.DatabasePassword != nil {
+	if base64.StdEncoding.EncodeToString(c.SecretsKey.Reveal()) != e["SECRETS_KEY"] || c.SecretsKeyOld.IsSet() || c.DatabasePassword.IsSet() {
 		t.Fatal("keys or password")
 	}
 }
@@ -150,7 +150,7 @@ func TestLoadEmptyMeansUnset(t *testing.T) {
 		t.Fatal(err)
 	}
 	if c.EmbedderURL != "" || c.EmbedderModel != "" || c.TrustProxy || c.Port != 3000 || c.OIDCLoginGroup != "mcp-users" ||
-		c.SyncIntervalHours != 6 || c.OIDCScopes != "openid profile email groups" || c.DatabasePassword != nil || c.SecretsKeyOld != nil {
+		c.SyncIntervalHours != 6 || c.OIDCScopes != "openid profile email groups" || c.DatabasePassword.IsSet() || c.SecretsKeyOld.IsSet() {
 		t.Fatalf("%+v", c)
 	}
 }
@@ -159,16 +159,16 @@ func TestLoadFiles(t *testing.T) {
 	key := b64(t, 32)
 	noKey := baseEnv(t).without("SECRETS_KEY")
 	c, err := config.Load(noKey.with("SECRETS_KEY_FILE", "/k"), files(map[string]string{"/k": key + "\n"}))
-	if err != nil || base64.StdEncoding.EncodeToString(c.SecretsKey) != key {
+	if err != nil || base64.StdEncoding.EncodeToString(c.SecretsKey.Reveal()) != key {
 		t.Fatalf("key from file: %v", err)
 	}
 	c, err = config.Load(baseEnv(t).with("PGPASSWORD_FILE", "/p"), files(map[string]string{"/p": "pw\n"}))
-	if err != nil || c.DatabasePassword == nil || *c.DatabasePassword != "pw" {
+	if err != nil || c.DatabasePassword.Reveal() != "pw" {
 		t.Fatalf("password from file: %v", err)
 	}
 	// PGPASSWORD alone is the client's business: Config does not carry it.
 	c, err = config.Load(baseEnv(t).with("PGPASSWORD", "x"), noFiles)
-	if err != nil || c.DatabasePassword != nil {
+	if err != nil || c.DatabasePassword.IsSet() {
 		t.Fatalf("PGPASSWORD alone: %v", err)
 	}
 }
@@ -435,11 +435,11 @@ func TestLoadTrimsWithTheJavaScriptSet(t *testing.T) {
 	key := b64(t, 32)
 	c, err := config.Load(baseEnv(t).without("SECRETS_KEY").with("SECRETS_KEY_FILE", "/k", "PGPASSWORD_FILE", "/p"),
 		files(map[string]string{"/k": "\ufeff" + key + "\n", "/p": "\ufeffpw\u00a0\n"}))
-	if err != nil || base64.StdEncoding.EncodeToString(c.SecretsKey) != key || c.DatabasePassword == nil || *c.DatabasePassword != "pw" {
+	if err != nil || base64.StdEncoding.EncodeToString(c.SecretsKey.Reveal()) != key || c.DatabasePassword.Reveal() != "pw" {
 		t.Fatalf("BOM files: %v", err)
 	}
 	c, err = config.Load(baseEnv(t).with("PGPASSWORD_FILE", "/p"), files(map[string]string{"/p": "\u0085pw\u0085\u180e"}))
-	if err != nil || c.DatabasePassword == nil || *c.DatabasePassword != "\u0085pw\u0085\u180e" {
+	if err != nil || c.DatabasePassword.Reveal() != "\u0085pw\u0085\u180e" {
 		t.Fatalf("NEL and U+180E are not JavaScript whitespace: %v", err)
 	}
 	c, err = config.Load(baseEnv(t).with("ALLOWED_HOSTS", "\u00a0a.com\ufeff,\u2003b.com\u2028, \u0085c.com"), noFiles)

@@ -123,8 +123,8 @@ func newKey(t *testing.T) []byte {
 
 func baseConfig(url string, key []byte) config.Config {
 	return config.Config{
-		Port: 1, DatabaseURL: config.Secret(url), PublicURL: "http://localhost:3000", TrustProxyHops: 1,
-		SecretsKey: key, LogLevel: "info",
+		Port: 1, DatabaseURL: config.NewSecret(url), PublicURL: "http://localhost:3000", TrustProxyHops: 1,
+		SecretsKey: config.NewSecretBytes(key), LogLevel: "info",
 	}
 }
 
@@ -467,7 +467,7 @@ func TestSecretsKeyOldWarnings(t *testing.T) {
 
 	// A fresh database with both keys set: the rotation warning, the check is created with the new key.
 	cfg := baseConfig(url, oldKey)
-	cfg.SecretsKeyOld = newKey(t)
+	cfg.SecretsKeyOld = config.NewSecretBytes(newKey(t))
 	in := startInstance(t, cfg, nil)
 	warn := in.logs.find(t, msgKeyOldSet)
 	if len(warn) != 1 || levelOf(warn[0]) != levelWarn {
@@ -480,7 +480,7 @@ func TestSecretsKeyOldWarnings(t *testing.T) {
 
 	// The check opens with the old key only: one more warning, and the server runs.
 	cfg = baseConfig(url, next)
-	cfg.SecretsKeyOld = oldKey
+	cfg.SecretsKeyOld = config.NewSecretBytes(oldKey)
 	in = startInstance(t, cfg, nil)
 	rot := in.logs.find(t, msgKeyNeedsRotation)
 	if len(rot) != 1 || levelOf(rot[0]) != levelWarn {
