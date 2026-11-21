@@ -14,7 +14,11 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// PoolMaxConns is the pool size.
+// PoolMaxConns is the pool size. It is fixed: neither a `max` nor a `pool_max_conns` in the
+// connection string changes it. The size is a property of this server (what its background workers
+// and a burst of requests need, against the database's max_connections), not of the deployment,
+// and an unnoticed override from a URL written for another client has already cost more than it
+// gave. The Node client's own default was the same 10.
 const PoolMaxConns = 10
 
 // connectError replaces the driver's error: pgx messages can quote the connection string, so
@@ -64,14 +68,13 @@ func connectLabel(err error) string {
 // overrides the one in the address and in PGPASSWORD; without it pgx's own rules apply. Errors
 // never contain the address or any password.
 func Open(ctx context.Context, databaseURL string, password *string) (*pgxpool.Pool, error) {
-	cfg, err := pgxpool.ParseConfig(databaseURL)
+	cfg, err := parseConfig(databaseURL)
 	if err != nil {
 		return nil, &connectError{"invalid database configuration (" + kernel.ErrorLabel(err) + ")"}
 	}
 	if password != nil {
 		cfg.ConnConfig.Password = *password
 	}
-	cfg.MaxConns = PoolMaxConns
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {

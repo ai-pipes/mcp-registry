@@ -135,3 +135,29 @@ func TestOpenClassifiesAnExceededDeadline(t *testing.T) {
 		t.Fatalf("want a timeout classification, got %v", err)
 	}
 }
+
+// A URL written for the Node client: its own options must not reach the server (Postgres refuses
+// an unknown parameter), and prepare=false must leave a pool that runs queries with arguments.
+func TestOpenAcceptsTheNodeClientsOptions(t *testing.T) {
+	address := pgtest.StartURL(t) + "&prepare=false&max=5&idle_timeout=20&max_lifetime=60&fetch_types=false&connect_timeout=10&application_name=node-url"
+	pool, err := db.Open(context.Background(), address, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	if got := pool.Config().MaxConns; got != db.PoolMaxConns {
+		t.Fatalf("pool size %d, want the constant %d", got, db.PoolMaxConns)
+	}
+	var sum int64
+	var app string
+	if err := pool.QueryRow(context.Background(), `select $1::bigint + $2::bigint, current_setting('application_name')`, int64(40), int64(2)).Scan(&sum, &app); err != nil {
+		t.Fatal(err)
+	}
+	if sum != 42 || app != "node-url" {
+		t.Fatalf("sum %d, application_name %q", sum, app)
+	}
+	// The same query twice: no prepared statement is left behind to collide or to be missing.
+	if _, err := pool.Exec(context.Background(), `select $1::bigint`, int64(1)); err != nil {
+		t.Fatal(err)
+	}
+}

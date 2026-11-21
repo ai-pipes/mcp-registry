@@ -874,3 +874,20 @@ func TestOptionsStarGoesThroughTheChain(t *testing.T) {
 		t.Fatalf("OPTIONS * bypassed the chain: %d %v", res.StatusCode, res.Header)
 	}
 }
+
+// A connection string with the Node client's PgBouncer settings starts the server: migrations,
+// key check and the HTTP side all work with prepare=false.
+func TestStartWithNodeClientOptionsInTheDatabaseURL(t *testing.T) {
+	url := pgtest.StartURL(t) + "&prepare=false&max=5&idle_timeout=20"
+	cfg := baseConfig(url, newKey(t))
+	in := startInstance(t, cfg, nil)
+	if code, body, _ := get(t, in.base+"/healthz"); code != 200 || body != "ok" {
+		t.Fatalf("/healthz: %d %q", code, body)
+	}
+	if strings.Contains(in.logs.String(), "prepare=false") {
+		t.Fatal("the connection string reached the log")
+	}
+	if code := in.stop("SIGTERM"); code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+}
