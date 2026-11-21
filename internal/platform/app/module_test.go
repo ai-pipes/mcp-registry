@@ -22,9 +22,9 @@ func say(s string) http.Handler {
 
 // Building the modules makes no request (the CLI builds them for every command): a Runtime
 // without a pool is enough.
-func TestTheDefaultModuleListIsIdentityThenThePlatformRoutes(t *testing.T) {
+func TestTheDefaultModuleListIsIdentityThenThePlatformRoutesThenTheCatalog(t *testing.T) {
 	got := modules(Runtime{Clock: kernel.SystemClock{}, Logger: discardLogger(), Version: "1.2.3"})
-	if len(got) != 2 {
+	if len(got) != 3 {
 		t.Fatalf("modules() = %d entries", len(got))
 	}
 	paths := func(m Module) (out []string) {
@@ -38,6 +38,12 @@ func TestTheDefaultModuleListIsIdentityThenThePlatformRoutes(t *testing.T) {
 	}
 	if p := paths(got[1]); !slices.Equal(p, []string{"GET /api/version", "GET /api/audit"}) {
 		t.Errorf("platform routes: %v", p)
+	}
+	if p := paths(got[2]); !slices.Contains(p, "GET /api/catalog") || !slices.Contains(p, "POST /api/servers/{slug}/sync") {
+		t.Errorf("catalog routes: %v", p)
+	}
+	if len(got[2].Jobs) != 1 || got[2].Jobs[0].Name != "catalog-sync" {
+		t.Errorf("catalog job: %+v", got[2].Jobs)
 	}
 	if len(got[0].Jobs) != 1 || got[0].Jobs[0].Every != 24*time.Hour || got[0].FirstStart == nil {
 		t.Errorf("identity job or first start: %+v", got[0])

@@ -108,11 +108,11 @@ func newRuntime(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, vers
 
 // modules is the list of modules, in the order their routes, prefixes and jobs are merged. The
 // server and the CLI build it from the same Runtime. Identity is first; the platform's own routes
-// (audit, version) follow, since they use identity's session guards. The other modules join in
-// later milestones.
+// (audit, version) follow, since they use identity's session guards; then the catalog. The other
+// modules join in later milestones.
 func modules(rt Runtime) []Module {
 	id := newIdentityWiring(rt)
-	return []Module{id.module(), platformModule(rt, id)}
+	return []Module{id.module(), platformModule(rt, id), newCatalogWiring(rt, id).module()}
 }
 
 // platformModule is the platform's own REST routes, guarded with identity's session checks:

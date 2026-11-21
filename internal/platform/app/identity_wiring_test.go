@@ -10,10 +10,12 @@ import (
 	"time"
 
 	"github.com/ai-pipes/mcp-registry/internal/kernel"
+	catinfra "github.com/ai-pipes/mcp-registry/internal/modules/catalog/infra"
 	idapp "github.com/ai-pipes/mcp-registry/internal/modules/identity/app"
 	"github.com/ai-pipes/mcp-registry/internal/modules/identity/domain"
 	idinfra "github.com/ai-pipes/mcp-registry/internal/modules/identity/infra"
 	"github.com/ai-pipes/mcp-registry/internal/platform/config"
+	"github.com/ai-pipes/mcp-registry/internal/platform/logging"
 )
 
 // The composed identity wiring over in-memory adapters, run through the real composed handler.
@@ -86,17 +88,21 @@ const (
 
 type wiringEnv struct {
 	w     identityWiring
+	c     catalogWiring
 	h     http.Handler
 	audit *countingAudit
+	logs  *logBuf
 }
 
 func newWiringEnv(t *testing.T) *wiringEnv {
 	t.Helper()
 	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
 	au := &countingAudit{}
+	logs := &logBuf{}
 	rt := Runtime{
-		Config: config.Config{PublicURL: wiringOrigin}, Logger: discardLogger(),
-		Clock: kernel.FixedClock{T: now}, Audit: au, Version: "9.9.9",
+		Config: config.Config{PublicURL: wiringOrigin, SyncIntervalHours: 6, UpstreamMaxResponseBytes: 12345},
+		Logger: logging.New("info", logs),
+		Clock:  kernel.FixedClock{T: now}, Audit: au, Version: "9.9.9",
 	}
 	pg := idinfra.NewPg(nil, rt.Clock) // no pool: the repositories are replaced, the limiters are the real ones
 	hasher := pg.Hasher
@@ -113,12 +119,13 @@ func newWiringEnv(t *testing.T) *wiringEnv {
 	pg.Sessions, pg.Tokens, pg.PendingLogins, pg.LoginLinks = sessions, memTokens{}, memPending{}, memLinks{}
 
 	w := identityWiringOver(rt, pg, rejectingOIDC{})
-	asm, err := assemble([]Module{w.module(), platformModule(rt, w)})
+	cw := catalogWiringOver(rt, w, catinfra.Repos{Servers: memServers{}, Tools: memTools{}}, noUpstream{})
+	asm, err := assemble([]Module{w.module(), platformModule(rt, w), cw.module()})
 	if err != nil {
 		t.Fatal(err)
 	}
 	h := handler(rt.Config, rt.Logger, nil, t.TempDir(), asm.routes, asm.prefixes)
-	return &wiringEnv{w: w, h: h, audit: au}
+	return &wiringEnv{w: w, c: cw, h: h, audit: au, logs: logs}
 }
 
 func (e *wiringEnv) do(method, target, body, ip string, mod func(*http.Request)) *httptest.ResponseRecorder {
