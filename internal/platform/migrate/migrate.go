@@ -48,6 +48,11 @@ func (e *MigrationError) Unwrap() error { return e.Err }
 // dedicated connection spans the whole run; each file runs in its own transaction together with
 // its bookkeeping row, so a failed file leaves nothing behind. When the run fails, applied lists
 // the files that were committed before it.
+//
+// ctx cancels the wait for a connection and for the advisory lock (another server is migrating):
+// Run then returns an error that wraps ctx's, having applied nothing. Once the lock is held the
+// run is not interrupted by ctx, so a file is never cut off half way and the lock is always
+// released; it ends when the files are applied.
 func Run(ctx context.Context, pool *pgxpool.Pool, files fs.FS) (applied []string, err error) {
 	entries, err := fs.ReadDir(files, ".")
 	if err != nil {
@@ -70,13 +75,18 @@ func Run(ctx context.Context, pool *pgxpool.Pool, files fs.FS) (applied []string
 	defer func() { release() }()
 
 	if _, err := conn.Exec(ctx, `select pg_advisory_lock($1)`, int64(lockKey)); err != nil {
+		// An interrupted wait may still have been granted the lock on the server's side: closing
+		// the connection frees it, a pooled connection would keep it.
+		release = func() { _ = conn.Hijack().Close(context.WithoutCancel(ctx)) }
 		return nil, &MigrationError{File: "(bookkeeping)", Err: err}
 	}
+	// From here on the run is not cancellable.
+	ctx = context.WithoutCancel(ctx)
 	defer func() {
-		uctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		uctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
 		if _, uerr := conn.Exec(uctx, `select pg_advisory_unlock($1)`, int64(lockKey)); uerr != nil {
-			release = func() { _ = conn.Hijack().Close(context.WithoutCancel(ctx)) }
+			release = func() { _ = conn.Hijack().Close(ctx) }
 		}
 	}()
 

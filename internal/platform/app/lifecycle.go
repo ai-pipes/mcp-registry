@@ -30,14 +30,20 @@ const (
 	msgKeyMismatch      = `SECRETS_KEY does not match the data in this database; restore the original key (stored secrets cannot be read with this one). See "Recovering from a key mismatch" in the README.`
 )
 
+// msgNoOutboxWorker is new in the Go server (the TypeScript one always runs its worker).
+const msgNoOutboxWorker = "outbox worker not started: no handler is registered"
+
 func newStdoutLogger(level string) *slog.Logger { return logging.New(level, os.Stdout) }
 
 // Run starts the server and blocks until it has stopped. ctx is cancelled to stop it (the entry
 // point cancels it with an app.Signal cause on SIGTERM or SIGINT). The result is the process exit
 // code: 0 after a clean stop, 1 when the start failed or the shutdown did not finish in time.
 //
-// The migrations and the key check are not interrupted by ctx, so a migration is never cut off
-// half way; a signal that arrives meanwhile stops the start before the port is opened.
+// A cancelled ctx interrupts the connection to the database and the wait for the migration lock
+// (another server is migrating); once migrations are being applied and during the key check it
+// does not (a migration is never cut off half way), and a signal that arrives meanwhile stops the
+// start before the port is opened. A start stopped this way logs `shutting down` and `stopped`
+// and returns 0.
 func Run(ctx context.Context, o Options) int {
 	logger := loggerOf(o)
 	cfg := o.Config
@@ -48,34 +54,31 @@ func Run(ctx context.Context, o Options) int {
 		logger.Warn(msgKeyOldSet)
 	}
 
-	startCtx := context.WithoutCancel(ctx)
-	openCtx, cancelOpen := context.WithTimeout(startCtx, connectTimeout)
+	openCtx, cancelOpen := context.WithTimeout(ctx, connectTimeout)
 	pool, err := db.Open(openCtx, cfg.DatabaseURL.Reveal(), databasePassword(cfg))
 	cancelOpen()
 	if err != nil {
+		if ctx.Err() != nil {
+			return stopBeforeServing(ctx, logger, nil)
+		}
 		// db.Open's text is fixed and never quotes the address or a password.
 		logging.Fatal(logger, err.Error())
 		return 1
 	}
-	if !prepare(startCtx, o, logger, pool) {
+	switch prepare(ctx, o, logger, pool) {
+	case startRefused:
 		pool.Close()
 		return 1
+	case startCancelled:
+		return stopBeforeServing(ctx, logger, pool)
 	}
 
 	if ctx.Err() != nil {
 		// A signal arrived during the start: do not open the port, stop at once.
-		logger.Info("shutting down", "signal", signalName(ctx))
-		pool.Close()
-		logger.Info("stopped")
-		return 0
+		return stopBeforeServing(ctx, logger, pool)
 	}
 
-	stopWorker := outbox.StartWorker(outbox.WorkerOptions{
-		Pool:     pool,
-		Handlers: map[string]outbox.Handler{},
-		Interval: outboxInterval,
-		Logger:   logger,
-	})
+	stopWorker := startOutbox(logger, pool, outboxHandlers())
 	stopScheduler := scheduler.Start(logger, nil)
 
 	ln := o.listener
@@ -96,6 +99,9 @@ func Run(ctx context.Context, o Options) int {
 		ReadHeaderTimeout: readHeaderTimeout,
 		IdleTimeout:       idleTimeout,
 		MaxHeaderBytes:    maxHeaderBytes,
+		// `OPTIONS *` goes through the chain like every request instead of net/http's bare 200
+		// without the security headers and request id.
+		DisableGeneralOptionsHandler: true,
 		// net/http's own messages stay JSON lines of the platform logger.
 		ErrorLog: slog.NewLogLogger(logger.Handler(), slog.LevelError),
 	}
@@ -125,6 +131,27 @@ func databasePassword(cfg config.Config) *string {
 	return &pw
 }
 
+// outboxHandlers is the handler table of the outbox subscribers. It is empty until the modules
+// that subscribe to events (search, milestone 4) arrive.
+func outboxHandlers() map[string]outbox.Handler { return map[string]outbox.Handler{} }
+
+// startOutbox starts the delivery worker, but only when there is a handler. The worker marks an
+// event of a type without a handler as processed (the TypeScript server registers every handler,
+// so there it never happens); a Go image pointed at a 1.0.x database must therefore not run one
+// before the handlers exist, or it would consume the pending catalog events for good.
+func startOutbox(logger *slog.Logger, pool *pgxpool.Pool, handlers map[string]outbox.Handler) func(context.Context) error {
+	if len(handlers) == 0 {
+		logger.Info(msgNoOutboxWorker)
+		return func(context.Context) error { return nil }
+	}
+	return outbox.StartWorker(outbox.WorkerOptions{
+		Pool:     pool,
+		Handlers: handlers,
+		Interval: outboxInterval,
+		Logger:   logger,
+	})
+}
+
 func shutdownLimitOf(o Options) time.Duration {
 	if o.shutdownTimeout > 0 {
 		return o.shutdownTimeout
@@ -132,11 +159,34 @@ func shutdownLimitOf(o Options) time.Duration {
 	return shutdownLimit
 }
 
-// prepare applies the migrations and checks the secrets key; false means the start is refused
-// (the reason is logged).
-func prepare(ctx context.Context, o Options, logger *slog.Logger, pool *pgxpool.Pool) bool {
+// stopBeforeServing ends a start that was cancelled before the port was opened.
+func stopBeforeServing(ctx context.Context, logger *slog.Logger, pool *pgxpool.Pool) int {
+	logger.Info("shutting down", "signal", signalName(ctx))
+	if pool != nil {
+		pool.Close()
+	}
+	logger.Info("stopped")
+	return 0
+}
+
+// startOutcome is the result of prepare.
+type startOutcome int
+
+const (
+	startReady     startOutcome = iota
+	startRefused                // the reason is logged
+	startCancelled              // ctx was cancelled while waiting for the migration lock
+)
+
+// prepare applies the migrations and checks the secrets key. ctx cancels only the wait for the
+// migration lock (migrate.Run does not let it interrupt the files it applies); the key check is
+// not interrupted.
+func prepare(ctx context.Context, o Options, logger *slog.Logger, pool *pgxpool.Pool) startOutcome {
 	applied, err := migrate.Run(ctx, pool, migrations.FS)
 	if err != nil {
+		if ctx.Err() != nil && errors.Is(err, context.Canceled) {
+			return startCancelled
+		}
 		var newer *migrate.NewerDatabaseError
 		var failed *migrate.MigrationError
 		switch {
@@ -146,17 +196,17 @@ func prepare(ctx context.Context, o Options, logger *slog.Logger, pool *pgxpool.
 		default:
 			logging.Fatal(logger, "migrations failed", logging.ErrAttr(err))
 		}
-		return false
+		return startRefused
 	}
 	if applied == nil {
 		applied = []string{}
 	}
 	logger.Info("migrations applied", "applied", applied)
 
-	verdict, err := crypto.Verify(ctx, pool, crypto.Keys{Current: o.Config.SecretsKey.Reveal(), Previous: o.Config.SecretsKeyOld.Reveal()})
+	verdict, err := crypto.Verify(context.WithoutCancel(ctx), pool, crypto.Keys{Current: o.Config.SecretsKey.Reveal(), Previous: o.Config.SecretsKeyOld.Reveal()})
 	if err != nil {
 		logging.Fatal(logger, "secrets key check failed", logging.ErrAttr(err))
-		return false
+		return startRefused
 	}
 	switch verdict {
 	case crypto.KeyCheckCreated:
@@ -165,9 +215,9 @@ func prepare(ctx context.Context, o Options, logger *slog.Logger, pool *pgxpool.
 		logger.Warn(msgKeyNeedsRotation)
 	case crypto.KeyCheckMismatch:
 		logging.Fatal(logger, msgKeyMismatch)
-		return false
+		return startRefused
 	}
-	return true
+	return startReady
 }
 
 // stopAll runs the stop functions at once and waits for all; the first error is returned.

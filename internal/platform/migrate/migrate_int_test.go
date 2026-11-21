@@ -17,6 +17,7 @@ import (
 	"github.com/ai-pipes/mcp-registry/internal/platform/db"
 	"github.com/ai-pipes/mcp-registry/internal/platform/migrate"
 	"github.com/ai-pipes/mcp-registry/internal/platform/pgtest"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -231,5 +232,124 @@ func TestConcurrentRunsApplyEachFileExactlyOnce(t *testing.T) {
 	slices.Sort(all)
 	if !slices.Equal(all, []string{"0001_a.sql", "0002_b.sql", "0003_c.sql"}) {
 		t.Fatalf("applied %v and %v: every file must be applied exactly once between them", results[0], results[1])
+	}
+}
+
+// holdLock takes the migration advisory lock on its own connection, as another server would.
+func holdLock(t *testing.T, address string) (release func()) {
+	t.Helper()
+	ctx := context.Background()
+	conn, err := pgx.Connect(ctx, address)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Exec(ctx, `select pg_advisory_lock(727002)`); err != nil {
+		t.Fatal(err)
+	}
+	var once sync.Once
+	release = func() {
+		once.Do(func() {
+			_, _ = conn.Exec(ctx, `select pg_advisory_unlock(727002)`)
+			_ = conn.Close(ctx)
+		})
+	}
+	t.Cleanup(release)
+	return release
+}
+
+// waitForQuery polls pg_stat_activity until a backend runs a query containing needle.
+func waitForQuery(t *testing.T, pool *pgxpool.Pool, needle string) {
+	t.Helper()
+	deadline := time.After(30 * time.Second)
+	tick := time.NewTicker(5 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		if count(t, pool, `select count(*) from pg_stat_activity where state = 'active' and query like '%`+needle+`%' and pid <> pg_backend_pid()`) > 0 {
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("no backend ran %q", needle)
+		case <-tick.C:
+		}
+	}
+}
+
+func TestRunStopsWaitingForTheLockWhenCancelled(t *testing.T) {
+	address := pgtest.StartURL(t)
+	release := holdLock(t, address)
+	pool, err := db.Open(context.Background(), address, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	type result struct {
+		applied []string
+		err     error
+	}
+	done := make(chan result, 1)
+	go func() {
+		a, err := migrate.Run(ctx, pool, migrations.FS)
+		done <- result{a, err}
+	}()
+	waitForQuery(t, pool, "pg_advisory_lock")
+	cancel()
+	select {
+	case r := <-done:
+		if !errors.Is(r.err, context.Canceled) || len(r.applied) != 0 {
+			t.Fatalf("applied %v, err %v", r.applied, r.err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("Run kept waiting for the lock after the context was cancelled")
+	}
+
+	// Nothing was applied, and the interrupted waiter does not keep the lock once the holder lets go.
+	release()
+	again, err := migrate.Run(context.Background(), pool, migrations.FS)
+	if err != nil || len(again) != 10 {
+		t.Fatalf("run after the holder released: %v %v", again, err)
+	}
+}
+
+func TestRunAlreadyCancelledAppliesNothing(t *testing.T) {
+	pool := pgtest.Start(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	applied, err := migrate.Run(ctx, pool, migrations.FS)
+	if !errors.Is(err, context.Canceled) || len(applied) != 0 {
+		t.Fatalf("applied %v, err %v", applied, err)
+	}
+}
+
+func TestRunFinishesWhatItBeganWhenCancelledWhileApplying(t *testing.T) {
+	address := pgtest.StartURL(t)
+	pool, err := db.Open(context.Background(), address, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	files := fstest.MapFS{
+		"0001_slow.sql": {Data: []byte("select pg_sleep(1); create table public.t_slow (x int);")},
+		"0002_next.sql": {Data: []byte("create table public.t_next (x int);")},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	type result struct {
+		applied []string
+		err     error
+	}
+	done := make(chan result, 1)
+	go func() {
+		a, err := migrate.Run(ctx, pool, files)
+		done <- result{a, err}
+	}()
+	waitForQuery(t, pool, "pg_sleep")
+	cancel()
+	r := <-done
+	if r.err != nil || !slices.Equal(r.applied, []string{"0001_slow.sql", "0002_next.sql"}) {
+		t.Fatalf("a run that began must finish: applied %v, err %v", r.applied, r.err)
 	}
 }

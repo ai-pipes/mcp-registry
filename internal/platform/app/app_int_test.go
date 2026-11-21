@@ -3,6 +3,7 @@
 package app
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -303,7 +304,7 @@ func TestCleanStartAndStop(t *testing.T) {
 	url := pgtest.StartURL(t)
 	in := startInstance(t, baseConfig(url, newKey(t)), nil)
 
-	want := []string{"starting", "migrations applied", msgKeyCreated, "listening"}
+	want := []string{"starting", "migrations applied", msgKeyCreated, msgNoOutboxWorker, "listening"}
 	if got := in.logs.messages(t); !slices.Equal(got, want) {
 		t.Fatalf("records: %q, want %q", got, want)
 	}
@@ -315,8 +316,8 @@ func TestCleanStartAndStop(t *testing.T) {
 		t.Errorf("applied on an empty database: %v", recs[1]["applied"])
 	}
 	port := in.base[strings.LastIndex(in.base, ":")+1:]
-	if recs[3]["version"] != "9.9.9-test" || fmt.Sprint(recs[3]["port"]) != port {
-		t.Errorf("listening: %v (port %s)", recs[3], port)
+	if recs[4]["version"] != "9.9.9-test" || fmt.Sprint(recs[4]["port"]) != port {
+		t.Errorf("listening: %v (port %s)", recs[4], port)
 	}
 
 	if code, body, _ := get(t, in.base+"/healthz"); code != 200 || body != "ok" {
@@ -348,7 +349,7 @@ func TestRestartAppliesNothingAndSaysNothingAboutTheKey(t *testing.T) {
 	if raw := second.logs.String(); !strings.Contains(raw, `"applied":[]`) {
 		t.Fatalf("applied must be an empty array, log:\n%s", raw)
 	}
-	if got := second.logs.messages(t); !slices.Equal(got, []string{"starting", "migrations applied", "listening"}) {
+	if got := second.logs.messages(t); !slices.Equal(got, []string{"starting", "migrations applied", msgNoOutboxWorker, "listening"}) {
 		t.Fatalf("records: %q", got)
 	}
 	if code := second.stop("SIGTERM"); code != 0 {
@@ -705,4 +706,171 @@ func TestAccessLogAndStaticFiles(t *testing.T) {
 		t.Fatalf("/healthz/x: %d %q", code, body)
 	}
 	in.stop("SIGTERM")
+}
+
+// A Go image pointed at a database with pending events (a 1.0.x one) must not consume them while
+// it has no handlers: the worker is not started.
+func TestPendingOutboxEventsSurviveAStartWithoutHandlers(t *testing.T) {
+	url := pgtest.StartURL(t)
+	key := newKey(t)
+	startInstance(t, baseConfig(url, key), nil).stop("SIGTERM") // creates the schema
+
+	ctx := context.Background()
+	conn, err := pgx.Connect(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close(ctx) }()
+	var id int64
+	if err := conn.QueryRow(ctx, `insert into platform.outbox (type, payload) values ('catalog.tools_changed', '{}') returning id`).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+
+	in := startInstance(t, baseConfig(url, key), nil)
+	if n := len(in.logs.find(t, msgNoOutboxWorker)); n != 1 {
+		t.Fatalf("want one record saying the worker is not started, got %d", n)
+	}
+	if code := in.stop("SIGTERM"); code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	var processed bool
+	var attempts int
+	if err := conn.QueryRow(ctx, `select processed_at is not null, attempts from platform.outbox where id = $1`, id).Scan(&processed, &attempts); err != nil {
+		t.Fatal(err)
+	}
+	if processed || attempts != 0 {
+		t.Fatalf("the pending event was touched: processed=%v attempts=%d", processed, attempts)
+	}
+}
+
+// holdMigrationLock takes the migration advisory lock on its own session, as another server that
+// is migrating would; the lock is released by the returned function.
+func holdMigrationLock(t *testing.T, url string) func() {
+	t.Helper()
+	ctx := context.Background()
+	c, err := pgx.Connect(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Exec(ctx, `select pg_advisory_lock(727002)`); err != nil {
+		t.Fatal(err)
+	}
+	var once sync.Once
+	release := func() { once.Do(func() { _ = c.Close(ctx) }) }
+	t.Cleanup(release)
+	return release
+}
+
+// waitForLockWaiter blocks until some session on the database waits for the advisory lock.
+func waitForLockWaiter(t *testing.T, url string) {
+	t.Helper()
+	ctx := context.Background()
+	c, err := pgx.Connect(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = c.Close(ctx) }()
+	deadline := time.Now().Add(waitLimit)
+	for {
+		var n int
+		if err := c.QueryRow(ctx, `select count(*) from pg_locks where locktype = 'advisory' and not granted`).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if n > 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("nobody waits for the migration lock")
+		}
+		time.Sleep(5 * time.Millisecond) //nolint:forbidigo // polling a server-side lock queue with a deadline
+	}
+}
+
+// A signal while another server holds the migration lock ends the start: nothing is applied, the
+// pool is closed, the port was never opened, the exit code is 0.
+func TestSignalWhileWaitingForTheMigrationLock(t *testing.T) {
+	url := pgtest.StartURL(t)
+	key := newKey(t)
+	startInstance(t, baseConfig(url, key), nil).stop("SIGTERM") // schema exists
+	exec(t, url, "delete from platform.schema_migrations where name = '0010_key_check.sql'")
+	exec(t, url, "drop table platform.key_check")
+	release := holdMigrationLock(t, url)
+
+	cfg := baseConfig(url, key)
+	cfg.Port = freePort(t)
+	in := launch(t, cfg, nil)
+	waitForLockWaiter(t, url)
+	in.cancel(Signal("SIGTERM"))
+	if code := in.exit(); code != 0 {
+		t.Fatalf("exit %d; log:\n%s", code, in.logs.String())
+	}
+	if got, want := in.logs.messages(t), []string{"starting", "shutting down", "stopped"}; !slices.Equal(got, want) {
+		t.Fatalf("records %q, want %q", got, want)
+	}
+	if sig := in.logs.find(t, "shutting down")[0]["signal"]; sig != "SIGTERM" {
+		t.Fatalf("signal %v", sig)
+	}
+	release()
+	eventuallyNoConnections(t, url)
+	if n := countRows(t, url, `select count(*) from platform.schema_migrations where name = '0010_key_check.sql'`); n != 0 {
+		t.Fatal("a cancelled start applied a migration")
+	}
+	startInstance(t, baseConfig(url, key), nil).stop("SIGTERM") // the lock is free again
+}
+
+// A signal before the database answers ends the start without a failure record.
+func TestSignalBeforeTheDatabaseAnswers(t *testing.T) {
+	// A listener that never accepts: the connection is made (the backlog takes it) and the
+	// start-up handshake never gets an answer.
+	silent, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = silent.Close() }()
+	cfg := baseConfig("postgres://u@"+silent.Addr().String()+"/db?sslmode=disable", newKey(t))
+	in := launch(t, cfg, nil)
+	in.waitFor("starting")
+	in.cancel(Signal("SIGINT"))
+	if code := in.exit(); code != 0 {
+		t.Fatalf("exit %d; log:\n%s", code, in.logs.String())
+	}
+	if got, want := in.logs.messages(t), []string{"starting", "shutting down", "stopped"}; !slices.Equal(got, want) {
+		t.Fatalf("records %q, want %q", got, want)
+	}
+}
+
+func countRows(t *testing.T, url, query string) int {
+	t.Helper()
+	ctx := context.Background()
+	c, err := pgx.Connect(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = c.Close(ctx) }()
+	var n int
+	if err := c.QueryRow(ctx, query).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+// net/http answers `OPTIONS *` itself with a bare 200 unless told not to; the chain must see it.
+func TestOptionsStarGoesThroughTheChain(t *testing.T) {
+	in := startInstance(t, baseConfig(pgtest.StartURL(t), newKey(t)), nil)
+	conn, err := net.Dial("tcp", strings.TrimPrefix(in.base, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	if _, err := fmt.Fprintf(conn, "OPTIONS * HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	res, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = res.Body.Close() }()
+	if res.Header.Get("X-Request-Id") == "" || res.Header.Get("Content-Security-Policy") == "" {
+		t.Fatalf("OPTIONS * bypassed the chain: %d %v", res.StatusCode, res.Header)
+	}
 }

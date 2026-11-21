@@ -36,7 +36,11 @@ type Sweep struct {
 
 // WorkerOptions configures StartWorker. Interval <= 0 means one second.
 type WorkerOptions struct {
-	Pool     *pgxpool.Pool
+	Pool *pgxpool.Pool
+	// Handlers by event type. An event of a type that is not in the table is logged and marked
+	// processed, exactly as the TypeScript worker does (there every handler is always registered, so
+	// it only happens for a stale type). A caller that has no handlers yet must not start a worker
+	// against a database that holds pending events: they would be consumed (see app.startOutbox).
 	Handlers map[string]Handler
 	Interval time.Duration
 	Logger   *slog.Logger
