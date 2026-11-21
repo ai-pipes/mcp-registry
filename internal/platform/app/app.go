@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"path"
 	"strings"
 	"time"
 
@@ -45,9 +44,9 @@ type Options struct {
 	Logger *slog.Logger
 
 	// Seams for tests in this package.
-	listener        net.Listener                        // used instead of listening on 0.0.0.0:Config.Port
-	mount           func(*http.ServeMux, *pgxpool.Pool) // extra routes, registered before the catch-all
-	shutdownTimeout time.Duration                       // replaces shutdownLimit when > 0
+	listener        net.Listener           // used instead of listening on 0.0.0.0:Config.Port
+	modules         func(Runtime) []Module // replaces modules (a stub module); nil means modules
+	shutdownTimeout time.Duration          // replaces shutdownLimit when > 0
 }
 
 // Signal is the cancellation cause of the context given to Run when the process got a signal; its
@@ -67,29 +66,24 @@ func signalName(ctx context.Context) string {
 }
 
 // handler assembles the HTTP handler: request id and access log, security headers, body limit
-// (1 MiB, and MCP_MAX_BODY_BYTES for /mcp), client address, CSRF; then the routes.
+// (1 MiB, and MCP_MAX_BODY_BYTES for /mcp), client address, CSRF; then /healthz, the modules'
+// routes (with their prefix middleware), the static files, the SPA shell and the not-found
+// answer, in that order. A path under /api or /mcp never reaches the shell.
 // pool may be nil (then /healthz answers 503).
-func handler(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, webRoot string, mount func(*http.ServeMux, *pgxpool.Pool)) http.Handler {
+func handler(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, webRoot string, routes []httpx.Route, prefixes []httpx.Prefix) http.Handler {
 	health := httpx.Healthz(pool)
 	rest := httpx.Static(webRoot, httpx.SPAFallback(webRoot, httpx.NotFound()))
-	var extra *http.ServeMux
-	if mount != nil {
-		extra = http.NewServeMux()
-		mount(extra, pool)
-	}
-	// Dispatch by hand instead of registering patterns: ServeMux would answer 405 for another
-	// method on a known path and redirect non-clean paths (//x, /a/../b), where the TypeScript
-	// server answers its ordinary not-found. Only GET (and HEAD) /healthz is the probe.
+	// The router is not net/http's mux on purpose: that would answer 405 for another method on a
+	// known path and redirect non-clean paths (//x, /a/../b), where the TypeScript server answers
+	// its ordinary not-found. Whatever the router does not serve goes to the static files.
+	modulesRouter := httpx.NewRouter(routes, prefixes, rest)
+	// Only GET (and HEAD) /healthz is the probe.
 	mux := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		p := r.URL.Path
-		switch {
-		case p == "/healthz" && (r.Method == http.MethodGet || r.Method == http.MethodHead):
+		if r.URL.Path == "/healthz" && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
 			health.ServeHTTP(w, r)
-		case extra != nil && path.Clean(p) == p && routed(extra, r):
-			extra.ServeHTTP(w, r)
-		default:
-			rest.ServeHTTP(w, r)
+			return
 		}
+		modulesRouter.ServeHTTP(w, r)
 	})
 	return httpx.Chain(mux,
 		httpx.RequestID(logger),
@@ -98,12 +92,6 @@ func handler(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, webRoot
 		httpx.ClientIP(cfg.TrustProxy, cfg.TrustProxyHops),
 		httpx.CSRF(cfg.PublicURL),
 	)
-}
-
-// routed reports whether mux has a route for r (a test seam; nothing else is registered in it).
-func routed(mux *http.ServeMux, r *http.Request) bool {
-	_, pattern := mux.Handler(r)
-	return pattern != ""
 }
 
 func isMCP(path string) bool { return path == "/mcp" || strings.HasPrefix(path, "/mcp/") }

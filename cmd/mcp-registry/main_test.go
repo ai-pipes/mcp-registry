@@ -20,22 +20,21 @@ func TestVersionFlagPrintsVersionAndExitsZero(t *testing.T) {
 	}
 }
 
-// validEnv passes the configuration check; nothing connects for an unknown command.
+// validEnv passes the configuration check; the database address is unreachable.
 var validEnv = map[string]string{
 	"DATABASE_URL": "postgres://u@127.0.0.1:1/db",
 	"PUBLIC_URL":   "http://localhost:3000",
 	"SECRETS_KEY":  "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
 }
 
-// compat: TestCLIVersion: "version" is not a command; the name is printed raw.
-func TestUnknownCommandWithValidConfigurationExitsTwo(t *testing.T) {
+// Like cli.ts, a command is looked up after the migrations: with the database unreachable the
+// run is an operation failure (exit 1, no usage), whatever the command is called. The unknown
+// command with a database (exit 2) is in main_int_test.go.
+func TestACommandNeedsTheDatabaseFirst(t *testing.T) {
 	var errOut, out bytes.Buffer
-	code := run(context.Background(), []string{`ver\sion`}, validEnv, &out, &errOut)
-	if code != 2 || out.Len() != 0 {
-		t.Fatalf("code=%d stdout=%q", code, out.String())
-	}
-	if !strings.HasPrefix(errOut.String(), "error: unknown command \"ver\\sion\"\n") || !strings.Contains(errOut.String(), "Usage:") {
-		t.Fatalf("stderr=%q", errOut.String())
+	code := run(context.Background(), []string{"anything"}, validEnv, &out, &errOut)
+	if code != 1 || out.Len() != 0 || !strings.HasPrefix(errOut.String(), "error: cannot connect to the database") || strings.Contains(errOut.String(), "Usage:") {
+		t.Fatalf("code=%d stdout=%q stderr=%q", code, out.String(), errOut.String())
 	}
 }
 

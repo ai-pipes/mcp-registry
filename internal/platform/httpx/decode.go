@@ -7,7 +7,9 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"reflect"
 	"strings"
+	"sync"
 
 	"github.com/ai-pipes/mcp-registry/internal/kernel"
 )
@@ -21,7 +23,15 @@ import (
 // must not be null", and limit_exceeded when BodyLimit cut the body (so WriteDomainError answers
 // 413). A handler that reads the body in another way gets the same cut as an error wrapping
 // *http.MaxBytesError and passes it to WriteDomainError.
+//
+// Because names match case-sensitively against the tag, a field WITHOUT a json tag would silently
+// never be filled (json/v2 would look for "Role", clients send "role"). DecodeJSON therefore
+// refuses a destination type that has an exported field without a `json` tag, in any nested
+// struct, slice, array, map value or pointer, by panicking with the type and field: a programming
+// error that the first test of the handler hits. Tag `json:"-"` to skip a field on purpose. Types
+// that decode themselves (json or text unmarshalers, such as time.Time) are not looked into.
 func DecodeJSON(r *http.Request, dst any) error {
+	requireJSONTags(reflect.TypeOf(dst))
 	var raw []byte
 	if r.Body != nil {
 		var err error
@@ -57,4 +67,54 @@ func DecodeJSON(r *http.Request, dst any) error {
 // pointerPath renders a JSON Pointer ("/a/b") as a dotted path ("a.b").
 func pointerPath(p jsontext.Pointer) string {
 	return strings.ReplaceAll(strings.TrimPrefix(string(p), "/"), "/", ".")
+}
+
+// taggedTypes caches the types that passed requireJSONTags.
+var taggedTypes sync.Map
+
+var (
+	jsonUnmarshaler = reflect.TypeFor[interface{ UnmarshalJSON([]byte) error }]()
+	textUnmarshaler = reflect.TypeFor[interface{ UnmarshalText([]byte) error }]()
+)
+
+// requireJSONTags panics when t (or a type reachable through it) is a struct with an exported
+// field that has no json tag.
+func requireJSONTags(t reflect.Type) {
+	if t == nil {
+		return
+	}
+	if _, ok := taggedTypes.Load(t); ok {
+		return
+	}
+	checkTags(t, t.String(), map[reflect.Type]bool{})
+	taggedTypes.Store(t, struct{}{})
+}
+
+func checkTags(t reflect.Type, where string, seen map[reflect.Type]bool) {
+	switch t.Kind() {
+	case reflect.Pointer, reflect.Slice, reflect.Array:
+		checkTags(t.Elem(), where, seen)
+	case reflect.Map:
+		checkTags(t.Elem(), where, seen)
+	case reflect.Struct:
+		if seen[t] || reflect.PointerTo(t).Implements(jsonUnmarshaler) || reflect.PointerTo(t).Implements(textUnmarshaler) {
+			return
+		}
+		seen[t] = true
+		for i := range t.NumField() {
+			f := t.Field(i)
+			if !f.IsExported() {
+				continue
+			}
+			if _, ok := f.Tag.Lookup("json"); !ok {
+				if f.Anonymous && f.Type.Kind() == reflect.Struct {
+					// An embedded struct without a tag is inlined: its own fields are checked.
+					checkTags(f.Type, where, seen)
+					continue
+				}
+				panic("httpx.DecodeJSON: field " + where + "." + f.Name + " has no json tag (json/v2 would never match it)")
+			}
+			checkTags(f.Type, where+"."+f.Name, seen)
+		}
+	}
 }

@@ -25,10 +25,10 @@ import (
 
 	"github.com/ai-pipes/mcp-registry/apps/server/migrations"
 	"github.com/ai-pipes/mcp-registry/internal/platform/config"
+	"github.com/ai-pipes/mcp-registry/internal/platform/httpx"
 	"github.com/ai-pipes/mcp-registry/internal/platform/logging"
 	"github.com/ai-pipes/mcp-registry/internal/platform/pgtest"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const (
@@ -496,15 +496,15 @@ func TestInFlightRequestCompletesOnShutdown(t *testing.T) {
 	url := pgtest.StartURL(t)
 	started := make(chan struct{})
 	in := startInstance(t, baseConfig(url, newKey(t)), func(o *Options) {
-		o.mount = func(mux *http.ServeMux, pool *pgxpool.Pool) {
-			mux.HandleFunc("GET /slow", func(w http.ResponseWriter, r *http.Request) {
+		o.modules = func(rt Runtime) []Module {
+			return []Module{{Routes: []httpx.Route{{Method: "GET", Path: "/slow", Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				close(started)
-				if _, err := pool.Exec(r.Context(), "select pg_sleep(0.3)"); err != nil {
+				if _, err := rt.Pool.Exec(r.Context(), "select pg_sleep(0.3)"); err != nil {
 					w.WriteHeader(http.StatusInternalServerError)
 					return
 				}
 				_, _ = w.Write([]byte("done"))
-			})
+			})}}}}
 		}
 	})
 
@@ -541,11 +541,11 @@ func TestShutdownTimesOut(t *testing.T) {
 	started, release := make(chan struct{}), make(chan struct{})
 	in := startInstance(t, baseConfig(url, newKey(t)), func(o *Options) {
 		o.shutdownTimeout = 300 * time.Millisecond
-		o.mount = func(mux *http.ServeMux, _ *pgxpool.Pool) {
-			mux.HandleFunc("GET /stuck", func(_ http.ResponseWriter, _ *http.Request) {
+		o.modules = func(Runtime) []Module {
+			return []Module{{Routes: []httpx.Route{{Method: "GET", Path: "/stuck", Handler: http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 				close(started)
 				<-release
-			})
+			})}}}}
 		}
 	})
 	t.Cleanup(func() { close(release) })

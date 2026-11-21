@@ -78,8 +78,23 @@ func Run(ctx context.Context, o Options) int {
 		return stopBeforeServing(ctx, logger, pool)
 	}
 
-	stopWorker := startOutbox(logger, pool, outboxHandlers())
-	stopScheduler := scheduler.Start(logger, nil)
+	rt, err := newRuntime(cfg, logger, pool, o.Version)
+	if err != nil {
+		logging.Fatal(logger, "cannot build the runtime", logging.ErrAttr(err))
+		pool.Close()
+		return 1
+	}
+	asm, err := assemble(modulesOf(o.modules, rt))
+	if err != nil {
+		// The text names an event type or a command, never data.
+		logging.Fatal(logger, err.Error())
+		pool.Close()
+		return 1
+	}
+	// After the key check, before the first request: a module's one-time provisioning.
+	runFirstStart(ctx, logger, asm.firstStart)
+	stopWorker := startOutbox(logger, pool, asm.handlers)
+	stopScheduler := scheduler.Start(logger, asm.jobs)
 
 	ln := o.listener
 	if ln == nil {
@@ -95,7 +110,7 @@ func Run(ctx context.Context, o Options) int {
 	}
 
 	srv := &http.Server{
-		Handler:           handler(cfg, logger, pool, webRootOf(o), o.mount),
+		Handler:           handler(cfg, logger, pool, webRootOf(o), asm.routes, asm.prefixes),
 		ReadHeaderTimeout: readHeaderTimeout,
 		IdleTimeout:       idleTimeout,
 		MaxHeaderBytes:    maxHeaderBytes,
@@ -131,9 +146,26 @@ func databasePassword(cfg config.Config) *string {
 	return &pw
 }
 
-// outboxHandlers is the handler table of the outbox subscribers. It is empty until the modules
-// that subscribe to events (search, milestone 4) arrive.
-func outboxHandlers() map[string]outbox.Handler { return map[string]outbox.Handler{} }
+// msgFirstStartFailed is logged when a module's FirstStart fails; the error's text is never part
+// of the record (it may quote values or secrets).
+const msgFirstStartFailed = "module first start failed"
+
+// runFirstStart runs the modules' FirstStart functions in order. A failure (or a panic) is logged
+// and the start goes on.
+func runFirstStart(ctx context.Context, logger *slog.Logger, funcs []func(context.Context) error) {
+	for _, f := range funcs {
+		func() {
+			defer func() {
+				if recover() != nil {
+					logger.Error(msgFirstStartFailed, "stack", logging.PanicFrames())
+				}
+			}()
+			if err := f(ctx); err != nil {
+				logger.Error(msgFirstStartFailed, logging.ErrAttr(err))
+			}
+		}()
+	}
+}
 
 // startOutbox starts the delivery worker, but only when there is a handler. The worker marks an
 // event of a type without a handler as processed (the TypeScript server registers every handler,

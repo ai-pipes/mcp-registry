@@ -14,16 +14,19 @@ import (
 	"github.com/ai-pipes/mcp-registry/internal/platform/config"
 	"github.com/ai-pipes/mcp-registry/internal/platform/httpx"
 	"github.com/ai-pipes/mcp-registry/internal/platform/logging"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // testMCPLimit is MCP_MAX_BODY_BYTES in these tests: above the 1 MiB of the other routes.
 const testMCPLimit = 3 << 20
 
-func testHandler(t *testing.T, mount func(*http.ServeMux, *pgxpool.Pool)) http.Handler {
+func testConfig() config.Config {
+	return config.Config{PublicURL: "http://localhost:3000", TrustProxyHops: 1, MCPMaxBodyBytes: testMCPLimit}
+}
+
+func testHandler(t *testing.T, routes []httpx.Route, prefixes ...httpx.Prefix) http.Handler {
 	t.Helper()
 	cfg := config.Config{PublicURL: "http://localhost:3000", TrustProxyHops: 1, MCPMaxBodyBytes: testMCPLimit}
-	return handler(cfg, discardLogger(), nil, t.TempDir(), mount)
+	return handler(cfg, discardLogger(), nil, t.TempDir(), routes, prefixes)
 }
 
 func do(h http.Handler, r *http.Request) *httptest.ResponseRecorder {
@@ -42,11 +45,11 @@ func TestBodyLimits(t *testing.T) {
 		}
 		_, _ = w.Write([]byte("ok"))
 	})
-	h := testHandler(t, func(mux *http.ServeMux, _ *pgxpool.Pool) {
-		for _, p := range []string{"/mcp", "/mcp/sub", "/mcpx", "/other"} {
-			mux.Handle("POST "+p, drain)
-		}
-	})
+	var routes []httpx.Route
+	for _, p := range []string{"/mcp", "/mcp/sub", "/mcpx", "/other"} {
+		routes = append(routes, httpx.Route{Method: "POST", Path: p, Handler: drain})
+	}
+	h := testHandler(t, routes)
 	for _, tc := range []struct {
 		path        string
 		size, limit int
@@ -176,12 +179,12 @@ func TestChainOrderAndClientAddress(t *testing.T) {
 	for _, trust := range []bool{true, false} {
 		var logs bytes.Buffer
 		cfg := config.Config{PublicURL: own, TrustProxy: trust, TrustProxyHops: 1, MCPMaxBodyBytes: testMCPLimit}
-		h := handler(cfg, logging.New("info", &logs), nil, t.TempDir(), func(mux *http.ServeMux, _ *pgxpool.Pool) {
-			mux.HandleFunc("GET /api/stub/ip", func(w http.ResponseWriter, r *http.Request) {
+		h := handler(cfg, logging.New("info", &logs), nil, t.TempDir(), []httpx.Route{
+			{Method: "GET", Path: "/api/stub/ip", Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("X-Seen-Ip", httpx.ClientIPOf(r))
-			})
-			mux.HandleFunc("POST /api/stub/post", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) })
-		})
+			})},
+			{Method: "POST", Path: "/api/stub/post", Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) })},
+		}, nil)
 		wantIP := peer
 		if trust {
 			wantIP = forwarded

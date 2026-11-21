@@ -18,16 +18,6 @@ import (
 // version is set at build time with -ldflags "-X main.version=...".
 var version = "dev"
 
-// usage follows the TypeScript CLI's text; there are no operator commands yet.
-const usage = `Usage: mcp-registry
-       mcp-registry --version
-
-  Without a command the server starts. Operator commands arrive in a later release.
-`
-
-// commands is the table of operator commands (name -> function returning the exit code).
-var commands = map[string]func(args []string, stdout, stderr io.Writer) int{}
-
 func readTextFile(path string) (string, error) {
 	b, err := os.ReadFile(path) //nolint:gosec // G304: the operator names the file (SECRETS_KEY_FILE, PGPASSWORD_FILE); that is the feature
 	return string(b), err
@@ -56,14 +46,14 @@ func run(ctx context.Context, args []string, env map[string]string, stdout, stde
 			Logger:  logging.New(cfg.LogLevel, stdout),
 		})
 	}
-	// Migrations before the command (as in cli.ts) arrive with the first real command, in milestone 2.
-	command, ok := commands[args[0]]
-	if !ok {
-		// The name is printed raw between double quotes, as the TypeScript template string does.
-		_, _ = io.WriteString(stderr, "error: unknown command \""+args[0]+"\"\n"+usage)
-		return 2
-	}
-	return command(args[1:], stdout, stderr)
+	// The operator commands (cli.ts): pool, migrations, key guard, then the command; see app.RunCLI.
+	return app.RunCLI(ctx, app.CLIOptions{
+		Config:  cfg,
+		Version: version,
+		Args:    args,
+		Stdout:  stdout,
+		Stderr:  stderr,
+	})
 }
 
 func environ(pairs []string) map[string]string {
