@@ -269,6 +269,12 @@ func TestAuthenticateTokenFailuresAreAllCounted(t *testing.T) {
 			t.Errorf("%s: limiter hits = %d, want %d", c.name, len(f.TokenLimiter.Hits), i+1)
 		}
 	}
+	// lastUsedAt is touched only after the owner checks pass.
+	for _, i := range []int{2, 3} { // owner missing, owner disabled
+		if f.Store.tokens[i].LastUsedAt != nil {
+			t.Errorf("token %d: lastUsedAt touched although the owner check failed", i)
+		}
+	}
 	// A hash that matches but is not equal in the constant-time check also counts.
 	f.Deps.Hasher = unequalHasher{}
 	if _, err := app.AuthenticateToken(ctx, f.Deps, live.Token, "ip"); err == nil {

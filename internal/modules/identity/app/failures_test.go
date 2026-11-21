@@ -299,6 +299,9 @@ func TestStoreFailuresPropagate(t *testing.T) {
 			if _, ok := domain.AsError(err); ok {
 				t.Fatal("store failure turned into a domain error")
 			}
+			if len(f.TokenLimiter.Hits) != 0 {
+				t.Fatalf("a store error was counted by the token limiter: %v", f.TokenLimiter.Hits)
+			}
 		})
 	}
 }

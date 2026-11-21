@@ -139,6 +139,8 @@ type TokenRepository interface {
 	ListByUser(ctx context.Context, userID string) ([]TokenRecord, error)
 	// Revoke sets RevokedAt unless it is already set.
 	Revoke(ctx context.Context, id string, at time.Time) error
+	// RevokeAllByUser revokes only the person's tokens that are not revoked yet: RevokedAt of
+	// earlier revocations is preserved (SQL: "and revoked_at is null").
 	RevokeAllByUser(ctx context.Context, userID string, at time.Time) error
 	Touch(ctx context.Context, id string, at time.Time) error
 }
