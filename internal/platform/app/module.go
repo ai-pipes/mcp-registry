@@ -25,6 +25,9 @@ type CLIIO struct {
 	Stdin          io.Reader
 	Stdout, Stderr io.Writer
 	Env            map[string]string
+	// Terminal is set when Stdin is a terminal: a secret is then typed without echo. Nil for a
+	// pipe, a file or a test.
+	Terminal Terminal
 }
 
 // KeyGuard says what the CLI does before a command when the stored key check is not opened by the

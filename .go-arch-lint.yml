@@ -14,7 +14,7 @@
 #                           other modules
 #   no-inward-infra         domain and app never import infra, http or platform
 #   deps-only-in-infra      pgx, go-oidc, x/oauth2 and ONNX only in infra (and platform); the MCP
-#                           SDK also in http
+#                           SDK also in http; x/term only in the composition (platform)
 #   modules-via-index       another module is imported only by its root package; a module's http
 #                           layer may also import its OWN root (the session guards, the principal),
 #                           which does not make a cycle: a root never imports its http or infra
@@ -60,6 +60,12 @@ vendors:
       - golang.org/x/oauth2/**
   onnx:
     in: github.com/yalue/onnxruntime_go
+  # Terminal handling (reading a secret without echo): the composition only (platform has
+  # anyVendorDeps); no module layer lists it under canUse, infra included.
+  x-term:
+    in:
+      - golang.org/x/term
+      - golang.org/x/term/**
   mcp-sdk:
     in: github.com/modelcontextprotocol/go-sdk/**
   testcontainers:

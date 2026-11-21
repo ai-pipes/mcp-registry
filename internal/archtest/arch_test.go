@@ -141,6 +141,7 @@ var archFixtures = []struct{ rule, fixture, component, badImport string }{
 	{"no-inward-infra", "no-inward-infra", "catalog-app", modPath + "modules/catalog/http"},
 	{"deps-only-in-infra (vendors)", "deps-only-in-infra", "catalog-app", "github.com/jackc/pgx/v5"},
 	{"deps-only-in-infra (x/oauth2 root package)", "deps-only-in-infra-oauth2", "catalog-app", "golang.org/x/oauth2"},
+	{"deps-only-in-infra (x/term is the composition's, not even infra's)", "deps-only-in-infra-term", "catalog-infra", "golang.org/x/term"},
 	{"modules-via-index", "modules-via-index", "gateway-infra", modPath + "modules/catalog/domain"},
 	{"migrations-only-platform", "migrations-only-platform", "catalog-infra", "github.com/ai-pipes/mcp-registry/apps/server/migrations"},
 	// platform-leaves: modules reach platform only through the leaves, and only from http and infra.

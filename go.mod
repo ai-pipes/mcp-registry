@@ -10,6 +10,7 @@ require (
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.45.0
 	golang.org/x/net v0.60.0
 	golang.org/x/oauth2 v0.36.0
+	golang.org/x/term v0.47.0
 )
 
 require (

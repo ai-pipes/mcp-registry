@@ -29,14 +29,6 @@ var usageOrder = []string{
 // (apps/server/src/platform/cli-commands.ts, with this image's name); a milestone that registers
 // the command sets CLICommand.Usage and the entry here goes.
 var pendingUsage = map[string]string{
-	"create-server": `  create-server --json <file> --as <admin-sub> [--secret-env <VAR>]
-      Create a server from a ServerInput JSON file and synchronise it at once. The secret
-      (shared key or OAuth client secret) is read from the variable <VAR> or from stdin,
-      never from the command line, and is never printed.
-`,
-	"sync": `  sync <slug> [--as <admin-sub>]
-      Synchronise the server's tools; without --as, as the scheduler does.
-`,
 	"reindex": `  reindex
       Rebuild the search index for every server.
 `,
@@ -236,7 +228,7 @@ func RunCLI(ctx context.Context, o CLIOptions) int {
 	if stdin == nil {
 		stdin = strings.NewReader("")
 	}
-	cio := CLIIO{Stdin: stdin, Stdout: o.Stdout, Stderr: o.Stderr, Env: o.Env}
+	cio := CLIIO{Stdin: stdin, Stdout: o.Stdout, Stderr: o.Stderr, Env: o.Env, Terminal: terminalOf(stdin)}
 	return runCommand(ctx, command, cio, args, logger, usageFor(asm.commands))
 }
 
