@@ -113,6 +113,45 @@ func TestDoExpectingEarlyRefusalReturnsTheAnswerWhateverHappenedToTheWrite(t *te
 	}
 }
 
+// TestDoChunkedExpectingEarlyRefusalSendsNoContentLength: the raw listener sees a chunked request.
+func TestDoChunkedExpectingEarlyRefusalSendsNoContentLength(t *testing.T) {
+	l, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = l.Close() })
+	heads := make(chan string, 4)
+	go func() {
+		for {
+			conn, err := l.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer func() { _ = conn.Close() }()
+				buf := make([]byte, 4096)
+				n, _ := conn.Read(buf)
+				heads <- string(buf[:n])
+				_, _ = conn.Write([]byte("HTTP/1.1 413 Payload Too Large\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}"))
+			}()
+		}
+	}()
+	c := &Client{base: "http://" + l.Addr().String(), http: newHTTPClient(nil)}
+	if r := c.DoChunkedExpectingEarlyRefusal(t, "POST", "/x", make([]byte, 1<<20)); r.Status != 413 {
+		t.Fatalf("status %d", r.Status)
+	}
+	head := strings.ToLower(<-heads)
+	if !strings.Contains(head, "transfer-encoding: chunked") || strings.Contains(head, "content-length") {
+		t.Fatalf("the request head was:\n%s", head)
+	}
+	if r := c.DoExpectingEarlyRefusal(t, "POST", "/x", make([]byte, 1<<20)); r.Status != 413 {
+		t.Fatalf("status %d", r.Status)
+	}
+	if head := strings.ToLower(<-heads); !strings.Contains(head, "content-length: 1048576") || strings.Contains(head, "transfer-encoding") {
+		t.Fatalf("the sized request head was:\n%s", head)
+	}
+}
+
 func TestPortTakenRecognisesDockersMessages(t *testing.T) {
 	for _, msg := range []string{
 		"docker run: exit status 125: docker: Error response from daemon: driver failed programming external connectivity: Bind for 127.0.0.1:5000 failed: port is already allocated",

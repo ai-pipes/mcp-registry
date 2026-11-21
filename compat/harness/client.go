@@ -201,7 +201,9 @@ func (c *Client) Do(t *testing.T, method, path string, body any, hdr ...string) 
 // proven health once.
 func (s *Stack) Answers(t *testing.T) {
 	t.Helper()
-	if r := s.Anonymous().Do(t, "GET", "/", nil); r.Status != http.StatusOK {
+	// Accept: text/html, as a browser's first request: a server serves the shell to it, and the
+	// probe then does not depend on what a server answers a request that wants anything else.
+	if r := s.Anonymous().Do(t, "GET", "/", nil, "Accept: text/html"); r.Status != http.StatusOK {
 		t.Fatalf("GET /: %d %.200q", r.Status, r.Body)
 	}
 }
@@ -254,7 +256,24 @@ func (r Response) Decode(t *testing.T, into any) {
 // through Do, which has no retry and no tolerance for transport errors.
 func (c *Client) DoExpectingEarlyRefusal(t *testing.T, method, path string, body []byte, hdr ...string) Response {
 	t.Helper()
+	return c.doExpectingEarlyRefusal(t, method, path, body, false, hdr)
+}
+
+// DoChunkedExpectingEarlyRefusal is DoExpectingEarlyRefusal for a body sent without a declared
+// length (Transfer-Encoding: chunked, no Content-Length): the server cannot refuse it by length
+// before reading, only after it has read up to its limit.
+func (c *Client) DoChunkedExpectingEarlyRefusal(t *testing.T, method, path string, body []byte, hdr ...string) Response {
+	t.Helper()
+	return c.doExpectingEarlyRefusal(t, method, path, body, true, hdr)
+}
+
+func (c *Client) doExpectingEarlyRefusal(t *testing.T, method, path string, body []byte, chunked bool, hdr []string) Response {
+	t.Helper()
 	req := c.newRequest(t, method, path, body, hdr)
+	if chunked {
+		// A body of unknown length: net/http writes it as chunks and sends no Content-Length.
+		req.Body, req.GetBody, req.ContentLength = io.NopCloser(bytes.NewReader(body)), nil, -1
+	}
 	req.Header.Set("Connection", "close")
 	// Only http.Client.Do adds the cookies of its jar; this request is sent raw, so add them here.
 	if jar := c.http.Jar; jar != nil {

@@ -150,7 +150,7 @@ jobs:
           retention-days: 7
 
   # The Go server (Dockerfile target go) under the compat suite: the scenarios of the milestone pattern
-  # (COMPAT_GO_RUN in the Makefile). The reference image is built too: the scenarios start from it or
+  # (COMPAT_GO_TESTS and COMPAT_GO_SKIP in the Makefile). The reference image is built too: the scenarios start from it or
   # compare with it. Not a required check. arm64 only, like e2e-flows.
   compat-go:
     needs: [go]

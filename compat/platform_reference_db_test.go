@@ -17,6 +17,12 @@ package compat_test
 //   - refuse a database with a migration it does not know: exit 1, one fatal record that names that
 //     migration, nothing applied; and start again once the row is gone.
 // When the image under test IS the reference image (the default) this is a restart test.
+//
+// TestPlatformReverseHandOver is the other direction: the database is created by the image under
+// test, then the app container is swapped for the REFERENCE image with the same key. What the new
+// image wrote (the migrations, the sealed key check) must be accepted by 1.0.x as it is: healthy,
+// nothing applied, the key check untouched, the web shell served. This is the rollback an operator
+// makes after trying the new image.
 
 import (
 	"slices"
@@ -25,9 +31,6 @@ import (
 
 	"github.com/ai-pipes/mcp-registry/compat/harness"
 )
-
-// referenceMigrations is how many migrations the reference image bundles (apps/server/migrations).
-const referenceMigrations = 10
 
 func migrationNames(t *testing.T, s *harness.Stack) []string {
 	t.Helper()
@@ -61,8 +64,8 @@ func TestPlatformStartsOnReferenceDatabase(t *testing.T) {
 	image, cli := platformImage(), harness.DefaultCLI()
 
 	migrations := migrationNames(t, s)
-	if len(migrations) != referenceMigrations {
-		t.Fatalf("the reference image recorded %d migrations %v, want %d", len(migrations), migrations, referenceMigrations)
+	if len(migrations) == 0 || migrations[0] != "0001_platform.sql" {
+		t.Fatalf("the reference image recorded the migrations %v", migrations)
 	}
 	check := keyCheckBytes(t, s)
 
@@ -118,10 +121,13 @@ func TestPlatformStartsOnReferenceDatabase(t *testing.T) {
 		if len(fatal) != 1 {
 			t.Fatalf("fatal records: %v", fatal)
 		}
-		if msg, _ := fatal[0]["msg"].(string); !strings.Contains(msg, newerDBMigrName) {
-			t.Fatalf("the fatal record does not name the migration: %q", msg)
+		// The two fragments an operator acts on, as in TestPlatformMigrationsAndKeyCheck.
+		msg, _ := fatal[0]["msg"].(string)
+		if !strings.Contains(msg, "migrated by a newer version of mcp-registry (unknown migration: "+newerDBMigrName+")") ||
+			!strings.Contains(msg, "restore the backup taken before the upgrade") {
+			t.Fatalf("fatal message: %q", msg)
 		}
-		if got := migrationNames(t, s); len(got) != referenceMigrations+1 {
+		if got := migrationNames(t, s); len(got) != len(migrations)+1 {
 			t.Fatalf("migrations after the refusal: %v", got)
 		}
 		assertNoKey(t, logs, key)
@@ -131,4 +137,46 @@ func TestPlatformStartsOnReferenceDatabase(t *testing.T) {
 			t.Fatalf("migrations %v after the row was removed", got)
 		}
 	})
+}
+
+func TestPlatformReverseHandOver(t *testing.T) {
+	harness.RequireReferenceImage(t)
+	key := newKey(t)
+	s := harness.Start(t, harness.Options{
+		Image: platformImage(),
+		CLI:   harness.DefaultCLI(),
+		Env:   map[string]string{"SECRETS_KEY": key},
+	})
+	migrations := migrationNames(t, s)
+	if len(migrations) == 0 || migrations[0] != "0001_platform.sql" {
+		t.Fatalf("the image under test recorded the migrations %v", migrations)
+	}
+	if n := countSQL(t, s, "select count(*) from platform.key_check"); n != 1 {
+		t.Fatalf("the image under test recorded %d key checks, want 1", n)
+	}
+	check := keyCheckBytes(t, s)
+
+	s.SwapImage(t, harness.ReferenceImage(), harness.ReferenceCLI())
+
+	if got := migrationNames(t, s); !slices.Equal(got, migrations) {
+		t.Fatalf("migrations before %v, after the reference image started: %v", migrations, got)
+	}
+	if n := countSQL(t, s, "select count(*) from platform.key_check"); n != 1 || string(keyCheckBytes(t, s)) != string(check) {
+		t.Fatalf("the key check changed under the reference image (%d rows)", n)
+	}
+	recs, other := logRecords(t, s.Logs(t))
+	if len(other) != 0 {
+		t.Errorf("log lines that are not JSON: %q", other)
+	}
+	if bad := recordsFrom(recs, "error"); len(bad) != 0 {
+		t.Fatalf("records at error level or above in the reference image's start: %v", bad)
+	}
+	if n := len(recordsWithMsg(recs, keyCreatedMsg)); n != 0 {
+		t.Fatalf("the reference image recorded the key check again: %d records", n)
+	}
+	assertNoKey(t, s.Logs(t), key)
+	r := s.Anonymous().Do(t, "GET", "/", nil, "Accept: text/html")
+	if r.Status != 200 || !strings.Contains(string(r.Body), `<div id="root">`) {
+		t.Fatalf("GET /: %d %.200s", r.Status, r.Body)
+	}
 }
