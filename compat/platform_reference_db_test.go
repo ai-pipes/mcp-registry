@@ -168,7 +168,7 @@ func TestPlatformStartsOnReferenceDatabase(t *testing.T) {
 	check := keyCheckBytes(t, s)
 	people := createHandOverPeople(t, s)
 
-	t.Run("the same key: healthy, nothing applied, the check untouched, the shell served", func(t *testing.T) {
+	t.Run("the same key: healthy, nothing applied, the check untouched, the shell served, the reference image's people accepted", func(t *testing.T) {
 		s.SwapImage(t, image, cli)
 		if got := migrationNames(t, s); !slices.Equal(got, migrations) {
 			t.Fatalf("migrations before %v, after %v", migrations, got)
@@ -190,10 +190,10 @@ func TestPlatformStartsOnReferenceDatabase(t *testing.T) {
 		if r.Status != 200 || !strings.Contains(string(r.Body), `<div id="root">`) {
 			t.Fatalf("GET /: %d %.200s", r.Status, r.Body)
 		}
-	})
-
-	t.Run("the people of the reference image: old sessions and the token are accepted, a new sign-in works", func(t *testing.T) {
-		// The image under test is running (the previous subtest swapped to it).
+		// Only after the swap just above: the sessions and the token were created while the reference
+		// image ran, so accepting them here is what proves the image under test reads what the
+		// reference wrote. (The check lives in this subtest so that it cannot run against the
+		// reference image by a reordering or a -run filter.)
 		checkHandOverPeople(t, s, people)
 	})
 

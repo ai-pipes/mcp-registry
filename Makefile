@@ -78,9 +78,10 @@ compat-image-go:
 # go test inside single quotes, so it must not contain one.
 #
 # Milestone 2 (identity) added the scenarios that need people, sign-in, sessions and tokens but no
-# /mcp and no catalog. Left out because they cannot run at all yet:
-#   - TestCLICreateUser: its first steps list /api/servers (catalog, milestone 3); it runs with
-#     those steps skipped (below).
+# /mcp and no catalog. TestCLICreateUser is in the list with three skipped steps (below), and the
+# role flags and the effects of disabling a person, which those skipped steps and the /mcp
+# subtests of TestIdentityNoOIDC also hold, are judged by TestCLICreateUserRoleFlags and
+# TestIdentityDisablingAPerson, which need identity alone. Left out because they cannot run at all yet:
 #   - TestPlatformBearerNeverOpensTheWebAPI: its loop in the test body asks /api/servers and
 #     /api/catalog (milestone 3) and /mcp (milestone 6).
 #   - TestConfigNetworkAndRetention, TestConfigSecretsFromFiles: their cleanup demands that the
@@ -91,8 +92,8 @@ compat-image-go:
 COMPAT_GO_TESTS := TestConfigRefused TestPlatformStartsOnReferenceDatabase TestPlatformReverseHandOver \
 	TestPlatformWithoutPeople TestPlatformMigrationsAndKeyCheck TestPlatformStaticFilesAndSPA \
 	TestIdentityOIDC TestIdentityOIDCFailedCallbackAudit TestIdentityOIDCProviderDownAtStart \
-	TestIdentityNoOIDC TestIdentityDefaultRateLimits \
-	TestCLIVersion TestCLICreateUser TestCLICreateToken TestCLILoginLink TestCLILoginLinkWithOIDC \
+	TestIdentityNoOIDC TestIdentityDefaultRateLimits TestIdentityDisablingAPerson \
+	TestCLIVersion TestCLICreateUser TestCLICreateUserRoleFlags TestCLICreateToken TestCLILoginLink TestCLILoginLinkWithOIDC \
 	TestFirstStartAnnouncement TestFirstStartAnnouncementNeedsAnEmptyDatabaseAndNoOIDC \
 	TestConfigEmptyMeansUnset TestPlatformMethodsWithoutOIDC TestPlatformCSRF TestPlatformHealthz \
 	TestPlatformAccessLog TestPlatformBodyLimit TestPlatformSecurityHeaders
@@ -117,8 +118,10 @@ COMPAT_GO_TESTS := TestConfigRefused TestPlatformStartsOnReferenceDatabase TestP
 #     works on /mcp", "a revoked token is refused; ...", "disabling a person ends their sessions,
 #     tokens and links at once; ...", "control: with a trusted proxy a changing X-Forwarded-For is
 #     a new client each time", "the 11th failed link attempt within a minute from one address is
-#     429 with Retry-After" (its last assertion is a bad token on /mcp; the same limit is covered
-#     by TestIdentityDefaultRateLimits) and "the 31st failed token check within a minute from one
+#     429 with Retry-After" (its last assertion is a bad token on /mcp; TestIdentityDefaultRateLimits
+#     covers the 11th attempt's 429, its Retry-After: 60 and that a valid code still works, but NOT
+#     the 12th attempt's Retry-After range nor the rightmost X-Forwarded-For rule, which are judged
+#     only once this subtest runs) and "the 31st failed token check within a minute from one
 #     address is 429; a valid token still works": each uses a token on /mcp.
 #   - TestIdentityDefaultRateLimits, "the 31st failed token check is 429 whatever X-Forwarded-For
 #     says; a valid token still works": failed token checks on /mcp.
