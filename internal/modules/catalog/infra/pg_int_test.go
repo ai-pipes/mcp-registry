@@ -1126,3 +1126,35 @@ func TestAMalformedStoredRowIsAnErrorNotAPanic(t *testing.T) {
 }
 
 var _ = pgx.ErrNoRows
+
+func TestAHideCommittedDuringASnapshotSurvivesIt(t *testing.T) {
+	ctx := context.Background()
+	pool, r := setup(t)
+	create(t, r, newServer(t, "gitea"))
+	_, err := r.Tools.ApplySnapshot(ctx, "gitea", []domain.ToolSnapshot{snap("x")}, t0)
+	mustOK(t, err)
+
+	// Another transaction hides x and stays open: the snapshot reads x as visible (no lock on
+	// reads), then its upsert waits for the row.
+	hider, err := pool.Begin(ctx)
+	mustOK(t, err)
+	defer func() { _ = hider.Rollback(context.WithoutCancel(ctx)) }()
+	_, err = hider.Exec(ctx, `update catalog.tools set hidden = true where server = 'gitea' and name = 'x'`)
+	mustOK(t, err)
+
+	changed := snap("x")
+	changed.Description = "changed by the snapshot"
+	result := make(chan error, 1)
+	go func() {
+		_, err := r.Tools.ApplySnapshot(ctx, "gitea", []domain.ToolSnapshot{changed}, t1)
+		result <- err
+	}()
+	eventually(t, "the snapshot to block on the tool row", func() bool { return blockedBackends(pool) >= 1 })
+	mustOK(t, hider.Commit(ctx))
+	mustOK(t, <-result)
+
+	got := mustTool(t, r, "gitea", "x")
+	if !got.Hidden() || got.Description() != "changed by the snapshot" {
+		t.Fatalf("hidden %v, description %q: the hide was lost or the snapshot not applied", got.Hidden(), got.Description())
+	}
+}

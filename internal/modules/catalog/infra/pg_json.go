@@ -45,7 +45,8 @@ func one[T any](v T, err error) (*T, error) {
 // stores them (`Record<string, string>`). The domain keeps them as a list in document order:
 // writing emits the object with its keys in that order; reading returns them in the order of
 // the text Postgres gives back for the jsonb value, which is jsonb's own key order (shorter keys
-// first, then bytewise) and is the order TypeScript's Object.entries sees too.
+// first, then bytewise). That order carries no meaning and may differ from TypeScript's
+// Object.entries for integer-like keys (JavaScript lists array-index keys first, ascending).
 type orderedParams []domain.AuthorizeParam
 
 func (p orderedParams) MarshalJSON() ([]byte, error) {
@@ -212,16 +213,6 @@ func decodeAccess(raw []byte) (domain.Access, error) {
 	default:
 		return domain.Access{}, fmt.Errorf("stored access has unknown kind %q", j.Kind)
 	}
-}
-
-// jsonText turns bytes for a jsonb parameter (`$n::text::jsonb`) into a value pgx sends as text;
-// nil stays NULL.
-func jsonText(raw []byte) *string {
-	if raw == nil {
-		return nil
-	}
-	s := string(raw)
-	return &s
 }
 
 // storedJSON normalises a jsonb column read back as bytes: SQL NULL and a JSON null are both
