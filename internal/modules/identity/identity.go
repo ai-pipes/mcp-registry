@@ -33,6 +33,14 @@ func withPrincipal(r *http.Request, p Principal) *http.Request {
 	return r.WithContext(context.WithValue(r.Context(), principalKey{}, p))
 }
 
+// Service is identity's public surface for other modules and the composition: the guards of the
+// web API and of /mcp, and the admin check. It holds the module's dependencies privately, since
+// other modules cannot name identity's app.Deps. Build it once with New and share the instance.
+type Service struct{ d app.Deps }
+
+// New builds the service over the module's dependencies.
+func New(d app.Deps) *Service { return &Service{d: d} }
+
 func hasAuthorization(r *http.Request) bool { return len(r.Header.Values("Authorization")) > 0 }
 
 // SessionIDOf is the session cookie's value unless it is absent, empty or longer than
@@ -48,7 +56,7 @@ func SessionIDOf(r *http.Request) (string, bool) {
 // SessionPrincipal is the person behind the session cookie, for routes that answer a missing
 // session with a redirect rather than 401 (provider callbacks). A request carrying an
 // Authorization header gets no principal. err is a store failure, which is not "signed out".
-func SessionPrincipal(d app.Deps, r *http.Request) (Principal, bool, error) {
+func (s *Service) SessionPrincipal(r *http.Request) (Principal, bool, error) {
 	if hasAuthorization(r) {
 		return Principal{}, false, nil
 	}
@@ -56,7 +64,7 @@ func SessionPrincipal(d app.Deps, r *http.Request) (Principal, bool, error) {
 	if !ok {
 		return Principal{}, false, nil
 	}
-	p, err := app.AuthenticateSession(r.Context(), d, id)
+	p, err := app.AuthenticateSession(r.Context(), s.d, id)
 	if err != nil || p == nil {
 		return Principal{}, false, err
 	}
@@ -65,14 +73,14 @@ func SessionPrincipal(d app.Deps, r *http.Request) (Principal, bool, error) {
 
 // RequireSession is the guard of /api/**: the session cookie is the only credential. Any
 // Authorization header, an sk_ token in particular, is refused even next to a valid cookie.
-func RequireSession(d app.Deps) httpx.Middleware {
+func (s *Service) RequireSession() httpx.Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if hasAuthorization(r) {
 				httpx.WriteError(w, "unauthenticated", "tokens do not work on the web API")
 				return
 			}
-			p, ok, err := SessionPrincipal(d, r)
+			p, ok, err := s.SessionPrincipal(r)
 			if err != nil {
 				httpx.WriteDomainError(w, r, err)
 				return
@@ -152,7 +160,7 @@ func equalFoldASCII(a, b string) bool {
 // Bearer); a refused client address is 429 rate_limited with one Retry-After and no
 // WWW-Authenticate (decided deviation token-429-retry-after). The client address is
 // httpx.ClientIPOf.
-func RequireBearerToken(d app.Deps) httpx.Middleware {
+func (s *Service) RequireBearerToken() httpx.Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			token, ok := bearerToken(r.Header.Get("Authorization"))
@@ -161,7 +169,7 @@ func RequireBearerToken(d app.Deps) httpx.Middleware {
 				httpx.WriteError(w, "unauthenticated", "bearer token required")
 				return
 			}
-			p, err := app.AuthenticateToken(r.Context(), d, token, httpx.ClientIPOf(r))
+			p, err := app.AuthenticateToken(r.Context(), s.d, token, httpx.ClientIPOf(r))
 			if err != nil {
 				de, isDomain := domain.AsError(err)
 				switch {
@@ -183,6 +191,6 @@ func RequireBearerToken(d app.Deps) httpx.Middleware {
 
 // IsUserActiveAdmin reports whether the person is still an enabled admin, for work done on an
 // admin's behalf without a session, such as scheduled catalog sync.
-func IsUserActiveAdmin(ctx context.Context, d app.Deps, userID string) (bool, error) {
-	return app.IsUserActiveAdmin(ctx, d, userID)
+func (s *Service) IsUserActiveAdmin(ctx context.Context, userID string) (bool, error) {
+	return app.IsUserActiveAdmin(ctx, s.d, userID)
 }

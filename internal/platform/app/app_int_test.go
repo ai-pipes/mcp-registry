@@ -600,6 +600,45 @@ func TestSignalDuringStartStopsBeforeListening(t *testing.T) {
 	eventuallyNoConnections(t, url)
 }
 
+// A signal that arrives while FirstStart runs (it may take long) stops the start before the port
+// is opened, with no outbox worker or scheduler left behind.
+func TestSignalDuringFirstStartStopsBeforeListening(t *testing.T) {
+	url := pgtest.StartURL(t)
+	cfg := baseConfig(url, newKey(t))
+	cfg.Port = freePort(t)
+	logs := &logBuf{}
+	ctx, cancel := context.WithCancelCause(context.Background())
+	t.Cleanup(func() { cancel(nil) })
+	done := make(chan int, 1)
+	go func() {
+		done <- Run(ctx, Options{
+			Config: cfg, Version: "v", WebRoot: t.TempDir(), Logger: logging.New("info", logs),
+			modules: func(Runtime) []Module {
+				return []Module{{FirstStart: func(context.Context) { cancel(Signal("SIGTERM")) }}}
+			},
+		})
+	}()
+	if code := await(t, done, "Run"); code != 0 {
+		t.Fatalf("exit %d; log:\n%s", code, logs.String())
+	}
+	msgs := logs.messages(t)
+	if len(msgs) < 3 || msgs[len(msgs)-2] != "shutting down" || msgs[len(msgs)-1] != "stopped" {
+		t.Fatalf("records: %q", msgs)
+	}
+	if sd := logs.find(t, "shutting down")[0]; sd["signal"] != "SIGTERM" {
+		t.Errorf("shutting down: %v", sd)
+	}
+	if len(logs.find(t, "listening")) != 0 {
+		t.Fatal("listening after a signal during FirstStart")
+	}
+	ln, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", cfg.Port)) //nolint:gosec // G102: the server binds every interface
+	if err != nil {
+		t.Fatalf("the port was opened: %v", err)
+	}
+	_ = ln.Close()
+	eventuallyNoConnections(t, url)
+}
+
 // A header block above 16 KiB is refused (Node's limit), not read up to Go's 1 MiB default.
 func TestOversizedHeadersAreRefused(t *testing.T) {
 	in := startInstance(t, baseConfig(pgtest.StartURL(t), newKey(t)), nil)

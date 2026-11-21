@@ -173,19 +173,19 @@ func TestSessionPrincipal(t *testing.T) {
 		{"Authorization present even with a valid cookie", request(sess("sess1"), auth("Bearer sk_good")), ""},
 	}
 	for _, c := range cases {
-		p, ok, err := identity.SessionPrincipal(s.deps, c.req)
+		p, ok, err := identity.New(s.deps).SessionPrincipal(c.req)
 		if err != nil || ok != (c.want != "") || p.UserID != c.want {
 			t.Errorf("%s: %+v %v %v", c.name, p, ok, err)
 		}
 	}
-	if p, _, _ := identity.SessionPrincipal(s.deps, request(sess("sess1"))); p.Via != domain.ViaSession {
+	if p, _, _ := identity.New(s.deps).SessionPrincipal(request(sess("sess1"))); p.Via != domain.ViaSession {
 		t.Errorf("via = %q", p.Via)
 	}
 }
 
 func TestRequireSessionAndAdmin(t *testing.T) {
 	s := newSetup()
-	h := httpx.Chain(http.HandlerFunc(echo), identity.RequireSession(s.deps), identity.RequireAdmin())
+	h := httpx.Chain(http.HandlerFunc(echo), identity.New(s.deps).RequireSession(), identity.RequireAdmin())
 	if r := serve(h, request(sess("sess1"))); r.StatusCode != 200 || body(r) != "u1/session/" {
 		t.Errorf("admin: %d", r.StatusCode)
 	}
@@ -208,7 +208,7 @@ func TestRequireSessionAndAdmin(t *testing.T) {
 
 func TestRequireBearerToken(t *testing.T) {
 	s := newSetup()
-	h := httpx.Chain(http.HandlerFunc(echo), httpx.RequestID(quiet), httpx.ClientIP(false, 1), identity.RequireBearerToken(s.deps))
+	h := httpx.Chain(http.HandlerFunc(echo), httpx.RequestID(quiet), httpx.ClientIP(false, 1), identity.New(s.deps).RequireBearerToken())
 	ok := func(v string) {
 		t.Helper()
 		if r := serve(h, request(auth(v))); r.StatusCode != 200 || body(r) != "u1/token/t1" {
@@ -262,7 +262,7 @@ func TestRequireBearerToken(t *testing.T) {
 func TestIsUserActiveAdmin(t *testing.T) {
 	s := newSetup()
 	for id, want := range map[string]bool{"u1": true, "u2": false, "gone": false} {
-		if got, err := identity.IsUserActiveAdmin(context.Background(), s.deps, id); err != nil || got != want {
+		if got, err := identity.New(s.deps).IsUserActiveAdmin(context.Background(), id); err != nil || got != want {
 			t.Errorf("%s: %v %v", id, got, err)
 		}
 	}
@@ -291,18 +291,18 @@ const internalBody = `{"error":{"code":"internal","message":"Internal error"}}`
 func TestStoreFailuresAreNotAuthenticationFailures(t *testing.T) {
 	s := newSetup()
 	s.deps.Sessions = &failingSessions{}
-	h := httpx.Chain(http.HandlerFunc(echo), httpx.RequestID(quiet), identity.RequireSession(s.deps))
+	h := httpx.Chain(http.HandlerFunc(echo), httpx.RequestID(quiet), identity.New(s.deps).RequireSession())
 	r := serve(h, request(sess("sess1")))
 	if r.StatusCode != 500 || body(r) != internalBody || r.Header.Get("WWW-Authenticate") != "" {
 		t.Errorf("RequireSession: %d", r.StatusCode)
 	}
-	if _, ok, err := identity.SessionPrincipal(s.deps, request(sess("sess1"))); ok || err == nil {
+	if _, ok, err := identity.New(s.deps).SessionPrincipal(request(sess("sess1"))); ok || err == nil {
 		t.Errorf("SessionPrincipal: ok=%v err=%v", ok, err)
 	}
 
 	s = newSetup()
 	s.deps.Tokens = failingTokens{}
-	h = httpx.Chain(http.HandlerFunc(echo), httpx.RequestID(quiet), httpx.ClientIP(false, 1), identity.RequireBearerToken(s.deps))
+	h = httpx.Chain(http.HandlerFunc(echo), httpx.RequestID(quiet), httpx.ClientIP(false, 1), identity.New(s.deps).RequireBearerToken())
 	r = serve(h, request(auth("Bearer sk_good")))
 	if r.StatusCode != 500 || body(r) != internalBody || r.Header.Get("WWW-Authenticate") != "" {
 		t.Errorf("RequireBearerToken: %d %q", r.StatusCode, r.Header.Get("WWW-Authenticate"))
@@ -322,13 +322,13 @@ func TestSessionIDLengthLimit(t *testing.T) {
 			IDHash: "h:" + id, UserID: "u1", CreatedAt: now, LastSeenAt: now, ExpiresAt: now.Add(time.Hour),
 		}
 	}
-	if _, ok, _ := identity.SessionPrincipal(s.deps, request(sess(long))); ok || fs.finds != 0 {
+	if _, ok, _ := identity.New(s.deps).SessionPrincipal(request(sess(long))); ok || fs.finds != 0 {
 		t.Errorf("65 characters: ok=%v, store asked %d times", ok, fs.finds)
 	}
 	if _, ok := identity.SessionIDOf(request(sess(long))); ok {
 		t.Error("SessionIDOf accepted 65 characters")
 	}
-	if p, ok, _ := identity.SessionPrincipal(s.deps, request(sess(ok64))); !ok || p.UserID != "u1" {
+	if p, ok, _ := identity.New(s.deps).SessionPrincipal(request(sess(ok64))); !ok || p.UserID != "u1" {
 		t.Error("64 characters refused")
 	}
 }

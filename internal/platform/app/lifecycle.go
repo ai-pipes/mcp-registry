@@ -93,6 +93,10 @@ func Run(ctx context.Context, o Options) int {
 	}
 	// After the key check, before the first request: a module's one-time provisioning.
 	runFirstStart(ctx, logger, asm.firstStart)
+	if ctx.Err() != nil {
+		// A signal arrived while FirstStart ran: do not start the worker or open the port.
+		return stopBeforeServing(ctx, logger, pool)
+	}
 	stopWorker := startOutbox(logger, pool, asm.handlers)
 	stopScheduler := scheduler.Start(logger, asm.jobs)
 

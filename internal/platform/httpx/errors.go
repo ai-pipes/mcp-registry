@@ -74,7 +74,10 @@ func WriteDomainError(w http.ResponseWriter, r *http.Request, err error) {
 	logger, id := slog.Default(), ""
 	if r != nil {
 		if s := stateOf(r); s != nil {
-			logger, id = s.logger, s.id
+			if s.logger != nil {
+				logger = s.logger
+			}
+			id = s.id
 		}
 	}
 	logger.Error("unhandled error", "reqId", id, logging.ErrAttr(err))

@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/ai-pipes/mcp-registry/internal/modules/identity"
 	idapp "github.com/ai-pipes/mcp-registry/internal/modules/identity/app"
 	"github.com/ai-pipes/mcp-registry/internal/modules/identity/domain"
 	idhttp "github.com/ai-pipes/mcp-registry/internal/modules/identity/http"
@@ -29,8 +30,9 @@ const sessionRetentionEvery = 24 * time.Hour
 
 // identityWiring is the identity module built from the runtime. Building it makes no request.
 type identityWiring struct {
-	rt   Runtime
-	deps idapp.Deps
+	rt      Runtime
+	deps    idapp.Deps
+	service *identity.Service // built once; identity's routes and the platform's routes share it
 }
 
 // unconfiguredOIDC is the provider of a server without OIDC_*: both methods fail with a plain
@@ -69,7 +71,15 @@ func newIdentityWiring(rt Runtime) identityWiring {
 	if cfg.OIDC != nil {
 		provider = idinfra.NewOIDCProvider(oidcConfigFor(cfg, rt.Logger))
 	}
-	return identityWiring{rt: rt, deps: idapp.Deps{
+	return identityWiringOver(rt, pg, provider)
+}
+
+// identityWiringOver builds the module over the given adapters and provider: the one place that
+// decides which limiter serves which use case, and the one place the *identity.Service is built.
+// Tests hand it in-memory adapters (with the real limiters of idinfra.NewPg).
+func identityWiringOver(rt Runtime, pg idinfra.Adapters, provider idapp.OIDCProvider) identityWiring {
+	cfg := rt.Config
+	deps := idapp.Deps{
 		Users: pg.Users, Tokens: pg.Tokens, Sessions: pg.Sessions, PendingLogins: pg.PendingLogins,
 		LoginLinks: pg.LoginLinks, OIDC: provider,
 		Policy:       domain.GroupPolicy{LoginGroup: cfg.OIDCLoginGroup, AdminGroup: cfg.OIDCAdminGroup},
@@ -77,13 +87,14 @@ func newIdentityWiring(rt Runtime) identityWiring {
 		Random:       pg.Random,
 		TokenLimiter: pg.TokenLimiter, LinkLimiter: pg.LinkLimiter, CallbackLimiter: pg.CallbackLimiter,
 		Audit: rt.Audit, Clock: rt.Clock,
-	}}
+	}
+	return identityWiring{rt: rt, deps: deps, service: identity.New(deps)}
 }
 
 // module is what identity adds to the server: its routes with the session guards injected, the
 // pruning job and the first-start admin.
 func (w identityWiring) module() Module {
-	routes, prefixes := idhttp.Routes(w.deps, idhttp.Options{
+	routes, prefixes := idhttp.Routes(w.service, w.deps, idhttp.Options{
 		CookieSecure:   w.rt.Config.CookieSecure,
 		OIDCConfigured: w.rt.Config.OIDC != nil,
 		Logger:         w.rt.Logger,

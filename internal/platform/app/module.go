@@ -120,7 +120,7 @@ func modules(rt Runtime) []Module {
 // token and user routes, the guards are prefix middleware: every path and method under the prefix
 // is answered by the guard first.
 func platformModule(rt Runtime, id identityWiring) Module {
-	session := identity.RequireSession(id.deps)
+	session := id.service.RequireSession()
 	return Module{
 		Routes: []httpx.Route{
 			{Method: http.MethodGet, Path: "/api/version", Handler: versionHandler(rt.Version)},

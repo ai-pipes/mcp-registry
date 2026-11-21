@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ai-pipes/mcp-registry/internal/modules/identity"
 	"github.com/ai-pipes/mcp-registry/internal/modules/identity/app"
 	"github.com/ai-pipes/mcp-registry/internal/modules/identity/domain"
 	idhttp "github.com/ai-pipes/mcp-registry/internal/modules/identity/http"
@@ -39,6 +40,8 @@ type reqOpt func(*http.Request)
 func withCookie(c *http.Cookie) reqOpt { return func(r *http.Request) { r.AddCookie(c) } }
 func withHeader(k, v string) reqOpt    { return func(r *http.Request) { r.Header.Set(k, v) } }
 
+func fromAddr(addr string) reqOpt { return func(r *http.Request) { r.RemoteAddr = addr } }
+
 func newEnv(t *testing.T, oidc, secure bool) *env {
 	t.Helper()
 	e := &env{t: t, f: newFixture(), logs: &bytes.Buffer{}}
@@ -50,7 +53,7 @@ func newEnv(t *testing.T, oidc, secure bool) *env {
 func (e *env) rebuild(oidc, secure bool) {
 	logger := slog.New(slog.NewJSONHandler(e.logs, nil))
 	d := e.f.Deps
-	routes, prefixes := idhttp.Routes(d, idhttp.Options{CookieSecure: secure, OIDCConfigured: oidc, Logger: logger})
+	routes, prefixes := idhttp.Routes(identity.New(d), d, idhttp.Options{CookieSecure: secure, OIDCConfigured: oidc, Logger: logger})
 	router := httpx.NewRouter(routes, prefixes, httpx.NotFound())
 	e.h = httpx.Chain(router, httpx.RequestID(logger), httpx.ClientIP(false, 1))
 }
@@ -404,6 +407,32 @@ func TestLinkRefusals(t *testing.T) {
 		code := e.newLinkCode("ann")
 		if r := e.do("POST", "/api/auth/link", `{"code":"`+code+`"}`, withHeader("Authorization", "Bearer sk_x")); r.StatusCode != 204 {
 			t.Errorf("%d", r.StatusCode)
+		}
+	})
+}
+
+// Link sign-in and the OIDC callback key their limiters by the client address that
+// httpx.ClientIP resolved (here the socket peer, without its port), one entry per address.
+func TestLimitersAreKeyedByTheClientAddress(t *testing.T) {
+	peers := []string{"203.0.113.7:51000", "198.51.100.9:52000"}
+	want := []string{"203.0.113.7", "198.51.100.9"}
+	t.Run("link", func(t *testing.T) {
+		e := newEnv(t, false, true)
+		for _, p := range peers {
+			e.do("POST", "/api/auth/link", `{"code":"ll_bogus"}`, fromAddr(p))
+		}
+		if !slices.Equal(e.f.LinkLimiter.Hits, want) {
+			t.Errorf("link limiter keys = %q, want %q", e.f.LinkLimiter.Hits, want)
+		}
+	})
+	t.Run("callback", func(t *testing.T) {
+		e := newEnv(t, true, true)
+		for _, p := range peers {
+			state, bind := e.startLogin("/")
+			e.do("GET", "/api/auth/callback?code=bad&state="+state, "", withCookie(bind), fromAddr(p))
+		}
+		if !slices.Equal(e.f.CallbackLimit.Hits, want) {
+			t.Errorf("callback limiter keys = %q, want %q", e.f.CallbackLimit.Hits, want)
 		}
 	})
 }

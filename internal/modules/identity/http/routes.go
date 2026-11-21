@@ -38,7 +38,7 @@ type handlers struct {
 // path under /api/tokens (session) and /api/users (session, then admin), so an unknown path there
 // is answered by the guard, not by a 404. /api/auth has no prefix guard. The guards are the identity
 // root package's (this layer may import its own root).
-func Routes(d app.Deps, o Options) ([]httpx.Route, []httpx.Prefix) {
+func Routes(svc *identity.Service, d app.Deps, o Options) ([]httpx.Route, []httpx.Prefix) {
 	if o.Logger == nil {
 		o.Logger = slog.Default()
 	}
@@ -50,14 +50,14 @@ func Routes(d app.Deps, o Options) ([]httpx.Route, []httpx.Prefix) {
 		{Method: "GET", Path: "/api/auth/login", Handler: fn(h.login)},
 		{Method: "GET", Path: "/api/auth/callback", Handler: fn(h.callback)},
 		{Method: "POST", Path: "/api/auth/logout", Handler: fn(h.logout)},
-		{Method: "GET", Path: "/api/auth/me", Handler: httpx.Chain(fn(h.me), identity.RequireSession(d))},
+		{Method: "GET", Path: "/api/auth/me", Handler: httpx.Chain(fn(h.me), svc.RequireSession())},
 		{Method: "GET", Path: "/api/tokens", Handler: fn(h.listTokens)},
 		{Method: "POST", Path: "/api/tokens", Handler: fn(h.createToken)},
 		{Method: "DELETE", Path: "/api/tokens/{id}", Handler: fn(h.revokeToken)},
 		{Method: "GET", Path: "/api/users", Handler: fn(h.listUsers)},
 		{Method: "POST", Path: "/api/users/{id}/disabled", Handler: fn(h.setDisabled)},
 	}
-	session := identity.RequireSession(d)
+	session := svc.RequireSession()
 	prefixes := []httpx.Prefix{
 		{Path: "/api/tokens", Middleware: []httpx.Middleware{session}},
 		{Path: "/api/users", Middleware: []httpx.Middleware{session, identity.RequireAdmin()}},
