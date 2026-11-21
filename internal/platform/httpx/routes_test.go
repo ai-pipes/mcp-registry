@@ -171,7 +171,10 @@ func TestRouterPrefixesRunOutermostFirstInRegistrationOrder(t *testing.T) {
 func TestRouterRejectsInvalidRegistrations(t *testing.T) {
 	ok := say("x")
 	for name, routes := range map[string][]httpx.Route{
-		"two parameters":      {{Method: "GET", Path: "/a/{x}/{y}", Handler: ok}},
+		"same name twice":     {{Method: "GET", Path: "/a/{x}/b/{x}", Handler: ok}},
+		"empty name":          {{Method: "GET", Path: "/a/{}", Handler: ok}},
+		"nested braces":       {{Method: "GET", Path: "/a/{x{y}}", Handler: ok}},
+		"names differ in two": {{Method: "GET", Path: "/a/{x}/b/{y}", Handler: ok}, {Method: "GET", Path: "/a/{p}/b/{q}", Handler: ok}},
 		"partial segment":     {{Method: "GET", Path: "/a/x{id}", Handler: ok}},
 		"relative":            {{Method: "GET", Path: "a", Handler: ok}},
 		"trailing slash":      {{Method: "GET", Path: "/a/", Handler: ok}},
@@ -264,5 +267,131 @@ func TestRouterRefusesAnEmptyOrRootPrefix(t *testing.T) {
 			}()
 			httpx.NewRouter(nil, []httpx.Prefix{{Path: p}}, httpx.NotFound())
 		}()
+	}
+}
+
+func multiParamRouter() http.Handler {
+	return httpx.NewRouter([]httpx.Route{
+		{Method: "GET", Path: "/api/servers/{slug}", Handler: sayParams("slug")},
+		{Method: "GET", Path: "/api/servers/{slug}/tools", Handler: sayParams("slug")},
+		{Method: "PUT", Path: "/api/servers/{slug}/tools/{name}/hidden", Handler: sayParams("slug", "name")},
+		{Method: "GET", Path: "/api/servers/{slug}/{other}", Handler: sayParams("slug", "other")},
+		{Method: "GET", Path: "/api/x/{id}", Handler: sayParams("id")},
+		{Method: "GET", Path: "/api/x/new", Handler: say("new")},
+		{Method: "GET", Path: "/api/y/{a}/{b}", Handler: sayParams("a", "b")},
+		{Method: "GET", Path: "/api/y/{a}/fixed", Handler: say("fixed")},
+		{Method: "GET", Path: "/api/y/lit/{b}", Handler: say("lit")},
+	}, nil, httpx.NotFound())
+}
+
+// sayParams writes every named parameter, "name=value" joined by ";", into the body.
+func sayParams(names ...string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var parts []string
+		for _, n := range names {
+			parts = append(parts, n+"="+httpx.PathParam(r, n))
+		}
+		w.Header().Set("X-Params", strings.Join(parts, ";"))
+	})
+}
+
+// out is what a handler said: the X-Params header of sayParams, else the body of say.
+func out(w *httptest.ResponseRecorder) string {
+	if p := w.Header().Get("X-Params"); p != "" {
+		return p
+	}
+	return w.Body.String()
+}
+
+func TestRouterSeveralParameters(t *testing.T) {
+	h := multiParamRouter()
+	for _, tc := range []struct {
+		method, path string
+		code         int
+		want         string
+	}{
+		{"PUT", "/api/servers/gitea/tools/search.issues/hidden", 200, "slug=gitea;name=search.issues"},
+		{"PUT", "/api/servers/a%2Fb/tools/c%20d/hidden", 200, "slug=a/b;name=c d"}, // %2F stays in the segment, decoded once
+		{"PUT", "/api/servers/a/tools/%252F/hidden", 200, "slug=a;name=%2F"},
+		{"PUT", "/api/servers/a/tools/%c3%a9/hidden", 200, "slug=a;name=\u00e9"},
+		{"PUT", "/api/servers/a/tools/%2e%2e/hidden", 404, ""}, // ".." once decoded
+		{"PUT", "/api/servers/%2E/tools/n/hidden", 404, ""},
+		{"PUT", "/api/servers/a/tools/%ff/hidden", 404, ""}, // not UTF-8
+		{"PUT", "/api/servers/a/tools//hidden", 404, ""},    // empty segment, not clean
+		{"PUT", "/api/servers/a/tools/n", 404, ""},          // too short
+		{"PUT", "/api/servers/a/tools/n/hidden/x", 404, ""}, // too long
+		{"GET", "/api/servers/a/tools/n/hidden", 404, ""},   // another method
+		{"HEAD", "/api/servers/a/tools", 200, "slug=a"},     // HEAD from GET
+		{"GET", "/api/y/p/q", 200, "a=p;b=q"},
+	} {
+		w := serveRaw(h, tc.method, tc.path)
+		want := strings.ReplaceAll(tc.want, "\\u00e9", "\u00e9")
+		if w.Code != tc.code || (tc.code == 200 && out(w) != want) {
+			t.Errorf("%s %s: %d %q, want %d %q", tc.method, tc.path, w.Code, out(w), tc.code, want)
+		}
+	}
+}
+
+// The most specific pattern wins: at the first position where two patterns differ, a literal
+// beats a parameter, whatever the registration order.
+func TestRouterMostSpecificPatternWins(t *testing.T) {
+	h := multiParamRouter()
+	for _, tc := range []struct{ path, want string }{
+		{"/api/servers/s/tools", "slug=s"},             // not {other}
+		{"/api/servers/s/other", "slug=s;other=other"}, // only the parameter pattern fits
+		{"/api/x/new", "new"},                          // registered after {id}, still wins
+		{"/api/x/newer", "id=newer"},
+		{"/api/y/lit/z", "lit"},     // literal at position 2 beats a parameter there
+		{"/api/y/p/fixed", "fixed"}, // first difference is the last segment
+		{"/api/y/lit/fixed", "lit"}, // the earlier position decides
+	} {
+		w := serveRaw(h, "GET", tc.path)
+		if w.Code != 200 || out(w) != tc.want {
+			t.Errorf("GET %s: %d %q, want %q", tc.path, w.Code, out(w), tc.want)
+		}
+	}
+	// Registration order does not matter.
+	rev := httpx.NewRouter([]httpx.Route{
+		{Method: "GET", Path: "/api/x/new", Handler: say("new")},
+		{Method: "GET", Path: "/api/x/{id}", Handler: sayParams("id")},
+	}, nil, httpx.NotFound())
+	if w := serveRaw(rev, "GET", "/api/x/new"); out(w) != "new" {
+		t.Errorf("reversed order: %q", out(w))
+	}
+}
+
+// A more specific pattern that has no handler for the method does not hide a less specific one.
+func TestRouterFallsBackToALessSpecificPatternForTheMethod(t *testing.T) {
+	h := httpx.NewRouter([]httpx.Route{
+		{Method: "POST", Path: "/api/x/new", Handler: say("create")},
+		{Method: "GET", Path: "/api/x/{id}", Handler: sayParams("id")},
+	}, nil, httpx.NotFound())
+	if w := serveRaw(h, "GET", "/api/x/new"); out(w) != "id=new" {
+		t.Errorf("GET /api/x/new: %q", out(w))
+	}
+	if w := serveRaw(h, "POST", "/api/x/new"); out(w) != "create" {
+		t.Errorf("POST /api/x/new: %q", out(w))
+	}
+}
+
+func TestRouterPrefixAndUnguardedWithSeveralParameters(t *testing.T) {
+	h := httpx.NewRouter([]httpx.Route{
+		{Method: "PUT", Path: "/api/servers/{slug}/tools/{name}/hidden", Handler: sayParams("slug", "name")},
+		{Method: "GET", Path: "/api/servers/{slug}/public/{id}", Handler: sayParams("slug", "id"), Unguarded: true},
+	}, []httpx.Prefix{
+		{Path: "/api/servers", Middleware: []httpx.Middleware{tag("guard"), refuse(403)}},
+	}, httpx.NotFound())
+	if w := serveRaw(h, "PUT", "/api/servers/a/tools/b/hidden"); w.Code != 403 || w.Header().Get("X-Trace") != "guard" {
+		t.Errorf("guarded: %d trace %q", w.Code, w.Header().Get("X-Trace"))
+	}
+	if w := serveRaw(h, "GET", "/api/servers/a/tools/b/hidden"); w.Code != 403 { // another method: the guard answers
+		t.Errorf("other method: %d", w.Code)
+	}
+	w := serveRaw(h, "GET", "/api/servers/a/public/b")
+	if w.Code != 200 || out(w) != "slug=a;id=b" || w.Header().Get("X-Trace") != "" {
+		t.Errorf("unguarded: %d %q trace %q", w.Code, w.Body, w.Header().Get("X-Trace"))
+	}
+	if w := serveRaw(h, "POST", "/api/servers/a/public/b"); w.Code != 403 {
+		t.Errorf("unguarded route, other method: %d", w.Code)
 	}
 }
