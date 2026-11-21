@@ -15,7 +15,9 @@
 #   no-inward-infra         domain and app never import infra, http or platform
 #   deps-only-in-infra      pgx, go-oidc, x/oauth2 and ONNX only in infra (and platform); the MCP
 #                           SDK also in http
-#   modules-via-index       another module is imported only by its root package
+#   modules-via-index       another module is imported only by its root package; a module's http
+#                           layer may also import its OWN root (the session guards, the principal),
+#                           which does not make a cycle: a root never imports its http or infra
 #   migrations-only-platform  apps/server/migrations (the embedded SQL files) is imported only by
 #                           the composition (platform) and the test-support package pgtest
 #   platform-leaves         the leaves platform-{httpx,outbox,logging,db} (internal/platform/...) are
@@ -229,6 +231,7 @@ deps:
       - identity-http
       - identity-domain
       - identity-app
+      - identity-root
       - catalog-root
       - connections-root
       - search-root
@@ -278,6 +281,7 @@ deps:
       - catalog-http
       - catalog-domain
       - catalog-app
+      - catalog-root
       - identity-root
       - connections-root
       - search-root
@@ -327,6 +331,7 @@ deps:
       - connections-http
       - connections-domain
       - connections-app
+      - connections-root
       - identity-root
       - catalog-root
       - search-root
@@ -376,6 +381,7 @@ deps:
       - search-http
       - search-domain
       - search-app
+      - search-root
       - identity-root
       - catalog-root
       - connections-root
@@ -425,6 +431,7 @@ deps:
       - gateway-http
       - gateway-domain
       - gateway-app
+      - gateway-root
       - identity-root
       - catalog-root
       - connections-root

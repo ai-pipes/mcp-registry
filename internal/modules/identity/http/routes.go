@@ -1,6 +1,6 @@
 // Package http holds the REST routes of the identity module: sign-in (OIDC and one-time links),
-// sessions, API tokens and people. The session guards live in the identity root package, which
-// this layer may not import; the composition passes them in through Options.
+// sessions, API tokens and people. The session guards and the principal are the identity root
+// package's.
 package http
 
 import (
@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/ai-pipes/mcp-registry/internal/modules/identity"
 	"github.com/ai-pipes/mcp-registry/internal/modules/identity/app"
 	"github.com/ai-pipes/mcp-registry/internal/modules/identity/domain"
 	"github.com/ai-pipes/mcp-registry/internal/platform/httpx"
@@ -25,11 +26,6 @@ type Options struct {
 	OIDCConfigured bool
 	// Logger receives the unexpected error of the login callback; nil is slog's default.
 	Logger *slog.Logger
-	// RequireSession and RequireAdmin are identity.RequireSession(deps) and identity.RequireAdmin().
-	RequireSession httpx.Middleware
-	RequireAdmin   httpx.Middleware
-	// PrincipalOf is identity.PrincipalOf: the principal the session guard stored.
-	PrincipalOf func(*http.Request) (domain.Principal, bool)
 }
 
 type handlers struct {
@@ -39,11 +35,9 @@ type handlers struct {
 
 // Routes is everything identity serves under /api: auth, tokens, users. The prefixes guard every
 // path under /api/tokens (session) and /api/users (session, then admin), so an unknown path there
-// is answered by the guard, not by a 404. /api/auth has no prefix guard.
+// is answered by the guard, not by a 404. /api/auth has no prefix guard. The guards are the identity
+// root package's (this layer may import its own root).
 func Routes(d app.Deps, o Options) ([]httpx.Route, []httpx.Prefix) {
-	if o.RequireSession == nil || o.RequireAdmin == nil || o.PrincipalOf == nil {
-		panic("identity/http: Options.RequireSession, RequireAdmin and PrincipalOf are required")
-	}
 	if o.Logger == nil {
 		o.Logger = slog.Default()
 	}
@@ -55,22 +49,23 @@ func Routes(d app.Deps, o Options) ([]httpx.Route, []httpx.Prefix) {
 		{Method: "GET", Path: "/api/auth/login", Handler: fn(h.login)},
 		{Method: "GET", Path: "/api/auth/callback", Handler: fn(h.callback)},
 		{Method: "POST", Path: "/api/auth/logout", Handler: fn(h.logout)},
-		{Method: "GET", Path: "/api/auth/me", Handler: httpx.Chain(fn(h.me), o.RequireSession)},
+		{Method: "GET", Path: "/api/auth/me", Handler: httpx.Chain(fn(h.me), identity.RequireSession(d))},
 		{Method: "GET", Path: "/api/tokens", Handler: fn(h.listTokens)},
 		{Method: "POST", Path: "/api/tokens", Handler: fn(h.createToken)},
 		{Method: "DELETE", Path: "/api/tokens/{id}", Handler: fn(h.revokeToken)},
 		{Method: "GET", Path: "/api/users", Handler: fn(h.listUsers)},
 		{Method: "POST", Path: "/api/users/{id}/disabled", Handler: fn(h.setDisabled)},
 	}
+	session := identity.RequireSession(d)
 	prefixes := []httpx.Prefix{
-		{Path: "/api/tokens", Middleware: []httpx.Middleware{o.RequireSession}},
-		{Path: "/api/users", Middleware: []httpx.Middleware{o.RequireSession, o.RequireAdmin}},
+		{Path: "/api/tokens", Middleware: []httpx.Middleware{session}},
+		{Path: "/api/users", Middleware: []httpx.Middleware{session, identity.RequireAdmin()}},
 	}
 	return routes, prefixes
 }
 
 func (h *handlers) principal(w http.ResponseWriter, r *http.Request) (domain.Principal, bool) {
-	p, ok := h.o.PrincipalOf(r)
+	p, ok := identity.PrincipalOf(r)
 	if !ok {
 		httpx.WriteError(w, "unauthenticated", "sign in required")
 	}

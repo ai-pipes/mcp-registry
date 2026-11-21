@@ -15,8 +15,7 @@ import (
 type Principal = domain.Principal
 
 const (
-	// SessionCookieName is the web session cookie. identity/http repeats it for setting and
-	// clearing (the layer rules keep http from importing this package); a test pins that they agree.
+	// SessionCookieName is the web session cookie; identity/http sets and clears it under this name.
 	SessionCookieName = "mcp_session"
 	// MaxSessionIDLength is the longest session cookie value looked up; a longer one counts as absent.
 	MaxSessionIDLength = 64
@@ -36,7 +35,9 @@ func withPrincipal(r *http.Request, p Principal) *http.Request {
 
 func hasAuthorization(r *http.Request) bool { return len(r.Header.Values("Authorization")) > 0 }
 
-func sessionIDOf(r *http.Request) (string, bool) {
+// SessionIDOf is the session cookie's value unless it is absent, empty or longer than
+// MaxSessionIDLength (such a value is treated as absent and never looked up).
+func SessionIDOf(r *http.Request) (string, bool) {
 	c, err := r.Cookie(SessionCookieName)
 	if err != nil || c.Value == "" || len(c.Value) > MaxSessionIDLength {
 		return "", false
@@ -51,7 +52,7 @@ func SessionPrincipal(d app.Deps, r *http.Request) (Principal, bool, error) {
 	if hasAuthorization(r) {
 		return Principal{}, false, nil
 	}
-	id, ok := sessionIDOf(r)
+	id, ok := SessionIDOf(r)
 	if !ok {
 		return Principal{}, false, nil
 	}

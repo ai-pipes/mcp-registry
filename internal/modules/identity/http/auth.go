@@ -5,6 +5,7 @@ import (
 	"net/url"
 
 	"github.com/ai-pipes/mcp-registry/internal/kernel"
+	"github.com/ai-pipes/mcp-registry/internal/modules/identity"
 	"github.com/ai-pipes/mcp-registry/internal/modules/identity/app"
 	"github.com/ai-pipes/mcp-registry/internal/modules/identity/domain"
 	"github.com/ai-pipes/mcp-registry/internal/platform/httpx"
@@ -69,7 +70,7 @@ func (h *handlers) link(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// The person signed in with a link: the session this browser held is ended, not left alive.
-	if replaced, ok := sessionIDOf(r); ok {
+	if replaced, ok := identity.SessionIDOf(r); ok {
 		if err := app.Logout(r.Context(), h.d, replaced); err != nil {
 			httpx.WriteDomainError(w, r, err)
 			return
@@ -142,7 +143,7 @@ func (h *handlers) callback(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) logout(w http.ResponseWriter, r *http.Request) {
-	if id, ok := sessionIDOf(r); ok {
+	if id, ok := identity.SessionIDOf(r); ok {
 		if err := app.Logout(r.Context(), h.d, id); err != nil {
 			httpx.WriteDomainError(w, r, err)
 			return

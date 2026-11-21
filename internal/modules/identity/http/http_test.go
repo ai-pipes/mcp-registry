@@ -49,10 +49,7 @@ func newEnv(t *testing.T, oidc, secure bool) *env {
 func (e *env) rebuild(oidc, secure bool) {
 	logger := slog.New(slog.NewJSONHandler(e.logs, nil))
 	d := e.f.Deps
-	routes, prefixes := idhttp.Routes(d, idhttp.Options{
-		CookieSecure: secure, OIDCConfigured: oidc, Logger: logger,
-		RequireSession: requireSession(d), RequireAdmin: requireAdmin, PrincipalOf: principalOf,
-	})
+	routes, prefixes := idhttp.Routes(d, idhttp.Options{CookieSecure: secure, OIDCConfigured: oidc, Logger: logger})
 	router := httpx.NewRouter(routes, prefixes, httpx.NotFound())
 	e.h = httpx.Chain(router, httpx.RequestID(logger), httpx.ClientIP(false, 1))
 }
