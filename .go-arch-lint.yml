@@ -47,7 +47,9 @@ vendors:
   go-oidc:
     in: github.com/coreos/go-oidc/**
   x-oauth2:
-    in: golang.org/x/oauth2/**
+    in:
+      - golang.org/x/oauth2
+      - golang.org/x/oauth2/**
   onnx:
     in: github.com/yalue/onnxruntime_go
   mcp-sdk:
