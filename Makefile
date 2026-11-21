@@ -46,13 +46,13 @@ go-verify: go-lint go-arch-lint
 	go test ./...
 	$(MAKE) go-test-int
 
-# Only internal/platform has integration tests. -p 1: testcontainers derives its session from the
+# Integration tests live in internal/platform and internal/modules. -p 1: testcontainers derives its session from the
 # parent test process, so parallel test binaries race to create the shared reaper and some fail.
 # The reaper removes a session's containers 10 s after its last client left; compiling the next
 # package's test binary on a cold cache can take longer, and that binary then meets containers
 # being removed. A minute covers it.
 go-test-int:
-	TESTCONTAINERS_RYUK_RECONNECTION_TIMEOUT=60s go test -tags integration -count=1 -p 1 ./internal/platform/...
+	TESTCONTAINERS_RYUK_RECONNECTION_TIMEOUT=60s go test -tags integration -count=1 -p 1 ./internal/platform/... ./internal/modules/...
 
 # Regenerates compat/schemas from the zod contracts; CI fails when the committed files are stale.
 compat-schemas:
