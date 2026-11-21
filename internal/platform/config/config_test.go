@@ -188,6 +188,14 @@ func TestLoadRefused(t *testing.T) {
 	key := b64(t, 32)
 	short := b64(t, 16)
 	long := b64(t, 33)
+	other := b64(t, 32)
+	// 32 zero bytes are 43 'A's and "="; a last character other than 'A' sets padding bits.
+	trailingBits := strings.Repeat("A", 42) + "B="
+	for _, s := range []string{trailingBits, key[:20] + "\n" + key[20:]} {
+		if b, err := base64.StdEncoding.DecodeString(s); err != nil || len(b) != 32 {
+			t.Fatalf("test bug: Go's decoder must accept %q (%d bytes, %v)", s, len(b), err)
+		}
+	}
 	idp := "https://id.example.com"
 	set := func(pairs ...string) func(env) env { return func(e env) env { return e.with(pairs...) } }
 	noKey := func(pairs ...string) func(env) env {
@@ -222,6 +230,12 @@ func TestLoadRefused(t *testing.T) {
 		{name: "SECRETS_KEY is 16 bytes", env: set("SECRETS_KEY", short), vars: []string{"SECRETS_KEY"}, values: []string{short}},
 		{name: "SECRETS_KEY is 33 bytes", env: set("SECRETS_KEY", long), vars: []string{"SECRETS_KEY"}, values: []string{long}},
 		{name: "SECRETS_KEY is not canonical base64", env: set("SECRETS_KEY", strings.TrimRight(key, "=")), vars: []string{"SECRETS_KEY"}},
+		// Go's decoder accepts both of these and yields 32 bytes; only the re-encoding check refuses them.
+		{name: "SECRETS_KEY with non-zero trailing bits", env: set("SECRETS_KEY", trailingBits), vars: []string{"SECRETS_KEY"}, values: []string{trailingBits}},
+		{name: "SECRETS_KEY with an embedded newline", env: set("SECRETS_KEY", key[:20]+"\n"+key[20:]), vars: []string{"SECRETS_KEY"}, values: []string{key[:20]}},
+		{name: "SECRETS_KEY with an embedded carriage return", env: set("SECRETS_KEY", key[:20]+"\r\n"+key[20:]), vars: []string{"SECRETS_KEY"}, values: []string{key[:20]}},
+		{name: "SECRETS_KEY_OLD with non-zero trailing bits", env: set("SECRETS_KEY_OLD", trailingBits), vars: []string{"SECRETS_KEY_OLD"}, values: []string{trailingBits}},
+		{name: "SECRETS_KEY_OLD with an embedded newline", env: set("SECRETS_KEY_OLD", other[:20]+"\n"+other[20:]), vars: []string{"SECRETS_KEY_OLD"}, values: []string{other[:20]}},
 		{name: "SECRETS_KEY_OLD equals SECRETS_KEY", env: set("SECRETS_KEY", key, "SECRETS_KEY_OLD", key), vars: []string{"SECRETS_KEY_OLD"}, values: []string{key}},
 		{name: "SECRETS_KEY_OLD is not a key", env: set("SECRETS_KEY_OLD", "ZZ-old-key"), vars: []string{"SECRETS_KEY_OLD"}, values: []string{"ZZ-old-key"}},
 

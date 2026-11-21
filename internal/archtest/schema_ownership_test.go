@@ -57,3 +57,17 @@ func TestIoutilInDomainIsReported(t *testing.T) {
 		t.Fatalf("got %+v err=%v", v, err)
 	}
 }
+
+func TestImpureStdlibInKernelIsReported(t *testing.T) {
+	v, err := ImpureKernelImports("testdata/kernel-stdlib")
+	if err != nil || len(v) != 1 || v[0].Module != "kernel" || v[0].Import != "os" {
+		t.Fatalf("got %+v err=%v", v, err)
+	}
+}
+
+func TestRepositoryKernelIsStdlibPure(t *testing.T) {
+	v, err := ImpureKernelImports("../kernel")
+	if err != nil || len(v) != 0 {
+		t.Fatalf("got %+v err=%v", v, err)
+	}
+}

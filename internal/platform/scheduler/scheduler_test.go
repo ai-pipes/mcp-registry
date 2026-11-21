@@ -12,7 +12,11 @@ import (
 	"github.com/ai-pipes/mcp-registry/internal/platform/logging"
 )
 
-const wait = 10 * time.Second
+const (
+	wait = 10 * time.Second
+	// blockedWindow is how long a test watches a call that must stay blocked.
+	blockedWindow = 200 * time.Millisecond
+)
 
 type timerReq struct {
 	d    time.Duration
@@ -179,10 +183,12 @@ func TestStopWaitsForTheRunningJobAndCancelsItsContext(t *testing.T) {
 
 	stopped := make(chan error, 1)
 	go func() { stopped <- stop(context.Background()) }()
+	// A stop that does not wait returns at once; give it a fair chance to do so. A correct one is
+	// still blocked on the job when the window ends.
 	select {
 	case err := <-stopped:
 		t.Fatalf("stop returned while the job was running: %v", err)
-	default:
+	case <-time.After(blockedWindow):
 	}
 	close(release)
 	if err := recv(t, stopped, "stop"); err != nil {

@@ -1,15 +1,19 @@
 package app
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/ai-pipes/mcp-registry/internal/platform/config"
 	"github.com/ai-pipes/mcp-registry/internal/platform/httpx"
+	"github.com/ai-pipes/mcp-registry/internal/platform/logging"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -134,5 +138,113 @@ func TestSignalName(t *testing.T) {
 	cancelPlain()
 	if got := signalName(plain); got != "SIGTERM" {
 		t.Fatalf("signalName for a plain cancel = %q", got)
+	}
+}
+
+// chainRecord returns the access record of the request that got id.
+func chainRecord(t *testing.T, logs *bytes.Buffer, id string) map[string]any {
+	t.Helper()
+	for _, line := range strings.Split(strings.TrimSpace(logs.String()), "\n") {
+		var rec map[string]any
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			t.Fatalf("log line %q: %v", line, err)
+		}
+		if rec["msg"] == "request" && rec["reqId"] == id {
+			return rec
+		}
+	}
+	t.Fatalf("no access record for %s in:\n%s", id, logs)
+	return nil
+}
+
+var securityHeaderNames = []string{
+	"Content-Security-Policy", "Cross-Origin-Opener-Policy", "Cross-Origin-Resource-Policy",
+	"Referrer-Policy", "Strict-Transport-Security", "X-Content-Type-Options", "X-Frame-Options",
+}
+
+// The order of the chain is behaviour: the request id and the access log are outermost, the
+// security headers come before anything that can refuse, the body limit comes before the origin
+// check, and the client address is resolved before the routes. A reordered or dropped link
+// changes one of the answers below.
+func TestChainOrderAndClientAddress(t *testing.T) {
+	const (
+		peer      = "192.0.2.7"
+		forwarded = "198.51.100.4" // the hop one from the right of the header below
+		header    = "203.0.113.9, " + forwarded
+		own       = "http://localhost:3000"
+	)
+	for _, trust := range []bool{true, false} {
+		var logs bytes.Buffer
+		cfg := config.Config{PublicURL: own, TrustProxy: trust, TrustProxyHops: 1, MCPMaxBodyBytes: testMCPLimit}
+		h := handler(cfg, logging.New("info", &logs), nil, t.TempDir(), func(mux *http.ServeMux, _ *pgxpool.Pool) {
+			mux.HandleFunc("GET /api/stub/ip", func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("X-Seen-Ip", httpx.ClientIPOf(r))
+			})
+			mux.HandleFunc("POST /api/stub/post", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) })
+		})
+		wantIP := peer
+		if trust {
+			wantIP = forwarded
+		}
+		over := strings.Repeat("a", restBodyLimit+1)
+
+		for _, tc := range []struct {
+			name, method, path, origin, body string
+			chunked                          bool
+			wantStatus                       int
+			wantSeenIP                       string
+			refusedByLength                  bool // the limit refuses before the client address is resolved
+		}{
+			{name: "oversized declared length from a foreign origin: 413, not 403", method: "POST", path: "/api/stub/post", origin: "https://evil.example", body: over, wantStatus: 413, refusedByLength: true},
+			{name: "oversized without a length from a foreign origin: 413, not 403", method: "POST", path: "/api/stub/post", origin: "https://evil.example", body: over, chunked: true, wantStatus: 413, refusedByLength: true},
+			{name: "oversized to an unknown route: 413, not 404", method: "POST", path: "/api/no-such", origin: own, body: over, wantStatus: 413, refusedByLength: true},
+			{name: "a foreign origin within the limit is the CSRF 403", method: "POST", path: "/api/stub/post", origin: "https://evil.example", body: "{}", wantStatus: 403},
+			{name: "the stub route sees the resolved client address", method: "GET", path: "/api/stub/ip", wantStatus: 200, wantSeenIP: wantIP},
+		} {
+			t.Run(tc.name+" trust="+strconv.FormatBool(trust), func(t *testing.T) {
+				var body io.Reader
+				if tc.body != "" {
+					body = strings.NewReader(tc.body)
+					if tc.chunked {
+						body = io.NopCloser(body)
+					}
+				}
+				r := httptest.NewRequest(tc.method, tc.path, body)
+				if tc.chunked {
+					r.ContentLength = -1
+				}
+				r.RemoteAddr = peer + ":4321"
+				r.Header.Set("X-Forwarded-For", header)
+				if tc.origin != "" {
+					r.Header.Set("Origin", tc.origin)
+				}
+				w := do(h, r)
+				if w.Code != tc.wantStatus {
+					t.Fatalf("status %d (%s), want %d", w.Code, w.Body, tc.wantStatus)
+				}
+				if got := w.Header().Get("X-Seen-Ip"); tc.wantSeenIP != "" && got != tc.wantSeenIP {
+					t.Fatalf("the route saw the client address %q, want %q", got, tc.wantSeenIP)
+				}
+				id := w.Header().Get("X-Request-Id")
+				if id == "" {
+					t.Fatal("no X-Request-Id")
+				}
+				for _, name := range securityHeaderNames {
+					if w.Header().Get(name) == "" {
+						t.Errorf("no %s on a %d answer", name, w.Code)
+					}
+				}
+				rec := chainRecord(t, &logs, id)
+				// The body limit refuses before the client address is resolved, so such a request is
+				// recorded with the socket peer; every other one with the resolved address.
+				wantRecordIP := wantIP
+				if tc.refusedByLength {
+					wantRecordIP = peer
+				}
+				if int(rec["status"].(float64)) != tc.wantStatus || rec["ip"] != wantRecordIP {
+					t.Fatalf("access record %v, want status %d and ip %s", rec, tc.wantStatus, wantRecordIP)
+				}
+			})
+		}
 	}
 }

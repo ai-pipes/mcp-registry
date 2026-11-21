@@ -7,9 +7,12 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"net/http"
 	"os"
@@ -20,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ai-pipes/mcp-registry/apps/server/migrations"
 	"github.com/ai-pipes/mcp-registry/internal/platform/config"
 	"github.com/ai-pipes/mcp-registry/internal/platform/logging"
 	"github.com/ai-pipes/mcp-registry/internal/platform/pgtest"
@@ -87,6 +91,25 @@ func (l *logBuf) messages(t *testing.T) []string {
 		out = append(out, r["msg"].(string))
 	}
 	return out
+}
+
+// assertNoKeyMaterial fails when the log holds a key in a form a log line could carry: standard or
+// URL-safe base64 (padded or not) or hex, either case. Raw bytes would never match: a log line is
+// JSON text.
+func assertNoKeyMaterial(t *testing.T, logs string, keys ...[]byte) {
+	t.Helper()
+	for _, k := range keys {
+		hexForm := hex.EncodeToString(k)
+		for _, form := range []string{
+			base64.StdEncoding.EncodeToString(k), base64.RawStdEncoding.EncodeToString(k),
+			base64.URLEncoding.EncodeToString(k), base64.RawURLEncoding.EncodeToString(k),
+			hexForm, strings.ToUpper(hexForm),
+		} {
+			if strings.Contains(logs, form) {
+				t.Fatalf("the log contains key material (%d characters of a key form)", len(form))
+			}
+		}
+	}
 }
 
 func newKey(t *testing.T) []byte {
@@ -387,11 +410,7 @@ func TestAnotherKeyIsRefusedWithOneFatalRecord(t *testing.T) {
 	if len(in.logs.find(t, "listening")) != 0 {
 		t.Fatal("listening after a refused start")
 	}
-	for _, k := range [][]byte{right, wrong} {
-		if strings.Contains(in.logs.String(), string(k)) {
-			t.Fatal("key material in the log")
-		}
-	}
+	assertNoKeyMaterial(t, in.logs.String(), right, wrong)
 	ln, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", cfg.Port))
 	if err != nil {
 		t.Fatalf("the port was opened by a refused start: %v", err)
@@ -467,11 +486,7 @@ func TestSecretsKeyOldWarnings(t *testing.T) {
 	if len(rot) != 1 || levelOf(rot[0]) != levelWarn {
 		t.Fatalf("needs-rotation warnings: %v", rot)
 	}
-	for _, k := range [][]byte{oldKey, next} {
-		if strings.Contains(in.logs.String(), string(k)) {
-			t.Fatal("key material in the log")
-		}
-	}
+	assertNoKeyMaterial(t, in.logs.String(), oldKey, next)
 	in.stop("SIGTERM")
 }
 
@@ -662,6 +677,31 @@ func TestTwoServersOnAnEmptyDatabase(t *testing.T) {
 				t.Fatalf("fatal record: %v", r)
 			}
 		}
+	}
+	// Between the two: one key check created, and each bundled file applied exactly once (the
+	// advisory lock made one run apply everything and the other nothing).
+	created := 0
+	var applied []string
+	for _, in := range ins {
+		created += len(in.logs.find(t, msgKeyCreated))
+		for _, f := range in.logs.find(t, "migrations applied")[0]["applied"].([]any) {
+			applied = append(applied, f.(string))
+		}
+	}
+	if created != 1 {
+		t.Fatalf("%d `secrets key check created` records across both servers, want 1", created)
+	}
+	entries, err := fs.ReadDir(migrations.FS, ".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var bundled []string
+	for _, e := range entries {
+		bundled = append(bundled, e.Name())
+	}
+	slices.Sort(applied)
+	if len(bundled) != 10 || !slices.Equal(applied, bundled) {
+		t.Fatalf("applied %v across both servers, bundled %v: each file exactly once", applied, bundled)
 	}
 	for _, in := range ins {
 		if code := in.stop("SIGTERM"); code != 0 {
