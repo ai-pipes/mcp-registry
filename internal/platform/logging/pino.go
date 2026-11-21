@@ -14,12 +14,35 @@ const (
 	unloggable = "[Unloggable]"
 )
 
-// redactedKeys are compared in lower case.
-var redactedKeys = map[string]bool{
+// exactSecretKeys are secret field names on their own (compared after normalisation).
+var exactSecretKeys = map[string]bool{
 	"password":      true,
 	"token":         true,
 	"authorization": true,
 	"cookie":        true,
+	"setcookie":     true,
+	"secret":        true,
+}
+
+// secretSuffixes mark a compound name as secret: clientSecret, client_secret, accessToken,
+// refresh_token, X-Api-Key, secretsKey, dbPassword. The bare word "key" is deliberately not
+// secret (a map or idempotency key), and neither are names that merely contain a word:
+// tokenId, outboxId, keyCheck, tokens.
+var secretSuffixes = []string{"password", "token", "secret", "key"}
+
+// isSecretKey reports whether a log field (or a key inside a logged value) names a secret. The
+// name is compared in lower case with "_" and "-" removed.
+func isSecretKey(name string) bool {
+	k := strings.ToLower(strings.NewReplacer("_", "", "-", "").Replace(name))
+	if exactSecretKeys[k] {
+		return true
+	}
+	for _, suf := range secretSuffixes {
+		if strings.HasSuffix(k, suf) && len(k) > len(suf) {
+			return true
+		}
+	}
+	return false
 }
 
 // pinoLevel maps a slog level to pino's number.
@@ -59,11 +82,11 @@ func replaceAttr(groups []string, a slog.Attr) slog.Attr {
 		}
 	}
 	for _, g := range groups {
-		if redactedKeys[strings.ToLower(g)] {
+		if isSecretKey(g) {
 			return slog.String(a.Key, redacted)
 		}
 	}
-	if redactedKeys[strings.ToLower(a.Key)] {
+	if isSecretKey(a.Key) {
 		return slog.String(a.Key, redacted)
 	}
 	if a.Value.Kind() == slog.KindAny {
@@ -108,7 +131,7 @@ func scrub(v any) any {
 	case map[string]any:
 		out := make(map[string]any, len(x))
 		for k, val := range x {
-			if redactedKeys[strings.ToLower(k)] {
+			if isSecretKey(k) {
 				out[k] = redacted
 			} else {
 				out[k] = scrub(val)

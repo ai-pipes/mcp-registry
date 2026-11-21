@@ -224,3 +224,44 @@ func TestCallerLevelAndTimeAreRenamed(t *testing.T) {
 		t.Fatalf("%v", r)
 	}
 }
+
+func TestRedactionCoversNaturalSecretNames(t *testing.T) {
+	secrets := []string{
+		"password", "Password", "token", "Token", "authorization", "Authorization", "cookie", "Cookie",
+		"set-cookie", "Set-Cookie", "secret", "clientSecret", "client_secret", "client-secret",
+		"accessToken", "access_token", "refreshToken", "refresh_token", "X-Api-Key", "apiKey", "api_key",
+		"secretsKey", "SECRETS_KEY", "dbPassword", "bearerToken", "PGPASSWORD",
+	}
+	for _, name := range secrets {
+		var buf bytes.Buffer
+		l := logging.New("info", &buf)
+		l.Info("x", name, "ZZ-top-level")
+		l.Info("x", "req", map[string]any{name: "ZZ-nested"})
+		l.Info("x", slog.Group("g", slog.String(name, "ZZ-grouped")))
+		l.Info("x", slog.Group(name, slog.String("v", "ZZ-in-group")))
+		if strings.Contains(buf.String(), "ZZ-") {
+			t.Errorf("%q leaked: %s", name, buf.String())
+		}
+	}
+}
+
+// Names the server logs today (apps/server/src and the Go platform) and natural ones for ids and
+// counters must stay readable.
+func TestRedactionLeavesOrdinaryNamesAlone(t *testing.T) {
+	ordinary := []string{
+		"reqId", "outboxId", "tokenId", "keyCheck", "type", "label", "err", "version", "port", "signal",
+		"applied", "job", "stack", "method", "path", "status", "ip", "ms", "tool", "servers", "failed",
+		"sessions", "key", "tokens", "secrets", "keyId", "passwordSet", "authorized", "cookies", "userId",
+		"handler", "attempts", "ref", "server",
+	}
+	var buf bytes.Buffer
+	l := logging.New("info", &buf)
+	for _, name := range ordinary {
+		l.Info("x", name, "ZZ-"+name)
+	}
+	for _, name := range ordinary {
+		if !strings.Contains(buf.String(), "ZZ-"+name+`"`) {
+			t.Errorf("%q was redacted: %s", name, buf.String())
+		}
+	}
+}

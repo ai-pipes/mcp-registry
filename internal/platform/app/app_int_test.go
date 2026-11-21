@@ -99,7 +99,7 @@ func newKey(t *testing.T) []byte {
 
 func baseConfig(url string, key []byte) config.Config {
 	return config.Config{
-		Port: 1, DatabaseURL: url, PublicURL: "http://localhost:3000", TrustProxyHops: 1,
+		Port: 1, DatabaseURL: config.Secret(url), PublicURL: "http://localhost:3000", TrustProxyHops: 1,
 		SecretsKey: key, LogLevel: "info",
 	}
 }

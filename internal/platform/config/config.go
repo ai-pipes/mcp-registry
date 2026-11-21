@@ -27,20 +27,23 @@ const (
 )
 
 // OIDCClient is the gateway's client at the identity provider.
-type OIDCClient struct{ Issuer, ClientID, ClientSecret string }
+type OIDCClient struct {
+	Issuer, ClientID string
+	ClientSecret     Secret
+}
 
 // Config is the validated configuration.
 type Config struct {
 	Port                     int
-	DatabaseURL              string
-	DatabasePassword         *string // from PGPASSWORD_FILE
+	DatabaseURL              Secret  // may carry a password
+	DatabasePassword         *Secret // from PGPASSWORD_FILE; nil when unset
 	PublicURL                string
 	AllowedHosts             []string
 	TrustProxy               bool
 	TrustProxyHops           int
 	CookieSecure             bool
-	SecretsKey               []byte // 32 bytes
-	SecretsKeyOld            []byte // nil when unset
+	SecretsKey               SecretBytes // 32 bytes
+	SecretsKeyOld            SecretBytes // nil when unset
 	OIDC                     *OIDCClient
 	OIDCLoginGroup           string
 	OIDCAdminGroup           string
@@ -76,9 +79,10 @@ func Load(env map[string]string, readFile func(string) (string, error)) (Config,
 	var cfg Config
 
 	cfg.Port = intVar(set, "PORT", 3000, 1, 65535, &c)
-	cfg.DatabaseURL = requiredVar(set, "DATABASE_URL", &c)
+	cfg.DatabaseURL = Secret(requiredVar(set, "DATABASE_URL", &c))
 	if pw, ok := fromFile(set, "PGPASSWORD", readFile, &c); ok {
-		cfg.DatabasePassword = &pw
+		secret := Secret(pw)
+		cfg.DatabasePassword = &secret
 	}
 	cfg.PublicURL = urlVar(set, "PUBLIC_URL", true, &c)
 	for _, h := range strings.Split(set["ALLOWED_HOSTS"], ",") {
@@ -187,7 +191,7 @@ func loadOIDC(set map[string]string, cfg *Config, c *issues) {
 		}
 	}
 	if given == len(names) && !hasIssue(c, "OIDC_ISSUER") {
-		cfg.OIDC = &OIDCClient{Issuer: issuer, ClientID: set["OIDC_CLIENT_ID"], ClientSecret: set["OIDC_CLIENT_SECRET"]}
+		cfg.OIDC = &OIDCClient{Issuer: issuer, ClientID: set["OIDC_CLIENT_ID"], ClientSecret: Secret(set["OIDC_CLIENT_SECRET"])}
 	}
 	cfg.OIDCLoginGroup = stringVar(set, "OIDC_LOGIN_GROUP", "mcp-users")
 	cfg.OIDCAdminGroup = stringVar(set, "OIDC_ADMIN_GROUP", "mcp-admins")

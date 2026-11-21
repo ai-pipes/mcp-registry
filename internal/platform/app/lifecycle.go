@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/ai-pipes/mcp-registry/apps/server/migrations"
+	"github.com/ai-pipes/mcp-registry/internal/platform/config"
 	"github.com/ai-pipes/mcp-registry/internal/platform/crypto"
 	"github.com/ai-pipes/mcp-registry/internal/platform/db"
 	"github.com/ai-pipes/mcp-registry/internal/platform/logging"
@@ -49,7 +50,7 @@ func Run(ctx context.Context, o Options) int {
 
 	startCtx := context.WithoutCancel(ctx)
 	openCtx, cancelOpen := context.WithTimeout(startCtx, connectTimeout)
-	pool, err := db.Open(openCtx, cfg.DatabaseURL, cfg.DatabasePassword)
+	pool, err := db.Open(openCtx, cfg.DatabaseURL.Reveal(), databasePassword(cfg))
 	cancelOpen()
 	if err != nil {
 		// db.Open's text is fixed and never quotes the address or a password.
@@ -115,6 +116,15 @@ func Run(ctx context.Context, o Options) int {
 	return shutdown(o, logger, srv, pool, []func(context.Context) error{stopWorker, stopScheduler}, exit)
 }
 
+// databasePassword is the PGPASSWORD_FILE value for db.Open, nil when unset.
+func databasePassword(cfg config.Config) *string {
+	if cfg.DatabasePassword == nil {
+		return nil
+	}
+	pw := cfg.DatabasePassword.Reveal()
+	return &pw
+}
+
 func shutdownLimitOf(o Options) time.Duration {
 	if o.shutdownTimeout > 0 {
 		return o.shutdownTimeout
@@ -143,7 +153,7 @@ func prepare(ctx context.Context, o Options, logger *slog.Logger, pool *pgxpool.
 	}
 	logger.Info("migrations applied", "applied", applied)
 
-	verdict, err := crypto.Verify(ctx, pool, crypto.Keys{Current: o.Config.SecretsKey, Previous: o.Config.SecretsKeyOld})
+	verdict, err := crypto.Verify(ctx, pool, crypto.Keys{Current: o.Config.SecretsKey.Reveal(), Previous: o.Config.SecretsKeyOld.Reveal()})
 	if err != nil {
 		logging.Fatal(logger, "secrets key check failed", logging.ErrAttr(err))
 		return false
