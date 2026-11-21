@@ -76,12 +76,16 @@ func TestEveryCatalogRouteOfTheComposedServerIsGuarded(t *testing.T) {
 }
 
 // A path under the guarded prefixes that no route serves is still answered by the guard.
-func TestUnknownPathsUnderCatalogPrefixesAreGuarded(t *testing.T) {
+func TestUnknownPathsUnderTheServersPrefixAreGuarded(t *testing.T) {
 	e := newWiringEnv(t)
-	for _, path := range []string{"/api/servers/x/unknown", "/api/servers/", "/api/catalog/x"} {
+	for _, path := range []string{"/api/servers/x/unknown", "/api/servers/"} {
 		if got := e.do("GET", path, "", "198.51.100.1", nil).Code; got != http.StatusUnauthorized {
 			t.Errorf("GET %s without a session: %d", path, got)
 		}
+	}
+	// Only the route GET /api/catalog is guarded, not the paths below it (as in TypeScript).
+	if got := e.do("GET", "/api/catalog/x", "", "198.51.100.1", nil).Code; got != http.StatusNotFound {
+		t.Errorf("GET /api/catalog/x without a session: %d, want 404", got)
 	}
 	if got := e.do("DELETE", "/api/servers/gitea", "", "198.51.100.1", sessionOf("mcp_session", memberCookie)).Code; got != http.StatusForbidden {
 		t.Errorf("DELETE /api/servers/gitea as a member: %d, want 403", got)
