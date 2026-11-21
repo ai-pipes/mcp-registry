@@ -3,7 +3,9 @@ package domain
 import (
 	"bytes"
 	"encoding/json"
+	"math"
 	"reflect"
+	"strconv"
 	"time"
 
 	"github.com/ai-pipes/mcp-registry/internal/kernel"
@@ -60,6 +62,30 @@ func isJSONNull(raw json.RawMessage) bool {
 	return len(t) == 0 || bytes.Equal(t, []byte("null"))
 }
 
+func (a ToolAnnotations) clone() ToolAnnotations {
+	return ToolAnnotations{
+		ReadOnlyHint: copyBool(a.ReadOnlyHint), DestructiveHint: copyBool(a.DestructiveHint),
+		IdempotentHint: copyBool(a.IdempotentHint), OpenWorldHint: copyBool(a.OpenWorldHint),
+	}
+}
+
+func copyBool(p *bool) *bool {
+	if p == nil {
+		return nil
+	}
+	v := *p
+	return &v
+}
+
+// clone deep-copies the snapshot (JSON bytes, title, hints).
+func (s ToolSnapshot) clone() ToolSnapshot {
+	s.Title = copyString(s.Title)
+	s.InputSchema = bytes.Clone(s.InputSchema)
+	s.OutputSchema = bytes.Clone(s.OutputSchema)
+	s.Annotations = s.Annotations.clone()
+	return s
+}
+
 // ToolState is a stored tool, for RehydrateTool.
 type ToolState struct {
 	ToolSnapshot
@@ -76,7 +102,11 @@ type Tool struct {
 }
 
 // RehydrateTool restores a stored tool: no validation, no events.
-func RehydrateTool(s ToolState) *Tool { return &Tool{s: s} }
+func RehydrateTool(s ToolState) *Tool {
+	s.ToolSnapshot = s.clone()
+	s.RemovedAt = copyTime(s.RemovedAt)
+	return &Tool{s: s}
+}
 
 // Server returns the tool's Server.
 func (t *Tool) Server() string { return t.s.Server }
@@ -85,31 +115,31 @@ func (t *Tool) Server() string { return t.s.Server }
 func (t *Tool) Name() string { return t.s.Name }
 
 // Title returns the tool's Title.
-func (t *Tool) Title() *string { return t.s.Title }
+func (t *Tool) Title() *string { return copyString(t.s.Title) }
 
 // Description returns the tool's Description.
 func (t *Tool) Description() string { return t.s.Description }
 
 // InputSchema returns the tool's InputSchema.
-func (t *Tool) InputSchema() json.RawMessage { return t.s.InputSchema }
+func (t *Tool) InputSchema() json.RawMessage { return bytes.Clone(t.s.InputSchema) }
 
 // OutputSchema returns the tool's OutputSchema.
-func (t *Tool) OutputSchema() json.RawMessage { return t.s.OutputSchema }
+func (t *Tool) OutputSchema() json.RawMessage { return bytes.Clone(t.s.OutputSchema) }
 
 // Annotations returns the tool's Annotations.
-func (t *Tool) Annotations() ToolAnnotations { return t.s.Annotations }
+func (t *Tool) Annotations() ToolAnnotations { return t.s.Annotations.clone() }
 
 // Hidden returns the tool's Hidden.
 func (t *Tool) Hidden() bool { return t.s.Hidden }
 
 // RemovedAt returns the tool's RemovedAt.
-func (t *Tool) RemovedAt() *time.Time { return t.s.RemovedAt }
+func (t *Tool) RemovedAt() *time.Time { return copyTime(t.s.RemovedAt) }
 
 // SyncedAt returns the tool's SyncedAt.
 func (t *Tool) SyncedAt() time.Time { return t.s.SyncedAt }
 
 // Snapshot is the upstream-visible part of the tool.
-func (t *Tool) Snapshot() ToolSnapshot { return t.s.ToolSnapshot }
+func (t *Tool) Snapshot() ToolSnapshot { return t.s.clone() }
 
 // Ref is the agent-facing name "<server>.<tool>".
 func (t *Tool) Ref() string { return FormatToolRef(t.s.Server, t.s.Name) }
@@ -141,21 +171,48 @@ func (t *Tool) PullEvents() []kernel.Event {
 	return out
 }
 
-// jsonValue decodes JSON the way JavaScript's JSON.parse sees it: numbers are float64, object
-// key order is irrelevant. ok is false when the text is not decodable (e.g. 1e999).
+// jsonValue decodes JSON the way JavaScript's JSON.parse and JSON.stringify see it: every number
+// is a float64 (ParseFloat of its text, so 1 and 1.0 and 20-digit integers behave as doubles), a
+// number outside the float64 range is Infinity, which JSON.stringify writes as null, and object
+// key order is irrelevant. ok is false when the text is not valid JSON.
 func jsonValue(raw json.RawMessage) (v any, ok bool) {
 	if isJSONNull(raw) {
 		return nil, true
 	}
-	if err := json.Unmarshal(raw, &v); err != nil {
+	if !json.Valid(raw) {
 		return nil, false
 	}
-	return v, true
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	if err := dec.Decode(&v); err != nil {
+		return nil, false
+	}
+	return jsNumbers(v), true
 }
 
-// sameJSON mirrors the TypeScript canonical() comparison: equality of the parsed values
-// (sorted-key JSON of JS-parsed numbers), so key order, whitespace and 1 vs 1.0 do not count.
-// Text that cannot be decoded is compared byte for byte.
+func jsNumbers(v any) any {
+	switch x := v.(type) {
+	case json.Number:
+		f, _ := strconv.ParseFloat(string(x), 64) // out of range: ±Inf
+		if math.IsInf(f, 0) {
+			return nil
+		}
+		return f
+	case []any:
+		for i := range x {
+			x[i] = jsNumbers(x[i])
+		}
+	case map[string]any:
+		for k := range x {
+			x[k] = jsNumbers(x[k])
+		}
+	}
+	return v
+}
+
+// sameJSON mirrors the TypeScript canonical() comparison: equality of the JavaScript-parsed
+// values, so key order, whitespace, 1 vs 1.0, and numbers beyond the float64 range (null) do
+// not count. Text that is not valid JSON (it cannot come from upstream) is compared byte for byte.
 func sameJSON(a, b json.RawMessage) bool {
 	va, okA := jsonValue(a)
 	vb, okB := jsonValue(b)

@@ -111,7 +111,7 @@ func TestParseAuthOAuthOrder(t *testing.T) {
 	o.RevokeURL = ptr("nope")
 	o.ClientID = ""
 	o.Scopes = []string{"openid"}
-	o.ExtraAuthorizeParams = map[string]string{"state": "x"}
+	o.ExtraAuthorizeParams = []domain.AuthorizeParam{{Key: "state", Value: "x"}}
 	_, err := domain.ParseAuthMode(oauthMode(o))
 	wantMsg(t, err, "invalid_auth", "authorize and token URLs must be http(s) URLs")
 	o.AuthorizeURL = "https://a.example"
@@ -130,7 +130,7 @@ func TestParseAuthOAuthOrder(t *testing.T) {
 
 func TestParseAuthExtraParams(t *testing.T) {
 	o := baseOAuth()
-	o.ExtraAuthorizeParams = map[string]string{"access_type": "offline"}
+	o.ExtraAuthorizeParams = []domain.AuthorizeParam{{Key: "access_type", Value: "offline"}}
 	good := oauthMode(o)
 	got, err := domain.ParseAuthMode(good)
 	if err != nil || !reflect.DeepEqual(got, good) {
@@ -138,13 +138,13 @@ func TestParseAuthExtraParams(t *testing.T) {
 	}
 	for _, key := range []string{"response_type", "client_id", "redirect_uri", "scope", "state", "code_challenge", "code_challenge_method", "", "a b", "a=b", "é"} {
 		o := baseOAuth()
-		o.ExtraAuthorizeParams = map[string]string{key: "x"}
+		o.ExtraAuthorizeParams = []domain.AuthorizeParam{{Key: key, Value: "x"}}
 		_, err := domain.ParseAuthMode(oauthMode(o))
 		wantMsg(t, err, "invalid_auth", `extra authorize parameter "`+key+`" is not allowed`)
 	}
 	for _, key := range []string{"a.b", "A_b-1", "STATE", "Scope"} {
 		o := baseOAuth()
-		o.ExtraAuthorizeParams = map[string]string{key: "x"}
+		o.ExtraAuthorizeParams = []domain.AuthorizeParam{{Key: key, Value: "x"}}
 		if _, err := domain.ParseAuthMode(oauthMode(o)); err != nil {
 			t.Errorf("%q should be allowed (the check is case-sensitive): %v", key, err)
 		}
@@ -174,15 +174,15 @@ func TestParseAuthUnknownKind(t *testing.T) {
 
 func TestParseAuthCopiesInput(t *testing.T) {
 	o := baseOAuth()
-	o.ExtraAuthorizeParams = map[string]string{"access_type": "offline"}
+	o.ExtraAuthorizeParams = []domain.AuthorizeParam{{Key: "access_type", Value: "offline"}}
 	in := oauthMode(o)
 	got, err := domain.ParseAuthMode(in)
 	if err != nil {
 		t.Fatal(err)
 	}
 	in.OAuth.Scopes[0] = "changed"
-	in.OAuth.ExtraAuthorizeParams["access_type"] = "changed"
-	if got.OAuth.Scopes[0] != "read:user" || got.OAuth.ExtraAuthorizeParams["access_type"] != "offline" {
+	in.OAuth.ExtraAuthorizeParams[0].Value = "changed"
+	if got.OAuth.Scopes[0] != "read:user" || got.OAuth.ExtraAuthorizeParams[0].Value != "offline" {
 		t.Fatal("the parsed mode shares memory with its input")
 	}
 }
@@ -234,5 +234,72 @@ func TestHoldsSecretAndCredentialSource(t *testing.T) {
 	}
 	if (domain.AuthMode{Kind: "x"}).CredentialSource() != domain.SourceNone {
 		t.Fatal("unknown kind has no credential")
+	}
+}
+
+func oauthWithParams(params []domain.AuthorizeParam) domain.AuthMode {
+	o := baseOAuth()
+	o.ExtraAuthorizeParams = params
+	return oauthMode(o)
+}
+
+func TestExtraParamsAreCheckedInDocumentOrder(t *testing.T) {
+	_, err := domain.ParseAuthMode(oauthWithParams([]domain.AuthorizeParam{{Key: "state", Value: "x"}, {Key: "scope", Value: "y"}}))
+	wantMsg(t, err, "invalid_auth", `extra authorize parameter "state" is not allowed`)
+	_, err = domain.ParseAuthMode(oauthWithParams([]domain.AuthorizeParam{{Key: "scope", Value: "y"}, {Key: "state", Value: "x"}}))
+	wantMsg(t, err, "invalid_auth", `extra authorize parameter "scope" is not allowed`)
+	_, err = domain.ParseAuthMode(oauthWithParams([]domain.AuthorizeParam{{Key: "ok", Value: "1"}, {Key: "b d", Value: "x"}, {Key: "state", Value: "x"}}))
+	wantMsg(t, err, "invalid_auth", `extra authorize parameter "b d" is not allowed`)
+}
+
+func TestExtraParamsDuplicateKeysKeepFirstPositionLastValue(t *testing.T) {
+	got, err := domain.ParseAuthMode(oauthWithParams([]domain.AuthorizeParam{
+		{Key: "a", Value: "1"}, {Key: "b", Value: "2"}, {Key: "a", Value: "3"},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []domain.AuthorizeParam{{Key: "a", Value: "3"}, {Key: "b", Value: "2"}}
+	if !reflect.DeepEqual(got.OAuth.ExtraAuthorizeParams, want) {
+		t.Fatalf("%+v", got.OAuth.ExtraAuthorizeParams)
+	}
+	// the duplicate is resolved before checking: a reserved key twice is still reported once
+	_, err = domain.ParseAuthMode(oauthWithParams([]domain.AuthorizeParam{{Key: "state", Value: "1"}, {Key: "state", Value: "2"}}))
+	wantMsg(t, err, "invalid_auth", `extra authorize parameter "state" is not allowed`)
+}
+
+func TestExtraParamsEmptyIsDistinctFromAbsent(t *testing.T) {
+	got, err := domain.ParseAuthMode(oauthWithParams([]domain.AuthorizeParam{}))
+	if err != nil || got.OAuth.ExtraAuthorizeParams == nil || len(got.OAuth.ExtraAuthorizeParams) != 0 {
+		t.Fatalf("{} must stay non-nil and empty: %#v %v", got.OAuth.ExtraAuthorizeParams, err)
+	}
+	got, err = domain.ParseAuthMode(oauthWithParams(nil))
+	if err != nil || got.OAuth.ExtraAuthorizeParams != nil {
+		t.Fatalf("absent must stay nil: %#v %v", got.OAuth.ExtraAuthorizeParams, err)
+	}
+}
+
+func TestAuthModeAndGettersReturnCopies(t *testing.T) {
+	o := baseOAuth()
+	o.Scopes = []string{"b", "a"}
+	o.RevokeURL = ptr("https://x.example/revoke")
+	o.ExtraAuthorizeParams = []domain.AuthorizeParam{{Key: "k", Value: "v"}}
+	s := make1(t, func(p *domain.NewServerParams) { p.Auth = oauthMode(o) })
+	got := s.Auth()
+	got.OAuth.Scopes[0] = "changed"
+	got.OAuth.Scopes = append(got.OAuth.Scopes, "more")
+	got.OAuth.ExtraAuthorizeParams[0].Value = "changed"
+	*got.OAuth.RevokeURL = "changed"
+	got.OAuth.ClientID = "changed"
+	got.Header = "changed"
+	again := s.Auth()
+	if !reflect.DeepEqual(again.OAuth.Scopes, []string{"b", "a"}) || again.OAuth.ExtraAuthorizeParams[0].Value != "v" ||
+		*again.OAuth.RevokeURL != "https://x.example/revoke" || again.OAuth.ClientID != "abc" || again.Header != "Authorization" {
+		t.Fatalf("Auth() returned the aggregate's own memory: %+v", again.OAuth)
+	}
+	// the constructor input is copied
+	o.Scopes[0] = "input"
+	if s.Auth().OAuth.Scopes[0] != "b" {
+		t.Fatal("NewServer shares memory with its input")
 	}
 }

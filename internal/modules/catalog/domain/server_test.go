@@ -2,6 +2,7 @@ package domain_test
 
 import (
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
@@ -457,7 +458,7 @@ func TestOAuthKeepsSecretOnOtherFields(t *testing.T) {
 	next := oauthOf(func(o *domain.OAuthClientConfig) {
 		o.AuthorizeURL = "https://idp.example/authorize2"
 		o.Scopes = []string{"read", "write"}
-		o.ExtraAuthorizeParams = map[string]string{"access_type": "offline"}
+		o.ExtraAuthorizeParams = []domain.AuthorizeParam{{Key: "access_type", Value: "offline"}}
 	}, true)
 	next.Header = "X-Token"
 	cleared, err := s.Update(domain.Changes{URL: domain.Some("https://elsewhere.example/mcp"), Auth: domain.Some(next)}, t1)
@@ -644,5 +645,80 @@ func TestApplySyncDoesNotAliasRecord(t *testing.T) {
 	by = "changed"
 	if *s.SyncUserID() != "admin-1" {
 		t.Fatal("aliased")
+	}
+}
+
+func TestServerGettersReturnCopies(t *testing.T) {
+	limit, synced, lastErr, syncUser := 7, t0, "boom", "u1"
+	secret := []byte{1, 2, 3}
+	groups := []string{"b", "a"}
+	in := domain.ServerState{
+		Slug: "gitea", Name: "G", URL: "https://x.example", Auth: shared, SealedSecret: secret,
+		Access: domain.Access{Kind: domain.AccessGroups, Groups: groups}, TimeoutMs: 1000, DailyLimit: &limit,
+		Status: domain.StatusActive, LastSyncAt: &synced, LastSyncError: &lastErr, SyncUserID: &syncUser, CreatedAt: t0, UpdatedAt: t0,
+	}
+	s := domain.RehydrateServer(in)
+	// RehydrateServer clones what it is given
+	secret[0], groups[0], limit, synced, lastErr, syncUser = 9, "changed", 99, t2, "changed", "changed"
+	in.Auth.Header = "changed"
+	check := func(when string) {
+		t.Helper()
+		if !reflect.DeepEqual(s.SealedSecret(), []byte{1, 2, 3}) || !reflect.DeepEqual(s.Access().Groups, []string{"b", "a"}) ||
+			*s.DailyLimit() != 7 || !s.LastSyncAt().Equal(t0) || *s.LastSyncError() != "boom" || *s.SyncUserID() != "u1" ||
+			s.Auth().Header != "X-Key" {
+			t.Fatalf("%s: the aggregate changed", when)
+		}
+	}
+	check("after changing the input")
+	s.SealedSecret()[0] = 9
+	g := s.Access()
+	sort.Strings(g.Groups)
+	g.Groups = append(g.Groups, "more")
+	*s.DailyLimit() = 99
+	*s.LastSyncAt() = t2
+	*s.LastSyncError() = "changed"
+	*s.SyncUserID() = "changed"
+	check("after changing what the getters returned")
+	// the constructor
+	lim := 5
+	n := make1(t, func(p *domain.NewServerParams) { p.DailyLimit = &lim })
+	lim = 6
+	*n.DailyLimit() = 8
+	if *n.DailyLimit() != 5 {
+		t.Fatal("NewServer or DailyLimit shares the pointer")
+	}
+	by := "admin"
+	n.ApplySync(domain.SyncSuccess(&by, t1))
+	*n.SyncCredentialsOwner(nil) = "changed"
+	if *n.SyncUserID() != "admin" {
+		t.Fatal("SyncCredentialsOwner shares the pointer")
+	}
+}
+
+func TestSecretKeepsOnTemplateAndHeaderChange(t *testing.T) {
+	for _, auth := range []domain.AuthMode{sharedMode("X-Other", "{secret}"), sharedMode("X-Key", "Bearer {secret}"), sharedMode("X-Other", "k={secret}")} {
+		s := withSecret(t, shared)
+		cleared, err := s.Update(domain.Changes{Auth: domain.Some(auth)}, t1)
+		if err != nil || cleared || !s.SecretSet() {
+			t.Errorf("%+v: cleared=%v err=%v", auth, cleared, err)
+		}
+	}
+	// oauth keep-list: template, header and the extra params
+	base := oauthOf(nil, true)
+	next := oauthOf(func(o *domain.OAuthClientConfig) {
+		o.ExtraAuthorizeParams = []domain.AuthorizeParam{{Key: "prompt", Value: "consent"}}
+	}, true)
+	next.Template = "token {secret}"
+	for _, auth := range []domain.AuthMode{next, func() domain.AuthMode { a := base; a.Template = "x {secret}"; return a }(), func() domain.AuthMode { a := base; a.Header = "X-Token"; return a }()} {
+		s := withSecret(t, base)
+		cleared, err := s.Update(domain.Changes{Auth: domain.Some(auth)}, t1)
+		if err != nil || cleared || !s.SecretSet() {
+			t.Errorf("oauth %+v: cleared=%v err=%v", auth, cleared, err)
+		}
+	}
+	// pat_user holds no server secret and its edits never clear anything
+	pat := make1(t, func(p *domain.NewServerParams) { p.Auth = patMode("A", "{secret}") })
+	if cleared, err := pat.Update(domain.Changes{Auth: domain.Some(patMode("B", "t {secret}"))}, t1); err != nil || cleared {
+		t.Fatal(cleared, err)
 	}
 }

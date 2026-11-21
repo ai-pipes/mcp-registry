@@ -1,7 +1,6 @@
 package domain
 
 import (
-	"maps"
 	"regexp"
 	"slices"
 	"strings"
@@ -31,9 +30,38 @@ type OAuthClientConfig struct {
 	RevokeURL *string
 	// ExtraAuthorizeParams are added to the authorize request as is, e.g. access_type=offline for
 	// YouTrack Hub, which issues a refresh token only then. They may not override the flow's own
-	// parameters. nil = absent. (The values are strings by type; the TypeScript check "values
-	// must be strings" is enforced by the type here.)
-	ExtraAuthorizeParams map[string]string
+	// parameters. nil = absent; an empty non-nil slice is `{}`. They are ordered, like the
+	// properties of a JavaScript object: validation reports the first offending key in this
+	// order. Keys are unique: for a duplicated key the FIRST position and the LAST value are kept
+	// (JavaScript object semantics), which ParseAuthMode applies; a decoder of a JSON object
+	// should produce the same. (The values are strings by type; the TypeScript check "values must
+	// be strings" is enforced by the type here.)
+	ExtraAuthorizeParams []AuthorizeParam
+}
+
+// AuthorizeParam is one extra query parameter of the authorize request.
+type AuthorizeParam struct {
+	Key   string
+	Value string
+}
+
+// uniqueParams applies JavaScript object semantics to a key list: the first position and the
+// last value of a duplicated key win. nil stays nil and empty stays empty.
+func uniqueParams(in []AuthorizeParam) []AuthorizeParam {
+	if in == nil {
+		return nil
+	}
+	out := make([]AuthorizeParam, 0, len(in))
+	at := make(map[string]int, len(in))
+	for _, p := range in {
+		if i, ok := at[p.Key]; ok {
+			out[i].Value = p.Value
+			continue
+		}
+		at[p.Key] = len(out)
+		out = append(out, p)
+	}
+	return out
 }
 
 // AuthMode is a server's authentication to its upstream. Header and Template are used by every
@@ -98,10 +126,9 @@ func checkOAuth(o *OAuthClientConfig) error {
 			return invalidAuth("the openid scope is not supported for upstream OAuth")
 		}
 	}
-	// Map iteration order is random: check the keys in a fixed order so the message is stable.
-	for _, key := range slices.Sorted(maps.Keys(o.ExtraAuthorizeParams)) {
-		if !paramNamePattern.MatchString(key) || slices.Contains(reservedAuthorizeParams, key) {
-			return invalidAuth(`extra authorize parameter "` + key + `" is not allowed`)
+	for _, p := range uniqueParams(o.ExtraAuthorizeParams) { // document order, as TypeScript's Object.entries
+		if !paramNamePattern.MatchString(p.Key) || slices.Contains(reservedAuthorizeParams, p.Key) {
+			return invalidAuth(`extra authorize parameter "` + p.Key + `" is not allowed`)
 		}
 	}
 	return nil
@@ -141,8 +168,14 @@ func (o *OAuthClientConfig) clone() *OAuthClientConfig {
 		v := *o.RevokeURL
 		c.RevokeURL = &v
 	}
-	c.ExtraAuthorizeParams = maps.Clone(o.ExtraAuthorizeParams)
+	c.ExtraAuthorizeParams = uniqueParams(o.ExtraAuthorizeParams)
 	return &c
+}
+
+// Clone returns a deep copy.
+func (m AuthMode) Clone() AuthMode {
+	m.OAuth = m.OAuth.clone()
+	return m
 }
 
 // HoldsSecret reports whether the server itself holds a secret (the OAuth client secret or the shared key).

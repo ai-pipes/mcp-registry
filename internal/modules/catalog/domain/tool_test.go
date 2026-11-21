@@ -3,6 +3,7 @@ package domain_test
 import (
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/ai-pipes/mcp-registry/internal/kernel"
@@ -268,15 +269,128 @@ func TestReconcileNumbersCompareAsFloat64(t *testing.T) {
 	}
 }
 
-func TestReconcileUnparsableJSONComparesAsText(t *testing.T) {
-	a := stored("a", func(s *domain.ToolState) { s.InputSchema = json.RawMessage(`{"n":1e999}`) })
-	same := snap("a", func(s *domain.ToolSnapshot) { s.InputSchema = json.RawMessage(`{"n":1e999}`) })
-	other := snap("a", func(s *domain.ToolSnapshot) { s.InputSchema = json.RawMessage(`{"n":2e999}`) })
+func TestReconcileNumbersOutOfRangeAreJavaScriptNumbers(t *testing.T) {
+	// JSON.parse("1e999") is Infinity and JSON.stringify turns it into null; a jsonb round trip
+	// stores the number with its digits expanded, which must not look like a change.
+	huge := "1" + strings.Repeat("0", 999)
+	cases := []struct {
+		a, b string
+		same bool
+	}{
+		{`{"a":1e999}`, `{"a":null}`, true},
+		{`{"a":1e999}`, `{"a":` + huge + `}`, true},
+		{`{"a":-1e999}`, `{"a":null}`, true},
+		{`{"a":1e999}`, `{"a":2e999}`, true},
+		{`{"a":1e999}`, `{"a":1}`, false},
+		{`{"a":1}`, `{"a":1.0}`, true},
+		{`{"a":1}`, `{"a":1.5}`, false},
+		{`{"a":-0}`, `{"a":0}`, true},
+		{`{"a":1e-999}`, `{"a":0}`, true},
+		{`{"a":12345678901234567890}`, `{"a":12345678901234567891}`, true},
+		{`{"a":12345678901234567890}`, `{"a":12345678901234577890}`, false},
+		{`[1e999,2]`, `[null,2]`, true},
+		{`{"a":"1e999"}`, `{"a":null}`, false},
+	}
+	for _, c := range cases {
+		old := stored("a", func(s *domain.ToolState) { s.InputSchema = json.RawMessage(c.a) })
+		next := snap("a", func(s *domain.ToolSnapshot) { s.InputSchema = json.RawMessage(c.b) })
+		r := domain.ReconcileTools("gitea", []*domain.Tool{old}, []domain.ToolSnapshot{next}, t1)
+		if (len(r.Upserts) == 0) != c.same {
+			t.Errorf("%s vs %s: same=%v want %v", c.a, c.b, len(r.Upserts) == 0, c.same)
+		}
+	}
+}
+
+func TestReconcileSyntacticallyInvalidJSONComparesAsText(t *testing.T) {
+	a := stored("a", func(s *domain.ToolState) { s.InputSchema = json.RawMessage(`{"n":`) })
+	same := snap("a", func(s *domain.ToolSnapshot) { s.InputSchema = json.RawMessage(`{"n":`) })
+	other := snap("a", func(s *domain.ToolSnapshot) { s.InputSchema = json.RawMessage(`{"m":`) })
 	if r := domain.ReconcileTools("gitea", []*domain.Tool{a}, []domain.ToolSnapshot{same}, t1); len(r.Upserts) != 0 {
 		t.Fatal("identical bytes")
 	}
 	if r := domain.ReconcileTools("gitea", []*domain.Tool{a}, []domain.ToolSnapshot{other}, t1); len(r.Upserts) != 1 {
 		t.Fatal("different bytes")
+	}
+}
+
+func TestReconcileTitleNilAndEmptyDiffer(t *testing.T) {
+	// TypeScript: `a.title === b.title` over string | null, so null and "" are different.
+	for _, c := range []struct{ old, next *string }{{nil, ptr("")}, {ptr(""), nil}, {ptr(""), ptr("x")}} {
+		old := stored("a", func(s *domain.ToolState) { s.Title = c.old })
+		next := snap("a", func(s *domain.ToolSnapshot) { s.Title = c.next })
+		if r := domain.ReconcileTools("gitea", []*domain.Tool{old}, []domain.ToolSnapshot{next}, t1); len(r.Upserts) != 1 {
+			t.Errorf("%v vs %v not detected", c.old, c.next)
+		}
+	}
+	old := stored("a", func(s *domain.ToolState) { s.Title = ptr("") })
+	next := snap("a", func(s *domain.ToolSnapshot) { s.Title = ptr("") })
+	if r := domain.ReconcileTools("gitea", []*domain.Tool{old}, []domain.ToolSnapshot{next}, t1); len(r.Upserts) != 0 {
+		t.Fatal("equal empty titles")
+	}
+}
+
+func TestToolGettersReturnCopies(t *testing.T) {
+	in := json.RawMessage(`{"type":"object"}`)
+	out := json.RawMessage(`{"o":1}`)
+	title := "T"
+	ro := true
+	tl := domain.RehydrateTool(domain.ToolState{
+		ToolSnapshot: domain.ToolSnapshot{Name: "a", Title: &title, InputSchema: in, OutputSchema: out, Annotations: domain.ToolAnnotations{ReadOnlyHint: &ro}},
+		Server:       "gitea", SyncedAt: t0,
+	})
+	// the input of RehydrateTool is copied
+	in[2] = 'X'
+	out[2] = 'X'
+	title = "changed"
+	ro = false
+	if string(tl.InputSchema()) != `{"type":"object"}` || string(tl.OutputSchema()) != `{"o":1}` || *tl.Title() != "T" || !*tl.Annotations().ReadOnlyHint {
+		t.Fatal("RehydrateTool shares memory with its input")
+	}
+	// getters
+	tl.InputSchema()[2] = 'X'
+	tl.OutputSchema()[2] = 'X'
+	*tl.Title() = "changed"
+	*tl.Annotations().ReadOnlyHint = false
+	snapshot := tl.Snapshot()
+	snapshot.InputSchema[2] = 'X'
+	snapshot.OutputSchema[2] = 'X'
+	*snapshot.Title = "changed"
+	*snapshot.Annotations.ReadOnlyHint = false
+	removed := t1
+	tl2 := domain.RehydrateTool(domain.ToolState{Server: "s", RemovedAt: &removed, SyncedAt: t0})
+	*tl2.RemovedAt() = t2
+	if !tl2.RemovedAt().Equal(t1) {
+		t.Fatal("RemovedAt shares memory")
+	}
+	if string(tl.InputSchema()) != `{"type":"object"}` || string(tl.OutputSchema()) != `{"o":1}` || *tl.Title() != "T" || !*tl.Annotations().ReadOnlyHint {
+		t.Fatal("a getter returned the aggregate's own memory")
+	}
+}
+
+func TestReconcileResultDoesNotShareMemory(t *testing.T) {
+	in := snap("a")
+	r := domain.ReconcileTools("gitea", nil, []domain.ToolSnapshot{in}, t1)
+	in.InputSchema[2] = 'X'
+	if string(r.Upserts[0].InputSchema()) != `{"type":"object"}` {
+		t.Fatal("upsert shares the incoming bytes")
+	}
+	r.Events[0].Payload["refs"].([]string)[0] = "changed"
+	r.ChangedRefs[0] = "changed"
+	if r.Upserts[0].Ref() != "gitea.a" {
+		t.Fatal("ref")
+	}
+	r2 := domain.ReconcileTools("gitea", nil, []domain.ToolSnapshot{snap("a")}, t1)
+	if r2.Events[0].Payload["refs"].([]string)[0] != "gitea.a" {
+		t.Fatal("setup")
+	}
+	r2.ChangedRefs[0] = "changed"
+	if r2.Events[0].Payload["refs"].([]string)[0] != "gitea.a" {
+		t.Fatal("the event payload shares its slice with ChangedRefs")
+	}
+	removed := domain.ReconcileTools("gitea", []*domain.Tool{stored("b")}, nil, t1)
+	removed.RemovedRefs[0] = "changed"
+	if removed.Events[0].Payload["refs"].([]string)[0] != "gitea.b" {
+		t.Fatal("the event payload shares its slice with RemovedRefs")
 	}
 }
 

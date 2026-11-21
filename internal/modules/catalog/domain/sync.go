@@ -26,25 +26,29 @@ const (
 	FailureRejected     SyncFailure = "rejected"
 )
 
-var syncFailureTexts = map[SyncFailure]string{ //nolint:gosec // G101 false positive: failure texts, not credentials
-	FailureNeedsConnection:        "An administrator needs to connect this server",
-	FailureCredentialsUnavailable: "The OAuth provider is unavailable",
-	FailureNoSecret:               "The server secret is not set",
-	FailureInternal:               "Internal sync error",
-	FailureUnauthorized:           "Upstream rejected the credentials (HTTP 401)",
-	FailureTimeout:                "Upstream did not respond in time",
-	FailureTooLarge:               "The upstream response exceeds the allowed size",
-	FailureTransport:              "Could not reach the upstream",
-	FailureRejected:               "Upstream answered tools/list with a JSON-RPC error",
-}
-
 // SyncFailureText is the text stored in last_sync_error and shown to admins: no upstream
 // details, no secrets. An unknown failure reads as an internal one.
 func SyncFailureText(f SyncFailure) string {
-	if t, ok := syncFailureTexts[f]; ok {
-		return t
+	switch f {
+	case FailureNeedsConnection:
+		return "An administrator needs to connect this server"
+	case FailureCredentialsUnavailable:
+		return "The OAuth provider is unavailable"
+	case FailureNoSecret:
+		return "The server secret is not set"
+	case FailureUnauthorized:
+		return "Upstream rejected the credentials (HTTP 401)"
+	case FailureTimeout:
+		return "Upstream did not respond in time"
+	case FailureTooLarge:
+		return "The upstream response exceeds the allowed size"
+	case FailureTransport:
+		return "Could not reach the upstream"
+	case FailureRejected:
+		return "Upstream answered tools/list with a JSON-RPC error"
+	default: // FailureInternal and anything unknown
+		return "Internal sync error"
 	}
-	return syncFailureTexts[FailureInternal]
 }
 
 // SyncFailureOfUpstream maps an upstream error kind to the failure; an unknown kind is a

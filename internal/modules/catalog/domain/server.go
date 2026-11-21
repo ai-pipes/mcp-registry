@@ -173,8 +173,26 @@ func NewServer(p NewServerParams) (*Server, error) {
 
 // RehydrateServer restores a stored server: no validation, no events, secret unchanged.
 func RehydrateServer(st ServerState) *Server {
+	return &Server{s: st.clone()}
+}
+
+func (st ServerState) clone() ServerState {
+	st.Auth = st.Auth.Clone()
+	st.Access = st.Access.Clone()
 	st.SealedSecret = slices.Clone(st.SealedSecret)
-	return &Server{s: st}
+	st.DailyLimit = copyInt(st.DailyLimit)
+	st.LastSyncAt = copyTime(st.LastSyncAt)
+	st.LastSyncError = copyString(st.LastSyncError)
+	st.SyncUserID = copyString(st.SyncUserID)
+	return st
+}
+
+func copyTime(t *time.Time) *time.Time {
+	if t == nil {
+		return nil
+	}
+	v := *t
+	return &v
 }
 
 // CheckSecret checks a secret to be stored: non-blank, at most 4096 UTF-16 units. It is not
@@ -202,28 +220,28 @@ func (s *Server) Description() string { return s.s.Description }
 func (s *Server) URL() string { return s.s.URL }
 
 // Auth returns the server's Auth.
-func (s *Server) Auth() AuthMode { return s.s.Auth }
+func (s *Server) Auth() AuthMode { return s.s.Auth.Clone() }
 
 // Access returns the server's Access.
-func (s *Server) Access() Access { return s.s.Access }
+func (s *Server) Access() Access { return s.s.Access.Clone() }
 
 // TimeoutMs returns the server's TimeoutMs.
 func (s *Server) TimeoutMs() int { return s.s.TimeoutMs }
 
 // DailyLimit returns the server's DailyLimit.
-func (s *Server) DailyLimit() *int { return s.s.DailyLimit }
+func (s *Server) DailyLimit() *int { return copyInt(s.s.DailyLimit) }
 
 // Status returns the server's Status.
 func (s *Server) Status() ServerStatus { return s.s.Status }
 
 // LastSyncAt returns the server's LastSyncAt.
-func (s *Server) LastSyncAt() *time.Time { return s.s.LastSyncAt }
+func (s *Server) LastSyncAt() *time.Time { return copyTime(s.s.LastSyncAt) }
 
 // LastSyncError returns the server's LastSyncError.
-func (s *Server) LastSyncError() *string { return s.s.LastSyncError }
+func (s *Server) LastSyncError() *string { return copyString(s.s.LastSyncError) }
 
 // SyncUserID returns the server's SyncUserID.
-func (s *Server) SyncUserID() *string { return s.s.SyncUserID }
+func (s *Server) SyncUserID() *string { return copyString(s.s.SyncUserID) }
 
 // CreatedAt returns the server's CreatedAt.
 func (s *Server) CreatedAt() time.Time { return s.s.CreatedAt }
@@ -242,7 +260,7 @@ func (s *Server) CanBeUsedBy(a Actor) bool { return CanUse(s.s.Access, s.s.Statu
 
 // SealedSecret is the encrypted secret (nil: none), for the repository and for opening it in a
 // use case. Never serialise it.
-func (s *Server) SealedSecret() []byte { return s.s.SealedSecret }
+func (s *Server) SealedSecret() []byte { return slices.Clone(s.s.SealedSecret) }
 
 // Changes is a partial edit: only the fields marked with Some are changed.
 type Changes struct {

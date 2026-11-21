@@ -97,10 +97,14 @@ func TestContractLimits(t *testing.T) {
 			f.Auth = oauthWith(func(o *domain.OAuthClientConfig) { o.Scopes = numbered(51) })
 		}, "auth.oauth.scopes"},
 		{"oauth extra param key 101", func(f *app.ServerFields) {
-			f.Auth = oauthWith(func(o *domain.OAuthClientConfig) { o.ExtraAuthorizeParams = map[string]string{long(101): "x"} })
+			f.Auth = oauthWith(func(o *domain.OAuthClientConfig) {
+				o.ExtraAuthorizeParams = []domain.AuthorizeParam{{Key: long(101), Value: "x"}}
+			})
 		}, "auth.oauth.extraAuthorizeParams." + long(101)},
 		{"oauth extra param value 1001", func(f *app.ServerFields) {
-			f.Auth = oauthWith(func(o *domain.OAuthClientConfig) { o.ExtraAuthorizeParams = map[string]string{"prompt": long(1001)} })
+			f.Auth = oauthWith(func(o *domain.OAuthClientConfig) {
+				o.ExtraAuthorizeParams = []domain.AuthorizeParam{{Key: "prompt", Value: long(1001)}}
+			})
 		}, "auth.oauth.extraAuthorizeParams.prompt"},
 		{"oauth block missing", func(f *app.ServerFields) { a := authOAuth; a.OAuth = nil; f.Auth = a }, "auth.oauth"},
 		{"none ignores header and template", func(f *app.ServerFields) { f.Auth = domain.AuthMode{Kind: domain.AuthNone, Header: "", Template: ""} }, ""},
@@ -266,7 +270,9 @@ func TestDomainRulesKeepTheirCodesAndMessages(t *testing.T) {
 			f.Auth = oauthWith(func(o *domain.OAuthClientConfig) { o.Scopes = []string{"OpenID"} })
 		}, "invalid_auth", "the openid scope is not supported for upstream OAuth"},
 		{func(f *app.ServerFields) {
-			f.Auth = oauthWith(func(o *domain.OAuthClientConfig) { o.ExtraAuthorizeParams = map[string]string{"state": "x"} })
+			f.Auth = oauthWith(func(o *domain.OAuthClientConfig) {
+				o.ExtraAuthorizeParams = []domain.AuthorizeParam{{Key: "state", Value: "x"}}
+			})
 		}, "invalid_auth", `extra authorize parameter "state" is not allowed`},
 		{func(f *app.ServerFields) { f.Access = groups("  ") }, "invalid_access", "list at least one non-empty group"},
 	}

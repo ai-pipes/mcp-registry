@@ -71,6 +71,12 @@ func (a Access) Equal(b Access) bool {
 	return a.Kind == b.Kind && slices.Equal(a.Groups, b.Groups)
 }
 
+// Clone returns a deep copy.
+func (a Access) Clone() Access {
+	a.Groups = slices.Clone(a.Groups)
+	return a
+}
+
 // IsAdmin reports whether the actor is an administrator.
 func IsAdmin(a Actor) bool { return a.Role == RoleAdmin }
 

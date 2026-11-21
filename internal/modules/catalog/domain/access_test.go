@@ -79,3 +79,15 @@ func TestAccessEqual(t *testing.T) {
 		t.Fatal("all equals all")
 	}
 }
+
+func TestParseAccessCopies(t *testing.T) {
+	in := []string{"b", "a"}
+	got, err := domain.ParseAccess(domain.Access{Kind: domain.AccessGroups, Groups: in})
+	if err != nil {
+		t.Fatal(err)
+	}
+	in[0] = "changed"
+	if got.Groups[0] != "b" {
+		t.Fatal("shares the input slice")
+	}
+}

@@ -1,7 +1,6 @@
 package app
 
 import (
-	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -237,15 +236,16 @@ func normaliseOAuth(o *domain.OAuthClientConfig) (*domain.OAuthClientConfig, []I
 		issues = append(issues, Issue{Path: "auth.oauth.scopes", Message: "must have at most " + strconv.Itoa(maxScopes) + " items"})
 	}
 	out.Scopes = append([]string{}, o.Scopes...)
-	for _, key := range slices.Sorted(maps.Keys(o.ExtraAuthorizeParams)) {
+	for _, p := range o.ExtraAuthorizeParams {
+		key := p.Key
 		path := "auth.oauth.extraAuthorizeParams." + key
 		if utf16Len(key) > maxParamNameLen {
 			issues = append(issues, Issue{Path: path, Message: "name must be at most " + strconv.Itoa(maxParamNameLen) + " characters"})
-		} else if utf16Len(o.ExtraAuthorizeParams[key]) > maxParamValueLen {
+		} else if utf16Len(p.Value) > maxParamValueLen {
 			issues = append(issues, Issue{Path: path, Message: "must be at most " + strconv.Itoa(maxParamValueLen) + " characters"})
 		}
 	}
-	out.ExtraAuthorizeParams = maps.Clone(o.ExtraAuthorizeParams)
+	out.ExtraAuthorizeParams = slices.Clone(o.ExtraAuthorizeParams)
 	return &out, issues
 }
 

@@ -4,6 +4,7 @@ import (
 	"net/netip"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // ValidHTTPURL reports whether JavaScript's `new URL(raw)` parses raw and gives the protocol
@@ -13,8 +14,12 @@ import (
 // the authority (credentials, host, port) and the host rules (IPv6, IPv4 numbers, forbidden
 // host code points). Path, query and fragment never make a URL invalid and are not looked at.
 //
-// Approximation: a non-ASCII host is accepted without running IDNA (the reference would
-// reject a few exotic labels). The stored URL is never rewritten; this only decides validity.
+// Accepted difference: the IDNA (UTS #46) step of host parsing is not run, because the domain and
+// the kernel are standard-library only. It matters for non-ASCII hosts, for ASCII "xn--" labels
+// (the reference decodes and validates punycode) and for percent-encoded bytes of the host (the
+// reference maps the decoded text); the reference would reject some of these inputs, and this
+// check accepts them. A host whose percent-decoding is not valid UTF-8 is rejected, as the
+// reference does. The stored URL is never rewritten; this only decides validity.
 func ValidHTTPURL(raw string) bool {
 	// Leading and trailing C0 controls and spaces are stripped, tab and newlines removed anywhere.
 	s := strings.TrimFunc(raw, func(r rune) bool { return r <= 0x20 })
@@ -102,7 +107,7 @@ func validHost(host string) bool {
 		return err == nil && a.Is6()
 	}
 	decoded := percentDecode(host)
-	if decoded == "" {
+	if decoded == "" || !utf8.ValidString(decoded) {
 		return false
 	}
 	for i := 0; i < len(decoded); i++ {
