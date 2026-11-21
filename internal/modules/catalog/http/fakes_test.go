@@ -25,7 +25,18 @@ import (
 	"github.com/ai-pipes/mcp-registry/internal/platform/httpx"
 )
 
-var t0 = time.Date(2026, 10, 30, 10, 0, 0, 123_000_000, time.UTC)
+// t0 has digits below the millisecond: the API shows them cut (toISOString), not rounded.
+var t0 = time.Date(2026, 10, 30, 10, 0, 0, 123_987_654, time.UTC)
+
+// nulErr is what Postgres answers to a text with a NUL byte: a plain error, not a refusal.
+func nulErr(parts ...string) error {
+	for _, p := range parts {
+		if strings.ContainsRune(p, 0) {
+			return errors.New("invalid byte sequence for encoding \"UTF8\": 0x00")
+		}
+	}
+	return nil
+}
 
 type fixedClock struct{ t time.Time }
 
@@ -53,6 +64,9 @@ func stateOf(s *domain.Server, version int64) domain.ServerState {
 }
 
 func (r *fakeServers) FindBySlug(_ context.Context, slug string) (*domain.Server, error) {
+	if err := nulErr(slug); err != nil {
+		return nil, err
+	}
 	if r.failFind != nil {
 		return nil, r.failFind
 	}
@@ -84,6 +98,9 @@ func (r *fakeServers) List(context.Context) ([]app.ServerListing, error) {
 }
 
 func (r *fakeServers) Create(_ context.Context, s *domain.Server, _ []kernel.Event) error {
+	if err := nulErr(s.Slug(), s.Name(), s.Description(), s.URL()); err != nil {
+		return err
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, taken := r.rows[s.Slug()]; taken {
@@ -94,6 +111,9 @@ func (r *fakeServers) Create(_ context.Context, s *domain.Server, _ []kernel.Eve
 }
 
 func (r *fakeServers) Save(_ context.Context, s *domain.Server, _ []kernel.Event) error {
+	if err := nulErr(s.Slug()); err != nil {
+		return err
+	}
 	if r.beforeSave != nil {
 		r.beforeSave(s.Slug())
 	}
@@ -116,6 +136,9 @@ func (r *fakeServers) Save(_ context.Context, s *domain.Server, _ []kernel.Event
 }
 
 func (r *fakeServers) SaveSyncState(_ context.Context, slug string, rec domain.SyncRecord) error {
+	if err := nulErr(slug); err != nil {
+		return err
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	st, ok := r.rows[slug]
@@ -164,6 +187,9 @@ func (r *fakeTools) visibleCount(server string) int {
 }
 
 func (r *fakeTools) Find(_ context.Context, server, name string) (*domain.Tool, error) {
+	if err := nulErr(server, name); err != nil {
+		return nil, err
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	st, ok := r.rows[toolKey(server, name)]
@@ -185,12 +211,18 @@ func (r *fakeTools) list(server string) []*domain.Tool {
 }
 
 func (r *fakeTools) ListByServer(_ context.Context, server string) ([]*domain.Tool, error) {
+	if err := nulErr(server); err != nil {
+		return nil, err
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.list(server), nil
 }
 
 func (r *fakeTools) Save(_ context.Context, t *domain.Tool, _ []kernel.Event) error {
+	if err := nulErr(t.Server(), t.Name()); err != nil {
+		return err
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, ok := r.rows[toolKey(t.Server(), t.Name())]; !ok {
@@ -201,6 +233,9 @@ func (r *fakeTools) Save(_ context.Context, t *domain.Tool, _ []kernel.Event) er
 }
 
 func (r *fakeTools) ApplySnapshot(_ context.Context, server string, snaps []domain.ToolSnapshot, now time.Time) (app.SnapshotResult, error) {
+	if err := nulErr(server); err != nil {
+		return app.SnapshotResult{}, err
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.exists != nil && !r.exists(server) {
@@ -310,12 +345,21 @@ func testGuards() cathttp.Guards {
 					httpx.WriteError(w, "unauthenticated", "sign in required")
 					return
 				}
+				if r.Header.Get("X-Probe") != "" {
+					w.Header().Add("X-Guards", "session")
+				}
 				next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalKey{}, p)))
 			})
 		},
 		Admin: func(next http.Handler) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				p, _ := r.Context().Value(principalKey{}).(identity.Principal)
+				if r.Header.Get("X-Probe") != "" {
+					// A probe only asks which guards stand in front of a route.
+					w.Header().Add("X-Guards", "admin")
+					w.WriteHeader(http.StatusNoContent)
+					return
+				}
 				if p.Role != identity.RoleAdmin {
 					httpx.WriteError(w, "forbidden", "admin only")
 					return
@@ -431,8 +475,11 @@ func (e *env) applyTools(slug string, names ...string) {
 
 // errBody is the JSON error body for a code and message.
 func errBody(code, message string) string {
-	raw, _ := json.Marshal(map[string]map[string]string{"error": {"code": code, "message": message}})
-	return string(raw)
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(map[string]map[string]string{"error": {"code": code, "message": message}})
+	return strings.TrimRight(buf.String(), "\n")
 }
 
 func wantReply(t *testing.T, got reply, status int, body string) {

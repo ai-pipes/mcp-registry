@@ -127,11 +127,14 @@ func readBody(r *http.Request) (*node, error) {
 			return nil, httpx.InvalidRequest("body could not be read")
 		}
 	}
-	text := kernel.JSTrim(string(raw))
-	if text == "" {
-		text = "{}"
+	// Request.text() decodes UTF-8 and so drops one leading byte order mark. Only then does the
+	// body count as empty when JavaScript's trim() leaves nothing; otherwise JSON.parse sees the
+	// raw text (a leading no-break space is not JSON white space).
+	raw = bytes.TrimPrefix(raw, []byte("\xef\xbb\xbf"))
+	if kernel.JSTrim(string(raw)) == "" {
+		raw = []byte("{}")
 	}
-	n, err := readTree([]byte(text))
+	n, err := readTree(raw)
 	if err != nil {
 		return nil, httpx.InvalidRequest("body is not valid JSON")
 	}
@@ -179,13 +182,22 @@ func (s *shape) object(parent *node, base, key string) *node {
 // text checks a string value; a NUL cannot be stored (Postgres refuses it), so it is a refusal
 // here, where the TypeScript server would answer 500.
 func (s *shape) text(n *node, path string) (string, bool) {
+	v, ok := s.anyText(n, path)
+	if ok && strings.ContainsRune(v, 0) {
+		s.add(path, "must not contain a NUL character")
+		return "", false
+	}
+	return v, ok
+}
+
+// anyText is a string that may hold a NUL: for the fields whose domain pattern refuses it with
+// its own answer (slug, header name, header template), as TypeScript does.
+func (s *shape) anyText(n *node, path string) (string, bool) {
 	switch {
 	case n == nil:
 		s.add(path, "is required")
 	case n.kind != kindString:
 		s.add(path, "expected a string")
-	case strings.ContainsRune(n.str, 0):
-		s.add(path, "must not contain a NUL character")
 	default:
 		return n.str, true
 	}
@@ -194,6 +206,12 @@ func (s *shape) text(n *node, path string) (string, bool) {
 
 func (s *shape) str(parent *node, base, key string) string {
 	v, _ := s.text(parent.member(key), join(base, key))
+	return v
+}
+
+// patterned is str for a field the domain checks against a pattern that refuses a NUL itself.
+func (s *shape) patterned(parent *node, base, key string) string {
+	v, _ := s.anyText(parent.member(key), join(base, key))
 	return v
 }
 
@@ -209,8 +227,10 @@ func (s *shape) optionalStr(parent *node, base, key string) *string {
 	return nil
 }
 
-// strList is z.array(z.string()): every element is checked; a wrong one is left out.
-func (s *shape) strList(n *node, path string) []string {
+// strList is z.array(z.string()).max(limit): every element of a list within the limit is checked
+// and a wrong one is its own issue; an oversized list is not looked into (zod reports only the
+// array). Wrong entries stay in the list as a placeholder so that the limit check counts them.
+func (s *shape) strList(n *node, path string, limit int) []string {
 	out := []string{}
 	switch {
 	case n == nil:
@@ -219,8 +239,12 @@ func (s *shape) strList(n *node, path string) []string {
 		s.add(path, "expected an array")
 	default:
 		for i, item := range n.items {
-			if v, ok := s.text(item, path+"."+strconv.Itoa(i)); ok {
+			if len(n.items) > limit {
+				out = append(out, "x")
+			} else if v, ok := s.text(item, path+"."+strconv.Itoa(i)); ok {
 				out = append(out, v)
+			} else {
+				out = append(out, "x")
 			}
 		}
 	}
@@ -269,11 +293,11 @@ func (s *shape) authMode(parent *node) domain.AuthMode {
 	switch mode.Kind {
 	case domain.AuthNone:
 	case domain.AuthSharedSecret, domain.AuthPATUser:
-		mode.Header, mode.Template = s.str(n, "auth", "header"), s.str(n, "auth", "template")
+		mode.Header, mode.Template = s.patterned(n, "auth", "header"), s.patterned(n, "auth", "template")
 	case domain.AuthOAuthUser:
 		// The members of the union's branch in schema order: kind, oauth, header, template.
 		mode.OAuth = s.oauth(n)
-		mode.Header, mode.Template = s.str(n, "auth", "header"), s.str(n, "auth", "template")
+		mode.Header, mode.Template = s.patterned(n, "auth", "header"), s.patterned(n, "auth", "template")
 	default:
 		s.add("auth.kind", "must be one of none, shared_secret, pat_user, oauth_user")
 		return none
@@ -292,7 +316,7 @@ func (s *shape) oauth(auth *node) *domain.OAuthClientConfig {
 		TokenURL:     s.str(o, base, "tokenUrl"),
 		RevokeURL:    s.optionalStr(o, base, "revokeUrl"),
 		ClientID:     s.str(o, base, "clientId"),
-		Scopes:       s.strList(o.member("scopes"), base+".scopes"),
+		Scopes:       s.strList(o.member("scopes"), base+".scopes", 50),
 	}
 	if extra := o.member("extraAuthorizeParams"); extra != nil {
 		cfg.ExtraAuthorizeParams = s.params(extra, base+".extraAuthorizeParams")
@@ -309,18 +333,20 @@ func (s *shape) params(n *node, path string) []domain.AuthorizeParam {
 		return nil
 	}
 	out := []domain.AuthorizeParam{}
-	at := map[string]int{}
+	last := map[string]int{}
 	for i, key := range n.keys {
-		value, ok := s.text(n.vals[i], path+"."+key)
-		if !ok {
+		last[key] = i
+	}
+	seen := map[string]bool{}
+	for _, key := range n.keys {
+		if seen[key] {
 			continue
 		}
-		if pos, dup := at[key]; dup {
-			out[pos].Value = value
-			continue
+		seen[key] = true
+		// Only the last value of a repeated key exists in a JavaScript object.
+		if value, ok := s.text(n.vals[last[key]], path+"."+key); ok {
+			out = append(out, domain.AuthorizeParam{Key: key, Value: value})
 		}
-		at[key] = len(out)
-		out = append(out, domain.AuthorizeParam{Key: key, Value: value})
 	}
 	return out
 }
@@ -342,7 +368,7 @@ func (s *shape) access(parent *node) domain.Access {
 		case domain.AccessAll:
 			return all
 		case domain.AccessGroups:
-			return domain.Access{Kind: domain.AccessGroups, Groups: s.strList(n.member("groups"), "access.groups")}
+			return domain.Access{Kind: domain.AccessGroups, Groups: s.strList(n.member("groups"), "access.groups", 100)}
 		}
 	}
 	s.add("access.kind", "must be one of all, groups")
@@ -493,7 +519,7 @@ func parseServer(root *node, create, withSlug bool) (app.ServerInput, *string, [
 	in := app.ServerInput{Fields: s.fields(root)}
 	var secret *string
 	if create || withSlug {
-		in.Slug = s.str(root, "", "slug")
+		in.Slug = s.patterned(root, "", "slug")
 	}
 	if create {
 		if n := root.member("secret"); n != nil && n.kind != kindNull {

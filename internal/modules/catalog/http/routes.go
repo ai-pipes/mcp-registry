@@ -20,9 +20,9 @@ type Guards struct {
 }
 
 // Routes is everything the catalog serves under /api: GET /api/catalog for any signed-in person
-// and the administration under /api/servers. The prefixes guard every path at or under them
-// (session, then admin for /api/servers), so an unknown path there is answered by the guard, not
-// by a 404. The guards are identity's.
+// (the guard is on the route itself) and the administration under /api/servers. The prefix guards
+// every path at or under /api/servers (session, then admin), so an unknown path there is answered
+// by the guard, not by a 404. The guards are identity's.
 func Routes(svc *identity.Service, d app.Deps) ([]httpx.Route, []httpx.Prefix) {
 	return RoutesWith(Guards{Session: svc.RequireSession(), Admin: identity.RequireAdmin(), Principal: identity.PrincipalOf}, d)
 }
@@ -32,7 +32,8 @@ func RoutesWith(g Guards, d app.Deps) ([]httpx.Route, []httpx.Prefix) {
 	h := &handlers{g: g, d: d}
 	fn := func(f func(http.ResponseWriter, *http.Request)) http.Handler { return http.HandlerFunc(f) }
 	routes := []httpx.Route{
-		{Method: "GET", Path: "/api/catalog", Handler: fn(h.catalog)},
+		// Only this route is guarded, not the paths below it (as in TypeScript).
+		{Method: "GET", Path: "/api/catalog", Handler: httpx.Chain(fn(h.catalog), g.Session)},
 		{Method: "GET", Path: "/api/servers", Handler: fn(h.listServers)},
 		{Method: "POST", Path: "/api/servers", Handler: fn(h.createServer)},
 		{Method: "GET", Path: "/api/servers/{slug}", Handler: fn(h.getServer)},
@@ -44,7 +45,6 @@ func RoutesWith(g Guards, d app.Deps) ([]httpx.Route, []httpx.Prefix) {
 		{Method: "PUT", Path: "/api/servers/{slug}/tools/{name}/hidden", Handler: fn(h.setHidden)},
 	}
 	prefixes := []httpx.Prefix{
-		{Path: "/api/catalog", Middleware: []httpx.Middleware{g.Session}},
 		{Path: "/api/servers", Middleware: []httpx.Middleware{g.Session, g.Admin}},
 	}
 	return routes, prefixes
@@ -266,7 +266,8 @@ func (h *handlers) setHidden(w http.ResponseWriter, r *http.Request) {
 	}
 	slug, name := httpx.PathParam(r, "slug"), httpx.PathParam(r, "name")
 	ref := slug + "." + name
-	if hasNUL(slug, name) {
+	// A NUL in the slug is refused by the ref's own parser (invalid_tool_ref) before any SQL.
+	if hasNUL(name) {
 		notFound(w, `tool "`+ref+`" not found`)
 		return
 	}

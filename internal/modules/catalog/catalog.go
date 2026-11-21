@@ -66,6 +66,10 @@ type (
 	AuthorizeParam = domain.AuthorizeParam
 	// Access says who may use a server.
 	Access = domain.Access
+	// AccessKind is all or groups.
+	AccessKind = domain.AccessKind
+	// CredentialSource says where the upstream credential of an auth mode comes from.
+	CredentialSource = domain.CredentialSource
 	// ServerStatus is active or disabled.
 	ServerStatus = domain.ServerStatus
 	// ToolAnnotations are the four boolean MCP hints of a tool.
@@ -82,6 +86,13 @@ const (
 	CredentialNeedsConnection = domain.CredentialNeedsConnection
 	CredentialExpired         = domain.CredentialExpired
 	CredentialUnavailable     = domain.CredentialUnavailable
+
+	AccessAll    = domain.AccessAll
+	AccessGroups = domain.AccessGroups
+
+	SourceNone         = domain.SourceNone
+	SourceServerSecret = domain.SourceServerSecret
+	SourcePersonal     = domain.SourcePersonal
 
 	StatusActive   = domain.StatusActive
 	StatusDisabled = domain.StatusDisabled

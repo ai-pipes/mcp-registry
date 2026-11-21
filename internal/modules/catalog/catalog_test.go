@@ -171,6 +171,19 @@ func TestServiceTypesAreTheModulesOwn(t *testing.T) {
 	}
 }
 
+func TestSourcesAndAccessKindsAreReExported(t *testing.T) {
+	if catalog.AccessAll != "all" || catalog.AccessGroups != "groups" ||
+		catalog.SourceNone != "none" || catalog.SourceServerSecret != "server_secret" || catalog.SourcePersonal != "personal" {
+		t.Fatal("constants")
+	}
+	if a := (catalog.Access{Kind: catalog.AccessAll}); a.Kind != "all" {
+		t.Fatal("Access")
+	}
+	if src := catalog.SourcePersonal; src != "personal" {
+		t.Fatal("CredentialSource")
+	}
+}
+
 func TestServiceCommandsReachTheUseCases(t *testing.T) {
 	svc := catalog.New(catalog.Deps{
 		Servers: servers{rows: []domain.ServerState{state("beta", domain.StatusDisabled, nil)}},

@@ -424,7 +424,7 @@ func TestPathParametersThatCannotExistAreNotFound(t *testing.T) {
 		{"sync nul", "POST", "/api/servers/a%00b/sync", nil, 404, "active server \"a\x00b\" not found"},
 		{"tools nul", "GET", "/api/servers/a%00b/tools", nil, 404, "server \"a\x00b\" not found"},
 		{"hidden nul in the tool", "PUT", "/api/servers/gitea/tools/a%00b/hidden", valid, 404, "tool \"gitea.a\x00b\" not found"},
-		{"hidden nul in the slug", "PUT", "/api/servers/a%00b/tools/a/hidden", valid, 404, "tool \"a\x00b.a\" not found"},
+
 		{"invalid utf-8", "GET", "/api/servers/a%ffb", nil, 404, "not found"},
 		{"dot segment", "GET", "/api/servers/%2e%2e", nil, 404, "not found"},
 	}

@@ -36,8 +36,20 @@ func TestContractLimits(t *testing.T) {
 		{"name empty", func(f *app.ServerFields) { f.Name = "" }, "name"},
 		{"name 100", func(f *app.ServerFields) { f.Name = long(100) }, ""},
 		{"name 101", func(f *app.ServerFields) { f.Name = long(101) }, "name"},
-		{"name 50 astral characters are 100 UTF-16 units", func(f *app.ServerFields) { f.Name = strings.Repeat("\U0001F600", 50) }, ""},
-		{"name 51 astral characters are 102 units", func(f *app.ServerFields) { f.Name = strings.Repeat("\U0001F600", 51) }, "name"},
+		// zod counts code points, not UTF-16 units: 100 emoji are 100.
+		{"name 100 astral characters", func(f *app.ServerFields) { f.Name = strings.Repeat("\U0001F600", 100) }, ""},
+		{"name 99 astral characters and a letter", func(f *app.ServerFields) { f.Name = strings.Repeat("\U0001F600", 99) + "a" }, ""},
+		{"name 101 astral characters", func(f *app.ServerFields) { f.Name = strings.Repeat("\U0001F600", 101) }, "name"},
+		{"description 500 astral characters", func(f *app.ServerFields) { f.Description = strings.Repeat("\U0001F600", 500) }, ""},
+		{"description 501 astral characters", func(f *app.ServerFields) { f.Description = strings.Repeat("\U0001F600", 501) }, "description"},
+		{"header 100 astral characters is refused by the domain, not the contract", func(f *app.ServerFields) { f.Auth = withHeader(strings.Repeat("\U0001F600", 100), "{secret}") }, ""},
+		{"access group 200 astral characters", func(f *app.ServerFields) { f.Access = groups(strings.Repeat("\U0001F600", 200)) }, ""},
+		{"access group 201 astral characters", func(f *app.ServerFields) { f.Access = groups(strings.Repeat("\U0001F600", 201)) }, "access.groups.0"},
+		{"oauth extra param value 1000 astral characters", func(f *app.ServerFields) {
+			f.Auth = oauthWith(func(o *domain.OAuthClientConfig) {
+				o.ExtraAuthorizeParams = []domain.AuthorizeParam{{Key: "prompt", Value: strings.Repeat("\U0001F600", 1000)}}
+			})
+		}, ""},
 		{"description 500", func(f *app.ServerFields) { f.Description = long(500) }, ""},
 		{"description 501", func(f *app.ServerFields) { f.Description = long(501) }, "description"},
 		{"url empty", func(f *app.ServerFields) { f.URL = "" }, "url"},
@@ -303,5 +315,39 @@ func TestSealFailureIsReturnedAndNothingIsWritten(t *testing.T) {
 	}
 	if len(h.servers.rows) != 0 {
 		t.Fatal("created")
+	}
+}
+
+// TestAnOversizedListReportsOnlyItself: a failed max of an array skips the checks of its
+// elements (zod), so the first issue is the array's, not that of an empty element.
+func TestAnOversizedListReportsOnlyItself(t *testing.T) {
+	scopes := append(numbered(50), "")
+	f := fields(func(f *app.ServerFields) {
+		f.Auth = oauthWith(func(o *domain.OAuthClientConfig) { o.Scopes = scopes })
+	})
+	equalStrings(t, paths(app.ValidateServerFields(f)), []string{"auth.oauth.scopes"})
+	g := fields(func(f *app.ServerFields) { f.Access = groups(append(numbered(100), long201())...) })
+	equalStrings(t, paths(app.ValidateServerFields(g)), []string{"access.groups"})
+	// Within the limit the elements are checked.
+	h := fields(func(f *app.ServerFields) { f.Access = groups("a", "") })
+	equalStrings(t, paths(app.ValidateServerFields(h)), []string{"access.groups.1"})
+}
+
+func long201() string { return strings.Repeat("a", 201) }
+
+func TestSecretAndSlugCountCodePoints(t *testing.T) {
+	if got := app.ValidateSecret(strings.Repeat("\U0001F600", 4096)); len(got) != 0 {
+		t.Errorf("4096 emoji: %v", got)
+	}
+	if got := app.ValidateSecret(strings.Repeat("\U0001F600", 4097)); len(got) != 1 {
+		t.Errorf("4097 emoji: %v", got)
+	}
+	in := app.ServerInput{Slug: strings.Repeat("\U0001F600", 64), Fields: fields()}
+	if got := app.ValidateServerInput(in); len(got) != 0 {
+		t.Errorf("64 emoji slug: %v", got)
+	}
+	in.Slug = strings.Repeat("\U0001F600", 65)
+	if got := paths(app.ValidateServerInput(in)); len(got) != 1 || got[0] != "slug" {
+		t.Errorf("65 emoji slug: %v", got)
 	}
 }

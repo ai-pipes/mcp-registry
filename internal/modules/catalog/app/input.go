@@ -4,14 +4,14 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/ai-pipes/mcp-registry/internal/kernel"
 	"github.com/ai-pipes/mcp-registry/internal/modules/catalog/domain"
 )
 
 // The limits of the REST contract (packages/contracts/src/servers.ts). They are tighter than the
-// domain's, which only a test of the aggregate can reach. Lengths are UTF-16 code units, as in
-// JavaScript.
+// domain's, which only a test of the aggregate can reach. Lengths are code points, as zod 4 counts them.
 const (
 	maxNameLen          = 100
 	maxDescriptionLen   = 500
@@ -100,21 +100,21 @@ func ValidateCreateRequest(in ServerInput, secret *string) []Issue {
 // ValidateSecret checks a secret of a REST body: 1..4096 characters (not trimmed: the domain
 // refuses a blank one with invalid_server).
 func ValidateSecret(secret string) []Issue {
-	if n := utf16Len(secret); n < 1 || n > maxSecretRequestLen {
+	if n := runeLen(secret); n < 1 || n > maxSecretRequestLen {
 		return []Issue{{Path: "secret", Message: "must be 1-" + strconv.Itoa(maxSecretRequestLen) + " characters"}}
 	}
 	return []Issue{}
 }
 
 func slugIssues(slug string) []Issue {
-	if n := utf16Len(slug); n < 1 || n > maxSlugLen {
+	if n := runeLen(slug); n < 1 || n > maxSlugLen {
 		return []Issue{{Path: "slug", Message: "must be 1-" + strconv.Itoa(maxSlugLen) + " characters"}}
 	}
 	return nil
 }
 
 func lengthIssue(path string, value string, lo, hi int) []Issue {
-	if n := utf16Len(value); n < lo || n > hi {
+	if n := runeLen(value); n < lo || n > hi {
 		return []Issue{{Path: path, Message: "must be " + strconv.Itoa(lo) + "-" + strconv.Itoa(hi) + " characters"}}
 	}
 	return nil
@@ -130,7 +130,7 @@ func cleanURL(raw string) (string, bool) {
 	}
 	cleaned := strings.NewReplacer("\t", "", "\n", "", "\r", "").Replace(trimmed)
 	lower := strings.ToLower(cleaned)
-	if utf16Len(cleaned) > maxURLLen {
+	if runeLen(cleaned) > maxURLLen {
 		return "", false
 	}
 	if !strings.HasPrefix(lower, "http://") && !strings.HasPrefix(lower, "https://") {
@@ -149,7 +149,7 @@ func normaliseFields(f ServerFields) (ServerFields, []Issue) {
 	issues := []Issue{}
 	out := f
 	issues = append(issues, lengthIssue("name", f.Name, 1, maxNameLen)...)
-	if utf16Len(f.Description) > maxDescriptionLen {
+	if runeLen(f.Description) > maxDescriptionLen {
 		issues = append(issues, Issue{Path: "description", Message: "must be at most " + strconv.Itoa(maxDescriptionLen) + " characters"})
 	}
 	if cleaned, ok := cleanURL(f.URL); ok {
@@ -229,19 +229,21 @@ func normaliseOAuth(o *domain.OAuthClientConfig) (*domain.OAuthClientConfig, []I
 		}
 	}
 	issues = append(issues, lengthIssue("auth.oauth.clientId", o.ClientID, 1, maxClientIDLen)...)
-	for i, s := range o.Scopes {
-		issues = append(issues, lengthIssue("auth.oauth.scopes."+strconv.Itoa(i), s, 1, maxScopeLen)...)
-	}
+	// A failed max skips the checks of the elements (zod).
 	if len(o.Scopes) > maxScopes {
 		issues = append(issues, Issue{Path: "auth.oauth.scopes", Message: "must have at most " + strconv.Itoa(maxScopes) + " items"})
+	} else {
+		for i, s := range o.Scopes {
+			issues = append(issues, lengthIssue("auth.oauth.scopes."+strconv.Itoa(i), s, 1, maxScopeLen)...)
+		}
 	}
 	out.Scopes = append([]string{}, o.Scopes...)
 	for _, p := range o.ExtraAuthorizeParams {
 		key := p.Key
 		path := "auth.oauth.extraAuthorizeParams." + key
-		if utf16Len(key) > maxParamNameLen {
+		if runeLen(key) > maxParamNameLen {
 			issues = append(issues, Issue{Path: path, Message: "name must be at most " + strconv.Itoa(maxParamNameLen) + " characters"})
-		} else if utf16Len(p.Value) > maxParamValueLen {
+		} else if runeLen(p.Value) > maxParamValueLen {
 			issues = append(issues, Issue{Path: path, Message: "must be at most " + strconv.Itoa(maxParamValueLen) + " characters"})
 		}
 	}
@@ -254,24 +256,16 @@ func normaliseAccess(a domain.Access) (domain.Access, []Issue) {
 		return a, nil
 	}
 	issues := []Issue{}
-	for i, g := range a.Groups {
-		issues = append(issues, lengthIssue("access.groups."+strconv.Itoa(i), g, 1, maxGroupLen)...)
-	}
 	if n := len(a.Groups); n < 1 || n > maxGroups {
 		issues = append(issues, Issue{Path: "access.groups", Message: "must have 1-" + strconv.Itoa(maxGroups) + " items"})
+	} else {
+		for i, g := range a.Groups {
+			issues = append(issues, lengthIssue("access.groups."+strconv.Itoa(i), g, 1, maxGroupLen)...)
+		}
 	}
 	return domain.Access{Kind: a.Kind, Groups: slices.Clone(a.Groups)}, issues
 }
 
-// utf16Len is the length JavaScript's String.length reports.
-func utf16Len(s string) int {
-	n := 0
-	for _, r := range s {
-		if r >= 0x10000 {
-			n += 2
-		} else {
-			n++
-		}
-	}
-	return n
-}
+// runeLen is the length zod's string min and max count: code points (zod 4), not UTF-16 units. The
+// domain's own limits count UTF-16 units, as the TypeScript domain's `.length` does.
+func runeLen(s string) int { return utf8.RuneCountInString(s) }
