@@ -191,16 +191,18 @@ func (c *Client) Do(t *testing.T, method, path string, body any, hdr ...string) 
 }
 
 // Answers fails the test unless the app answers a request that touches neither the database nor
-// the embedding model: GET /api/auth/methods, 200. It is the liveness probe for right after a
-// start or a restart. /healthz is not: it runs a database query against a 1.5 s timer, and the
+// the embedding model: GET /, status 200 (the body is not judged). The UI shell is served by the
+// platform layer of any server from its first milestone, whereas /api/auth/methods belongs to a
+// module (identity) that a server may not have yet; the probe only has to show that the
+// application answers. It is the liveness probe for right after a start or a restart. /healthz is not: it runs a database query against a 1.5 s timer, and the
 // reference image blocks its event loop while it loads its embedding model right after it first
 // answers healthy, so under load /healthz can answer 503 while the database is fine (decision
 // ready-before-serving, see deviations.go). Start, SwapImage and the boot helpers have already
 // proven health once.
 func (s *Stack) Answers(t *testing.T) {
 	t.Helper()
-	if r := s.Anonymous().Do(t, "GET", "/api/auth/methods", nil); r.Status != http.StatusOK {
-		t.Fatalf("GET /api/auth/methods: %d %.200q", r.Status, r.Body)
+	if r := s.Anonymous().Do(t, "GET", "/", nil); r.Status != http.StatusOK {
+		t.Fatalf("GET /: %d %.200q", r.Status, r.Body)
 	}
 }
 

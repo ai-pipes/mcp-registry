@@ -65,7 +65,7 @@ compat-image-go:
 
 # The scenarios the Go server passes so far (the milestone pattern); it grows with every milestone.
 # `$$` is a literal `$` for make; the pattern is passed to go test inside single quotes.
-COMPAT_GO_RUN := ^(TestPlatformStartsOnReferenceDatabase)$$
+COMPAT_GO_RUN := ^(TestConfigRefused|TestPlatformStartsOnReferenceDatabase)$$
 
 # The suite against the Go image. The reference image (mcp-registry:compat-ts) must exist as well:
 # some scenarios compare with it on the same machine, and the new-database scenario starts from it.
