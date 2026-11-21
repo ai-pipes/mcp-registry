@@ -40,18 +40,31 @@ func TestNewPgLimiterNumbers(t *testing.T) {
 			if ok, _ := c.l.Check("k"); !ok {
 				t.Fatal("still locked after the 60 s lock")
 			}
-			// The window is 60 s: a key that stayed at its limit is counted afresh after it.
+			// The window is 60 s, pinned from both sides. Inside it: limit-1 hits at its start and one
+			// more at 59 s are within the budget, and the next hit (still inside the window) is refused.
 			clock.set(200_000)
-			for i := 1; i <= c.limit; i++ {
+			for i := 1; i < c.limit; i++ {
 				if ok, _ := c.l.Hit("w"); !ok {
 					t.Fatalf("window key: hit %d refused", i)
 				}
 			}
-			clock.set(262_000)
+			clock.set(259_000)
+			if ok, _ := c.l.Hit("w"); !ok {
+				t.Fatalf("window key at 59 s: hit %d refused", c.limit)
+			}
+			if ok, _ := c.l.Hit("w"); ok {
+				t.Fatalf("window key at 59 s: hit %d allowed, the window is shorter than 60 s", c.limit+1)
+			}
+			// At 60 s a new window has started: a key at its limit is counted afresh.
+			clock.set(300_000)
 			for i := 1; i <= c.limit; i++ {
-				if ok, _ := c.l.Hit("w"); !ok {
-					t.Fatalf("window key after 62 s: hit %d refused (window longer than 60 s)", i)
+				if ok, _ := c.l.Hit("v"); !ok {
+					t.Fatalf("fresh key: hit %d refused", i)
 				}
+			}
+			clock.set(360_000)
+			if ok, _ := c.l.Hit("v"); !ok {
+				t.Fatal("key at its limit after 60 s: the hit was refused, the window is longer than 60 s")
 			}
 		})
 	}

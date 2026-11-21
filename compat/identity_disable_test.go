@@ -15,7 +15,9 @@ import (
 )
 
 func TestIdentityDisablingAPerson(t *testing.T) {
-	s := harness.Shared(t)
+	// Own stack, behind a trusted proxy header like TestIdentityNoOIDC: the failed link attempts below use an
+	// address of their own and spend no per-address budget of a shared stack.
+	s := harness.Start(t, harness.Options{Env: map[string]string{"TRUST_PROXY": "true"}})
 	admin := s.Admin(t)
 	sub := identityPerson(t, s, "disable")
 	member := s.Member(t, sub)
@@ -51,7 +53,7 @@ func TestIdentityDisablingAPerson(t *testing.T) {
 		if n := countSQL(t, s, `select count(*) from identity.tokens where user_id = $1::uuid`, id); n != 1 {
 			t.Fatalf("%d token rows, want the one revoked token kept", n)
 		}
-		if r := identityPostLink(t, s.Anonymous(), pending); r.Status != 401 || errorCode(t, r) != identityInvalidLink {
+		if r := identityPostLink(t, s.Anonymous(), pending, identityForwarded(identityNextIP())); r.Status != 401 || errorCode(t, r) != identityInvalidLink {
 			t.Fatalf("the pending link after disabling: %d %s", r.Status, r.Body)
 		}
 		// The CLI refuses a new link for a disabled person, with the documented text, and stores none.
@@ -94,7 +96,7 @@ func TestIdentityDisablingAPerson(t *testing.T) {
 		if r := member.Do(t, "GET", "/api/auth/me", nil); r.Status != 401 {
 			t.Fatalf("the ended session after enabling: %d", r.Status)
 		}
-		if r := identityPostLink(t, s.Anonymous(), pending); r.Status != 401 {
+		if r := identityPostLink(t, s.Anonymous(), pending, identityForwarded(identityNextIP())); r.Status != 401 {
 			t.Fatalf("the old link after enabling: %d", r.Status)
 		}
 		fresh := s.Anonymous()

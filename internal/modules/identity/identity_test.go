@@ -343,3 +343,22 @@ func (c countingStore) FindByHash(ctx context.Context, h string) (*app.SessionRe
 	*c.finds++
 	return c.SessionRepository.FindByHash(ctx, h)
 }
+
+// The root's role and via constants are the domain's values, under the same types.
+var (
+	_ domain.Role = identity.RoleAdmin
+	_ domain.Via  = identity.ViaToken
+)
+
+func TestRootConstantsEqualTheDomainValues(t *testing.T) {
+	if identity.RoleAdmin != domain.RoleAdmin || identity.RoleMember != domain.RoleMember ||
+		identity.ViaSession != domain.ViaSession || identity.ViaToken != domain.ViaToken {
+		t.Fatal("a root constant differs from the domain's")
+	}
+	var p identity.Principal
+	p.Role, p.Via = identity.RoleMember, identity.ViaSession
+	var r, v any = p.Role, p.Via
+	if _, ok := r.(identity.Role); !ok || r != identity.RoleMember || v != identity.ViaSession {
+		t.Fatalf("%v %v", r, v)
+	}
+}

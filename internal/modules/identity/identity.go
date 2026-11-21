@@ -14,6 +14,21 @@ import (
 // Principal is who is making a request.
 type Principal = domain.Principal
 
+// Role is the type of Principal.Role, so another module can read a principal without importing
+// identity's domain.
+type Role = domain.Role
+
+// Via is the type of Principal.Via: how the principal authenticated.
+type Via = domain.Via
+
+// The roles and the ways of authenticating, aliasing the domain's values.
+const (
+	RoleAdmin  = domain.RoleAdmin
+	RoleMember = domain.RoleMember
+	ViaSession = domain.ViaSession
+	ViaToken   = domain.ViaToken
+)
+
 const (
 	// SessionCookieName is the web session cookie; identity/http sets and clears it under this name.
 	SessionCookieName = "mcp_session"
