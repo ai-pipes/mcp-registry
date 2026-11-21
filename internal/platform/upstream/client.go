@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"reflect"
 	"slices"
 
 	"github.com/ai-pipes/mcp-registry/internal/kernel"
@@ -33,15 +34,25 @@ const (
 	// there, not with the SDK's default discovery request of a newer revision.
 	protocolVersion = "2025-11-25"
 
-	// maxPages is the number of tools/list pages followed, as in the TypeScript client; a server
-	// whose cursor never ends is a transport failure. maxTools is a limit the TypeScript client
-	// does not have.
-	maxPages = 100
+	// maxPages is the number of tools/list pages followed: DEFAULT_LIST_MAX_PAGES of the TypeScript
+	// SDK's own page walk (@modelcontextprotocol/client 2.4.0, dist/public-CvV4ZHkX.mjs:2647), which
+	// is what the TypeScript server really runs (its own MAX_PAGES = 100 never applies: the SDK
+	// walks the pages when no cursor is given). A server whose cursor never ends is a transport
+	// failure. maxTools is a limit the TypeScript client does not have.
+	maxPages = 64
 	maxTools = 10000
+
+	// clientVersion is the fixed clientInfo.version the TypeScript client sends (CLIENT_INFO in
+	// mcp-upstream-client.ts), unrelated to the gateway's version.
+	clientVersion = "1.0.0"
 
 	// maxRetries bounds how often the SDK resumes an interrupted SSE answer (the TypeScript
 	// client's default).
 	maxRetries = 2
+
+	// maxServerRequests bounds the requests upstream may send us during one operation; each is
+	// answered with one more credentialed POST.
+	maxServerRequests = 32
 )
 
 // supportedVersions are the protocol revisions the server may answer initialize with (the
@@ -50,41 +61,36 @@ var supportedVersions = []string{"2025-11-25", "2025-06-18", "2025-03-26", "2024
 
 // Options configure a Client.
 type Options struct {
-	// Version is the gateway version sent as the client's version in initialize.
+	// Version is accepted for the composition's sake and not sent: clientInfo.version is the fixed
+	// string the TypeScript client sends.
 	Version string
 }
 
 // Client implements kernel.UpstreamClient. It holds no state between operations and is safe for
 // concurrent use.
-type Client struct {
-	version string
-}
+type Client struct{}
 
 var _ kernel.UpstreamClient = (*Client)(nil)
 
 // New returns a Client.
-func New(o Options) *Client {
-	v := o.Version
-	if v == "" {
-		v = "unknown"
-	}
-	return &Client{version: v}
-}
+func New(Options) *Client { return &Client{} }
 
-// ListTools returns every page of tools/list. The schemas and annotations are the raw JSON
-// upstream sent (annotations reduced to the keys the TypeScript client keeps).
+// ListTools returns every page of tools/list, walked as the TypeScript SDK walks them: the first
+// page without parameters, then each nextCursor ("" included) until there is none, a page that
+// repeats the cursor just used with the items of the page before it (the walk ends with what it
+// has), or 64 pages (transport). A server that did not advertise the tools capability has no
+// tools: nothing is asked. The schemas and annotations are the raw JSON upstream sent
+// (annotations reduced to the keys the TypeScript client keeps).
 func (c *Client) ListTools(ctx context.Context, t kernel.UpstreamTarget) ([]kernel.UpstreamTool, error) {
 	var tools []kernel.UpstreamTool
 	err := c.run(ctx, t, func(s *session) error {
-		cursor := ""
-		for page := 0; ; page++ {
-			if page >= maxPages {
-				return errMalformed // the pagination does not end
-			}
-			params := map[string]string{}
-			if cursor != "" {
-				params["cursor"] = cursor
-			}
+		if !s.toolsCapability {
+			tools = []kernel.UpstreamTool{}
+			return nil
+		}
+		var params any
+		var previous []kernel.UpstreamTool
+		for pages := 0; ; {
 			res, err := s.call("tools/list", params)
 			if err != nil {
 				return err
@@ -93,13 +99,25 @@ func (c *Client) ListTools(ctx context.Context, t kernel.UpstreamTarget) ([]kern
 			if err != nil {
 				return err
 			}
+			used := ""
+			if p, ok := params.(map[string]string); ok {
+				used = p["cursor"]
+			}
+			if pages > 0 && next != nil && *next == used && reflect.DeepEqual(batch, previous) {
+				return nil
+			}
 			if tools = append(tools, batch...); len(tools) > maxTools {
 				return errMalformed
 			}
-			if next == "" {
+			previous = batch
+			pages++
+			if next == nil {
 				return nil
 			}
-			cursor = next
+			if pages >= maxPages {
+				return errMalformed // the pagination does not end
+			}
+			params = map[string]string{"cursor": *next}
 		}
 	})
 	if err != nil {
@@ -149,8 +167,7 @@ func (c *Client) run(parent context.Context, t kernel.UpstreamTarget, fn func(*s
 	}
 	opCtx, cancel := context.WithTimeout(parent, t.Timeout)
 	defer cancel()
-	deadline, _ := opCtx.Deadline()
-	op := &operation{ctx: opCtx, cancel: cancel, deadline: deadline, headers: maps(t.Headers), limit: t.MaxResponseBytes}
+	op := &operation{ctx: opCtx, cancel: cancel, headers: maps(t.Headers), limit: t.MaxResponseBytes}
 	client, closeIdle := newHTTPClient(op)
 	defer closeIdle()
 
@@ -170,10 +187,7 @@ func (c *Client) run(parent context.Context, t kernel.UpstreamTarget, fn func(*s
 	if err == nil {
 		err = fn(s)
 	}
-	if err != nil {
-		op.failed.Store(true)
-	}
-	_ = conn.Close() // the session-ending DELETE (success only) is a courtesy: its failure is nothing
+	_ = conn.Close() // the SDK's session-ending DELETE is refused by the transport: nothing is sent
 	if err != nil {
 		return c.classify(parent, err, op)
 	}
@@ -194,17 +208,22 @@ func (c *Client) handshake(s *session) error {
 	res, err := s.call("initialize", map[string]any{
 		"protocolVersion": protocolVersion,
 		"capabilities":    map[string]any{},
-		"clientInfo":      map[string]string{"name": clientName, "version": c.version},
+		"clientInfo":      map[string]string{"name": clientName, "version": clientVersion},
 	})
 	if err != nil {
 		return err
 	}
 	var init struct {
 		ProtocolVersion string `json:"protocolVersion"`
+		Capabilities    struct {
+			Tools json.RawMessage `json:"tools"`
+		} `json:"capabilities"`
 	}
 	if json.Unmarshal(res, &init) != nil || !slices.Contains(supportedVersions, init.ProtocolVersion) {
 		return errMalformed
 	}
+	// as the TypeScript client: a missing or null tools capability means "no tools"
+	s.toolsCapability = len(init.Capabilities.Tools) > 0 && string(init.Capabilities.Tools) != "null"
 	pv := init.ProtocolVersion
 	s.op.protocol.Store(&pv)
 	return s.conn.Write(s.op.ctx, &jsonrpc.Request{Method: "notifications/initialized"})
@@ -222,7 +241,7 @@ func cancelled(err error) error { return fmt.Errorf("upstream operation cancelle
 
 // classify maps a failure to the port's error. Order, as in the TypeScript client: the byte limit,
 // a 401 seen on any request, the deadline, then a JSON-RPC error answer, and everything else is a
-// transport failure. A JSON-RPC error that came with a non-2xx status is a transport failure too.
+// transport failure (a JSON-RPC error that came with a non-2xx status included).
 // The caller's own cancellation or deadline is not an upstream failure: it is returned as the
 // context's error, wrapped, so the caller can tell it from an upstream timeout.
 func (c *Client) classify(parent context.Context, err error, op *operation) error {
@@ -236,8 +255,10 @@ func (c *Client) classify(parent context.Context, err error, op *operation) erro
 	case errors.Is(op.ctx.Err(), context.DeadlineExceeded):
 		return kernel.NewUpstreamError(kernel.UpstreamTimeout)
 	}
+	// A JSON-RPC error that came with a non-2xx status never reaches here as an rpcError: the SDK
+	// reports it from Write as its own error, which is a transport failure below.
 	var rpc *rpcError
-	if errors.As(err, &rpc) && !op.badStatus.Load() {
+	if errors.As(err, &rpc) {
 		return kernel.RejectedUpstreamError(rpc.code, rpc.message)
 	}
 	return kernel.NewUpstreamError(kernel.UpstreamTransport)
@@ -245,23 +266,27 @@ func (c *Client) classify(parent context.Context, err error, op *operation) erro
 
 // session is the JSON-RPC conversation over the SDK's connection.
 type session struct {
-	conn mcp.Connection
-	op   *operation
-	next int64
+	conn            mcp.Connection
+	op              *operation
+	next            int64
+	toolsCapability bool
+	serverRequests  int
 }
 
 // call sends a request and waits for its answer: the raw result, or an *rpcError. Requests and
 // notifications upstream sends meanwhile are not ours to serve: a ping is answered, anything
-// else is "method not found" (the client declares no capabilities).
+// else is "Method not found" (the client declares no capabilities), at most maxServerRequests times.
 func (s *session) call(method string, params any) (json.RawMessage, error) {
 	s.next++
 	id, err := jsonrpc.MakeID(float64(s.next))
 	if err != nil {
 		return nil, err
 	}
-	raw, err := marshal(params)
-	if err != nil {
-		return nil, err
+	var raw json.RawMessage
+	if params != nil {
+		if raw, err = marshal(params); err != nil {
+			return nil, err
+		}
 	}
 	if err := s.conn.Write(s.op.ctx, &jsonrpc.Request{ID: id, Method: method, Params: raw}); err != nil {
 		return nil, err
@@ -289,7 +314,10 @@ func (s *session) call(method string, params any) (json.RawMessage, error) {
 			return m.Result, nil
 		case *jsonrpc.Request:
 			if m.IsCall() {
-				s.reply(m)
+				if s.serverRequests++; s.serverRequests > maxServerRequests {
+					return nil, errMalformed // upstream asks more than a client without capabilities answers
+				}
+				go s.reply(m) // off the read loop: a slow or hung reply must not hold the operation
 			}
 		}
 	}
@@ -298,9 +326,11 @@ func (s *session) call(method string, params any) (json.RawMessage, error) {
 func (s *session) reply(req *jsonrpc.Request) {
 	resp := &jsonrpc.Response{ID: req.ID, Result: json.RawMessage("{}")}
 	if req.Method != "ping" {
-		resp = &jsonrpc.Response{ID: req.ID, Error: &jsonrpc.Error{Code: jsonrpc.CodeMethodNotFound, Message: "method not found"}}
+		// what the TypeScript SDK answers a request it has no handler for
+		resp = &jsonrpc.Response{ID: req.ID, Error: &jsonrpc.Error{Code: jsonrpc.CodeMethodNotFound, Message: "Method not found"}}
 	}
-	_ = s.conn.Write(s.op.ctx, resp) // a refused answer sets the operation's flags like any request
+	// Bounded by the operation's context; best effort (the transport turns the answer into a 202).
+	_ = s.conn.Write(context.WithValue(s.op.ctx, replyKey{}, true), resp)
 }
 
 // marshal is json.Marshal without HTML escaping, so a raw value goes out as it came in.

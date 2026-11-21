@@ -147,7 +147,7 @@ func TestHandshakeParameters(t *testing.T) {
 	if string(init.Params.Capabilities) != "{}" {
 		t.Errorf("capabilities = %s, want {}", init.Params.Capabilities)
 	}
-	if init.Params.ClientInfo.Name != "mcp-registry" || init.Params.ClientInfo.Version != "9.9.9" {
+	if init.Params.ClientInfo.Name != "mcp-registry" || init.Params.ClientInfo.Version != "1.0.0" { // fixed, as the TypeScript client sends it
 		t.Errorf("clientInfo = %+v", init.Params.ClientInfo)
 	}
 	// After initialize the negotiated version travels on every request.
@@ -266,7 +266,7 @@ func TestSSEAndPlainJSONAreBothUnderstood(t *testing.T) {
 
 func TestServerToClientRequestIsAnsweredNotFound(t *testing.T) {
 	f := newFake(t)
-	f.set(func(c *cfg) { c.sse, c.serverReq = true, true })
+	f.set(func(c *cfg) { c.sse, c.serverReqs = true, 1 })
 	if _, err := newClient().CallTool(context.Background(), target(f), "t", nil); err != nil {
 		t.Fatal(err)
 	}
@@ -368,13 +368,10 @@ func TestTargetHeadersAreOnEveryRequest(t *testing.T) {
 		}
 		if r.HTTP == http.MethodDelete {
 			deletes++
-			if r.Header.Get("Mcp-Session-Id") != "sess-1" {
-				t.Errorf("DELETE without the session id")
-			}
 		}
 	}
-	if deletes != 1 {
-		t.Errorf("a successful stateful session ends with one DELETE, got %d: %v", deletes, f.methods())
+	if deletes != 0 {
+		t.Errorf("no DELETE is ever sent, got %d: %v", deletes, f.methods())
 	}
 }
 

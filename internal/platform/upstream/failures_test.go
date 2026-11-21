@@ -354,15 +354,15 @@ func TestTooManyToolsAreTransport(t *testing.T) {
 	_ = wantKind(t, err, kernel.UpstreamTransport)
 }
 
-func TestPaginationEndsOnEmptyOrNullCursor(t *testing.T) {
-	// a server that answers one page with "nextCursor": null (the TypeScript client would refuse it)
+func TestPaginationEndsOnNullCursor(t *testing.T) {
+	// a server that answers one page with "nextCursor": null (the TypeScript client would refuse it; a documented difference)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var in rpcIn
 		_ = json.NewDecoder(r.Body).Decode(&in)
 		w.Header().Set("Content-Type", "application/json")
 		switch in.Method {
 		case "initialize":
-			_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":"2025-11-25","capabilities":{},"serverInfo":{"name":"x","version":"1"}}}`, in.ID)
+			_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":"2025-11-25","capabilities":{"tools":{}},"serverInfo":{"name":"x","version":"1"}}}`, in.ID)
 		case "tools/list":
 			_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%s,"result":{"tools":[{"name":"a","inputSchema":{"type":"object"}}],"nextCursor":null}}`, in.ID)
 		default:
@@ -464,8 +464,8 @@ func TestInteroperatesWithTheSDKServer(t *testing.T) {
 			t.Errorf("a GET was sent: %v", methods)
 		}
 	}
-	if deletes != 2 {
-		t.Errorf("want one DELETE per operation, got %d: %v", deletes, methods)
+	if deletes != 0 {
+		t.Errorf("no DELETE is ever sent, got %d: %v", deletes, methods)
 	}
 	for _, a := range seenAuth {
 		if a != "Bearer sdk-tok" {
@@ -474,20 +474,241 @@ func TestInteroperatesWithTheSDKServer(t *testing.T) {
 	}
 }
 
-// The session-ending DELETE is a courtesy: an upstream that never answers it neither fails the
-// operation nor holds it past its deadline.
-func TestHungSessionEndDoesNotOutliveTheOperation(t *testing.T) {
+// No DELETE is ever sent, on any path: a stateful upstream that would hang it costs nothing.
+func TestNoSessionDeleteAndNoWaitForOne(t *testing.T) {
 	f := newFake(t)
 	f.set(func(c *cfg) { c.tools, c.session, c.hangDelete = rawTools(2), "s-1", true })
+	c := newClient()
 	start := time.Now()
-	got, err := newClient().ListTools(context.Background(), target(f, func(tg *kernel.UpstreamTarget) { tg.Timeout = 500 * time.Millisecond }))
+	if got, err := c.ListTools(context.Background(), target(f)); err != nil || len(got) != 2 {
+		t.Fatalf("ListTools: %v, %d tools", err, len(got))
+	}
+	if _, err := c.CallTool(context.Background(), target(f), "tool_0", nil); err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Since(start); d > 2*time.Second {
+		t.Fatalf("two successes took %v: the operation waited for something", d)
+	}
+	for _, r := range f.requests() {
+		if r.HTTP == http.MethodDelete {
+			t.Fatalf("a DELETE was sent: %v", f.methods())
+		}
+	}
+	// and not after a failure either
+	f2 := newFake(t)
+	f2.set(func(c *cfg) { c.session, c.failOn, c.failStatus = "s", "tools/call", 500 })
+	_, _ = c.CallTool(context.Background(), target(f2), "t", nil)
+	for _, r := range f2.requests() {
+		if r.HTTP == http.MethodDelete {
+			t.Fatalf("a DELETE was sent after a failure: %v", f2.methods())
+		}
+	}
+}
+
+func serverRequests(t *testing.T, n int, hang bool) (*fake, error) {
+	t.Helper()
+	f := newFake(t)
+	f.set(func(c *cfg) { c.sse, c.serverReqs, c.hangReply = true, n, hang })
+	_, err := newClient().CallTool(context.Background(), target(f, func(tg *kernel.UpstreamTarget) { tg.Timeout = 3 * time.Second }), "t", nil)
+	return f, err
+}
+
+func TestServerRequestsAreCappedPerOperation(t *testing.T) {
+	f, err := serverRequests(t, maxServerRequests, false)
+	if err != nil {
+		t.Fatalf("%d server requests: %v", maxServerRequests, err)
+	}
+	if n := f.count("(response)"); n != maxServerRequests {
+		t.Fatalf("answered %d, want %d", n, maxServerRequests)
+	}
+	for range 3 { // deterministic
+		f, err = serverRequests(t, maxServerRequests+1, false)
+		_ = wantKind(t, err, kernel.UpstreamTransport)
+		if n := f.count("(response)"); n > maxServerRequests {
+			t.Fatalf("answered %d requests, the cap is %d", n, maxServerRequests)
+		}
+	}
+	if maxServerRequests != 32 {
+		t.Fatalf("cap = %d, want 32", maxServerRequests)
+	}
+}
+
+func TestHungReplyDoesNotDelayOrFailTheOperation(t *testing.T) {
+	for range 3 {
+		start := time.Now()
+		_, err := serverRequests(t, 3, true)
+		if err != nil {
+			t.Fatalf("a hung reply endpoint failed the operation: %v", err)
+		}
+		if d := time.Since(start); d > 2*time.Second {
+			t.Fatalf("took %v: the read loop waited for a reply", d)
+		}
+	}
+}
+
+func TestFailingReplyDoesNotFailTheOperation(t *testing.T) {
+	f := newFake(t)
+	f.set(func(c *cfg) { c.sse, c.serverReqs, c.failOn, c.failStatus = true, 2, "(response)", 400 })
+	if _, err := newClient().CallTool(context.Background(), target(f), "t", nil); err != nil {
+		t.Fatalf("a refused reply failed the operation: %v", err)
+	}
+}
+
+func TestProtocolHeadersWinOverTargetHeaders(t *testing.T) {
+	f := newFake(t)
+	f.set(func(c *cfg) { c.tools, c.session = rawTools(1), "real-session" })
+	hostile := map[string]string{
+		"Authorization":        "Bearer tok-1",
+		"mcp-protocol-version": "1999-01-01",
+		"MCP-SESSION-ID":       "forged",
+		"accept":               "text/plain",
+		"content-type":         "text/plain",
+		"Content-Length":       "1",
+		"Host":                 "evil.example",
+	}
+	if _, err := newClient().ListTools(context.Background(), target(f, func(tg *kernel.UpstreamTarget) { tg.Headers = hostile })); err != nil {
+		t.Fatal(err)
+	}
+	for i, r := range f.requests() {
+		if got := r.Header.Get("Accept"); got != "application/json, text/event-stream" {
+			t.Errorf("request %d: Accept = %q", i, got)
+		}
+		if got := r.Header.Get("Content-Type"); got != "application/json" {
+			t.Errorf("request %d: Content-Type = %q", i, got)
+		}
+		if got := r.Header.Get("Mcp-Protocol-Version"); got == "1999-01-01" || (i > 0 && got != "2025-11-25") {
+			t.Errorf("request %d: Mcp-Protocol-Version = %q", i, got)
+		}
+		if got := r.Header.Get("Mcp-Session-Id"); got == "forged" || (i > 0 && got != "real-session") {
+			t.Errorf("request %d: Mcp-Session-Id = %q", i, got)
+		}
+		if r.Host == "evil.example" {
+			t.Errorf("request %d: Host = %q", i, r.Host)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer tok-1" {
+			t.Errorf("request %d: Authorization = %q", i, got)
+		}
+	}
+}
+
+func TestListToolsAsksNothingWhenTheServerHasNoToolsCapability(t *testing.T) {
+	f := newFake(t)
+	f.set(func(c *cfg) {
+		c.tools, c.noTools, c.rpcErr, c.rpcErrOn = rawTools(2), true, &rpcErr{-32601, "Method not found"}, "tools/list"
+	})
+	got, err := newClient().ListTools(context.Background(), target(f))
+	if err != nil || len(got) != 0 {
+		t.Fatalf("err = %v, %d tools, want none and no error", err, len(got))
+	}
+	if n := f.count("tools/list"); n != 0 {
+		t.Fatalf("tools/list was sent %d times", n)
+	}
+}
+
+func TestPageWalkStopsOnARepeatedPage(t *testing.T) {
+	f := newFake(t)
+	f.set(func(c *cfg) { c.tools, c.pageSize, c.repeat = rawTools(3), 2, true })
+	got, err := newClient().ListTools(context.Background(), target(f))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].Name != "tool_0" || got[1].Name != "tool_1" {
+		t.Fatalf("tools = %d, want the 2 of the first page once", len(got))
+	}
+	if n := f.count("tools/list"); n != 2 {
+		t.Fatalf("tools/list sent %d times, want 2", n)
+	}
+}
+
+func TestEmptyNextCursorIsFollowedLikeTheTypeScriptWalk(t *testing.T) {
+	f := newFake(t)
+	f.set(func(c *cfg) { c.tools, c.emptyCur = rawTools(2), true })
+	got, err := newClient().ListTools(context.Background(), target(f))
 	if err != nil || len(got) != 2 {
 		t.Fatalf("err = %v, %d tools", err, len(got))
 	}
-	if d := time.Since(start); d > 2*time.Second {
-		t.Fatalf("took %v with a 500 ms deadline", d)
+	// The first page is asked without parameters, the next with cursor "" and, being the same page
+	// under the same cursor, ends the walk.
+	var lists []seen
+	for _, r := range f.requests() {
+		if r.RPC == "tools/list" {
+			lists = append(lists, r)
+		}
 	}
-	if n := len(f.requests()); n != 4 || f.requests()[3].HTTP != http.MethodDelete {
-		t.Fatalf("requests = %v", f.methods())
+	if len(lists) != 2 || strings.Contains(string(lists[0].Body), "params") || !strings.Contains(string(lists[1].Body), `"cursor":""`) {
+		t.Fatalf("tools/list requests: %d, %s", len(lists), func() string {
+			var b []string
+			for _, r := range lists {
+				b = append(b, string(r.Body))
+			}
+			return strings.Join(b, " | ")
+		}())
+	}
+}
+
+func TestPageCapIsTheSDKs64(t *testing.T) {
+	if maxPages != 64 {
+		t.Fatalf("maxPages = %d, want 64 (DEFAULT_LIST_MAX_PAGES of the TypeScript SDK)", maxPages)
+	}
+}
+
+// Nothing of what upstream sent or of what the SDK says reaches an error text: not the body of a
+// refused request, not a JSON-RPC message, not a redirect's Location. The one exception is the
+// rejection's own message.
+func TestNoMarkerReachesAnErrorText(t *testing.T) {
+	const (
+		bodyMark = "BODY-MARK-1"
+		rpcMark  = "RPC-MARK-2"
+		locMark  = "LOC-MARK-3"
+	)
+	marks := []string{bodyMark, rpcMark, locMark, "Bearer tok-1", "tok-1", "127.0.0.1"}
+	other := newFake(t)
+	scenarios := map[string]struct {
+		kind  kernel.UpstreamErrorKind
+		setup func(*cfg)
+		over  func(*kernel.UpstreamTarget)
+	}{
+		"401 with a body": {kernel.UpstreamUnauthorized, func(c *cfg) { c.failStatus, c.failBody = 401, bodyMark }, nil},
+		"401 with a JSON-RPC body": {kernel.UpstreamUnauthorized, func(c *cfg) {
+			c.failStatus, c.failBody = 401, `{"jsonrpc":"2.0","id":1,"error":{"code":-32001,"message":"`+rpcMark+`"}}`
+		}, nil},
+		"500 with a body": {kernel.UpstreamTransport, func(c *cfg) { c.failStatus, c.failBody = 500, bodyMark }, nil},
+		"400 with a JSON-RPC error body": {kernel.UpstreamTransport, func(c *cfg) {
+			c.failStatus, c.failBody = 400, `{"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"`+rpcMark+`"}}`
+		}, nil},
+		"500 with a JSON-RPC error": {kernel.UpstreamTransport, func(c *cfg) { c.rpcErr, c.rpcErrHTTP = &rpcErr{-32603, rpcMark}, 500 }, nil},
+		"redirect":                  {kernel.UpstreamTransport, func(c *cfg) { c.redirectTo = other.url() + "/" + locMark }, nil},
+		"too large":                 {kernel.UpstreamTooLarge, func(c *cfg) { c.hugeBody = 8 * mib }, func(tg *kernel.UpstreamTarget) { tg.MaxResponseBytes = 64 << 10 }},
+		"timeout":                   {kernel.UpstreamTimeout, func(c *cfg) { c.delay = 5 * time.Second }, func(tg *kernel.UpstreamTarget) { tg.Timeout = 100 * time.Millisecond }},
+		"200 with a JSON-RPC error": {kernel.UpstreamRejected, func(c *cfg) { c.rpcErr = &rpcErr{-32602, rpcMark} }, nil},
+	}
+	for name, sc := range scenarios {
+		t.Run(name, func(t *testing.T) {
+			f := newFake(t)
+			f.set(func(c *cfg) { c.tools = rawTools(1) })
+			f.set(sc.setup)
+			if sc.kind == kernel.UpstreamRejected {
+				f.set(func(c *cfg) { c.rpcErrOn = "tools/call" })
+			}
+			tg := target(f)
+			if sc.over != nil {
+				sc.over(&tg)
+			}
+			_, err := newClient().CallTool(context.Background(), tg, "tool_0", nil)
+			ue := wantKind(t, err, sc.kind)
+			for _, shown := range []string{ue.Error(), err.Error(), fmt.Sprintf("%+v", err), fmt.Sprintf("%v", err)} {
+				for _, m := range marks {
+					if strings.Contains(shown, m) {
+						t.Errorf("%q is in %q", m, shown)
+					}
+				}
+			}
+			if sc.kind == kernel.UpstreamRejected && (ue.Rejection == nil || ue.Rejection.Message != rpcMark) {
+				t.Errorf("rejection = %+v", ue.Rejection)
+			}
+		})
+	}
+	if n := len(other.requests()); n != 0 {
+		t.Errorf("the redirect target got %d requests", n)
 	}
 }

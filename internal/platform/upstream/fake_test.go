@@ -2,6 +2,7 @@ package upstream
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -18,6 +19,7 @@ import (
 // JSON-RPC response sent back by the client, "" for GET and DELETE).
 type seen struct {
 	HTTP   string
+	Host   string
 	RPC    string
 	Header http.Header
 	Body   []byte
@@ -31,7 +33,8 @@ type fake struct {
 	mu      sync.Mutex
 	reqs    []seen
 	cfg     cfg
-	written atomic.Int64 // bytes streamed for hugeBody
+	written atomic.Int64  // bytes streamed for hugeBody
+	replies chan struct{} // one signal per JSON-RPC response the client sent
 }
 
 // cfg is what the fake does; changed through set.
@@ -56,7 +59,11 @@ type cfg struct {
 	delay      time.Duration // before answering tools/list and tools/call
 	hangDelete bool          // never answer the session-ending DELETE
 	drop       bool          // close the connection on tools/call
-	serverReq  bool          // SSE only: a server-to-client request before the answer
+	serverReqs int           // SSE only: this many server-to-client requests before the answer
+	hangReply  bool          // never answer a JSON-RPC response sent by the client
+	repeat     bool          // every page: the first tools and nextCursor "X"
+	emptyCur   bool          // every page carries "nextCursor": ""
+	noTools    bool          // initialize without capabilities.tools
 	hugeBody   int64         // stream this many bytes as the answer to tools/call
 	declared   int64         // Content-Length announced for hugeBody (0: chunked)
 }
@@ -68,7 +75,7 @@ type rpcErr struct {
 
 func newFake(t *testing.T) *fake {
 	t.Helper()
-	f := &fake{}
+	f := &fake{replies: make(chan struct{}, 1024)}
 	f.srv = httptest.NewServer(f)
 	t.Cleanup(f.srv.Close)
 	return f
@@ -127,9 +134,12 @@ func (f *fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		rpc = "(response)"
 	}
 	f.mu.Lock()
-	f.reqs = append(f.reqs, seen{HTTP: r.Method, RPC: rpc, Header: r.Header.Clone(), Body: body})
+	f.reqs = append(f.reqs, seen{HTTP: r.Method, Host: r.Host, RPC: rpc, Header: r.Header.Clone(), Body: body})
 	c := f.cfg // a copy; the lock is released below
 	f.mu.Unlock()
+	if rpc == "(response)" {
+		f.replies <- struct{}{}
+	}
 
 	if c.redirectTo != "" && (c.failOn == "" || c.failOn == "*" || c.failOn == rpc) {
 		w.Header().Set("Location", c.redirectTo)
@@ -158,6 +168,10 @@ func (f *fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	switch in.Method {
 	case "":
+		if c.hangReply {
+			<-r.Context().Done()
+			return
+		}
 		w.WriteHeader(http.StatusAccepted) // a JSON-RPC response from the client
 	case "initialize":
 		var p struct {
@@ -171,12 +185,16 @@ func (f *fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if c.session != "" {
 			w.Header().Set("Mcp-Session-Id", c.session)
 		}
-		f.answer(w, c, in.Method, in.ID, fmt.Sprintf(`{"protocolVersion":%q,"capabilities":{"tools":{}},"serverInfo":{"name":"fake","version":"1"}}`, pv))
+		caps := `{"tools":{}}`
+		if c.noTools {
+			caps = `{}`
+		}
+		f.answer(r.Context(), w, c, in.Method, in.ID, fmt.Sprintf(`{"protocolVersion":%q,"capabilities":%s,"serverInfo":{"name":"fake","version":"1"}}`, pv, caps))
 	case "notifications/initialized":
 		w.WriteHeader(http.StatusAccepted)
 	case "tools/list":
 		f.hold(r, c.delay)
-		f.answer(w, c, in.Method, in.ID, f.page(c, in.Params))
+		f.answer(r.Context(), w, c, in.Method, in.ID, f.page(c, in.Params))
 	case "tools/call":
 		f.hold(r, c.delay)
 		if c.drop {
@@ -199,7 +217,7 @@ func (f *fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			_ = json.Unmarshal(in.Params, &p)
 			res = json.RawMessage(fmt.Sprintf(`{"content":[{"type":"text","text":%q}]}`, string(p.Arguments)))
 		}
-		f.answer(w, c, in.Method, in.ID, string(res))
+		f.answer(r.Context(), w, c, in.Method, in.ID, string(res))
 	default:
 		http.Error(w, "unknown method", http.StatusBadRequest)
 	}
@@ -224,10 +242,14 @@ func (f *fake) page(c cfg, params json.RawMessage) string {
 	}
 	_ = json.Unmarshal(params, &p)
 	start := 0
-	if p.Cursor != "" {
+	if p.Cursor != "" && !c.repeat {
 		start, _ = strconv.Atoi(p.Cursor)
 	}
 	end := len(c.tools)
+	if c.endless {
+		// a new page under a new cursor for ever
+		return fmt.Sprintf(`{"tools":[%s],"nextCursor":"%d"}`, c.tools[start%len(c.tools)], start+1)
+	}
 	if c.pageSize > 0 {
 		end = min(start+c.pageSize, end)
 	}
@@ -240,6 +262,10 @@ func (f *fake) page(c cfg, params json.RawMessage) string {
 	}
 	out := `{"tools":[` + string(bytes.Join(parts, []byte(","))) + `]`
 	switch {
+	case c.repeat:
+		out += `,"nextCursor":"X"`
+	case c.emptyCur:
+		out += `,"nextCursor":""`
 	case c.endless:
 		out += fmt.Sprintf(`,"nextCursor":"%d"`, end)
 	case end < len(c.tools):
@@ -249,7 +275,7 @@ func (f *fake) page(c cfg, params json.RawMessage) string {
 }
 
 // answer sends the JSON-RPC answer to the request: a result, or the configured error.
-func (f *fake) answer(w http.ResponseWriter, c cfg, rpc string, id json.RawMessage, result string) {
+func (f *fake) answer(ctx context.Context, w http.ResponseWriter, c cfg, rpc string, id json.RawMessage, result string) {
 	var msg string
 	status := http.StatusOK
 	if c.rpcErr != nil && (c.rpcErrOn == "" || c.rpcErrOn == rpc) {
@@ -263,8 +289,24 @@ func (f *fake) answer(w http.ResponseWriter, c cfg, rpc string, id json.RawMessa
 	if c.sse {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(status)
-		if c.serverReq {
-			_, _ = fmt.Fprintf(w, "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":\"srv-1\",\"method\":\"sampling/createMessage\",\"params\":{}}\n\n")
+		for i := 1; rpc == "tools/call" && i <= c.serverReqs; i++ {
+			_, _ = fmt.Fprintf(w, "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":\"srv-%d\",\"method\":\"sampling/createMessage\",\"params\":{}}\n\n", i)
+		}
+		if c.serverReqs > 0 && rpc == "tools/call" {
+			// let the client's answers arrive before the result ends the operation
+			if fl, ok := w.(http.Flusher); ok {
+				fl.Flush()
+			}
+			timeout := time.After(3 * time.Second)
+			for n := 0; n < c.serverReqs; n++ {
+				select {
+				case <-f.replies:
+				case <-ctx.Done():
+					n = c.serverReqs
+				case <-timeout:
+					n = c.serverReqs
+				}
+			}
 		}
 		_, _ = fmt.Fprintf(w, "event: message\ndata: %s\n\n", msg)
 		return

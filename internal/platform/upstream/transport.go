@@ -4,32 +4,32 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"sort"
 	"sync/atomic"
-	"time"
 )
 
 // operation is the state of one upstream operation: its deadline, what the HTTP layer saw and the
 // byte budget. Nothing in it outlives the operation.
 type operation struct {
-	ctx      context.Context // the operation's deadline; cancelled when the byte limit is passed
-	cancel   context.CancelFunc
-	deadline time.Time
-	headers  map[string]string
-	limit    int64
+	ctx     context.Context // the operation's deadline; cancelled when the byte limit is passed
+	cancel  context.CancelFunc
+	headers map[string]string
+	limit   int64
 
 	bytes        atomic.Int64
 	tooLarge     atomic.Bool
 	unauthorized atomic.Bool
-	badStatus    atomic.Bool // some response was not 2xx (a redirect included)
-	failed       atomic.Bool // the operation failed: no polite goodbye (DELETE) is sent
 	protocol     atomic.Pointer[string]
 }
 
 var (
 	errTooLarge = errors.New("response exceeds the size limit")
 	errRedirect = errors.New("redirect refused")
-	errFailed   = errors.New("operation already failed")
+	errNoDelete = errors.New("sessions are not ended")
 )
+
+// replyKey marks the context of a request that answers a request of the server.
+type replyKey struct{}
 
 // guard is the RoundTripper of the operation's http.Client. It is the only place where the
 // target's headers are added, so every request of the session carries them and nothing else of
@@ -40,20 +40,42 @@ type guard struct {
 	inner http.RoundTripper
 }
 
+// protocolHeaders are the headers only the protocol sets: a target's value for them is ignored (the
+// TypeScript SDK overwrites Accept, Content-Type, Mcp-Session-Id and Mcp-Protocol-Version the same
+// way; Content-Length and Host belong to the HTTP layer, which fetch refuses to let a caller set).
+var protocolHeaders = map[string]bool{
+	"Accept":               true,
+	"Content-Type":         true,
+	"Content-Length":       true,
+	"Host":                 true,
+	"Transfer-Encoding":    true,
+	"Mcp-Protocol-Version": true,
+	"Mcp-Session-Id":       true,
+}
+
 func (g *guard) RoundTrip(req *http.Request) (*http.Response, error) {
 	op := g.op
+	if req.Method == http.MethodDelete {
+		// The TypeScript client never ends a session, and an upstream that does not answer would
+		// hold every operation: nothing is sent.
+		if req.Body != nil {
+			_ = req.Body.Close()
+		}
+		return nil, errNoDelete
+	}
 	r := req.Clone(req.Context())
-	// The protocol's own headers (Content-Type, Accept, Mcp-*) win; the target's fill the rest.
-	for k, v := range op.headers {
-		if r.Header.Get(k) == "" {
-			r.Header.Set(k, v)
+	keys := make([]string, 0, len(op.headers))
+	for k := range op.headers {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys) // names that differ only in case: the same winner every time
+	for _, k := range keys {
+		if !protocolHeaders[http.CanonicalHeaderKey(k)] {
+			r.Header.Set(k, op.headers[k])
 		}
 	}
-	if pv := op.protocol.Load(); pv != nil && r.Header.Get("Mcp-Protocol-Version") == "" {
+	if pv := op.protocol.Load(); pv != nil {
 		r.Header.Set("Mcp-Protocol-Version", *pv)
-	}
-	if r.Method == http.MethodDelete {
-		return g.terminate(r)
 	}
 
 	resp, err := g.inner.RoundTrip(r)
@@ -63,8 +85,14 @@ func (g *guard) RoundTrip(req *http.Request) (*http.Response, error) {
 	if resp.StatusCode == http.StatusUnauthorized {
 		op.unauthorized.Store(true)
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		op.badStatus.Store(true)
+	if r.Context().Value(replyKey{}) != nil {
+		// An answer to a request of the server is best effort: whatever comes back is read by
+		// nobody and cannot fail the operation (the SDK would break the connection on a refusal).
+		_ = resp.Body.Close()
+		return &http.Response{
+			Status: "202 Accepted", StatusCode: http.StatusAccepted, Proto: resp.Proto, ProtoMajor: resp.ProtoMajor, ProtoMinor: resp.ProtoMinor,
+			Header: http.Header{}, Body: http.NoBody, Request: req,
+		}, nil
 	}
 	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
 		_ = resp.Body.Close()
@@ -77,25 +105,6 @@ func (g *guard) RoundTrip(req *http.Request) (*http.Response, error) {
 		return nil, errTooLarge
 	}
 	resp.Body = &countingBody{op: op, rc: resp.Body}
-	return resp, nil
-}
-
-// terminate sends the session-ending DELETE of the SDK's Close: only after a successful operation,
-// only within what is left of the operation's deadline, and its answer counts for nothing.
-func (g *guard) terminate(r *http.Request) (*http.Response, error) {
-	op := g.op
-	if op.failed.Load() || op.ctx.Err() != nil {
-		return nil, errFailed
-	}
-	ctx, cancel := context.WithDeadline(r.Context(), op.deadline)
-	stop := context.AfterFunc(op.ctx, cancel)
-	resp, err := g.inner.RoundTrip(r.WithContext(ctx))
-	if err != nil {
-		stop()
-		cancel()
-		return nil, err
-	}
-	resp.Body = &releasingBody{rc: resp.Body, release: func() { stop(); cancel() }}
 	return resp, nil
 }
 
@@ -118,20 +127,6 @@ func (b *countingBody) Read(p []byte) (int, error) {
 }
 
 func (b *countingBody) Close() error { return b.rc.Close() }
-
-type releasingBody struct {
-	rc interface {
-		Read([]byte) (int, error)
-		Close() error
-	}
-	release func()
-}
-
-func (b *releasingBody) Read(p []byte) (int, error) { return b.rc.Read(p) }
-func (b *releasingBody) Close() error {
-	defer b.release()
-	return b.rc.Close()
-}
 
 // newHTTPClient builds the operation's own client: a transport that is not shared with any other
 // operation (so no connection, and no header, can be reused for another target), no proxy from
