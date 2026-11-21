@@ -151,7 +151,10 @@ func (r *fakeServers) Save(_ context.Context, s *domain.Server, events []kernel.
 	return nil
 }
 
-func (r *fakeServers) SaveSyncState(_ context.Context, slug string, rec domain.SyncRecord) error {
+func (r *fakeServers) SaveSyncState(ctx context.Context, slug string, rec domain.SyncRecord) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if r.failSyncState != nil {
 		return r.failSyncState
 	}
@@ -276,7 +279,10 @@ func (r *fakeTools) Save(_ context.Context, t *domain.Tool, events []kernel.Even
 	return nil
 }
 
-func (r *fakeTools) ApplySnapshot(_ context.Context, server string, snaps []domain.ToolSnapshot, now time.Time) (app.SnapshotResult, error) {
+func (r *fakeTools) ApplySnapshot(ctx context.Context, server string, snaps []domain.ToolSnapshot, now time.Time) (app.SnapshotResult, error) {
+	if err := ctx.Err(); err != nil {
+		return app.SnapshotResult{}, err
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.exists != nil && !r.exists(server) {
@@ -321,7 +327,10 @@ type fakeAudit struct {
 	entries []kernel.AuditEntry
 }
 
-func (a *fakeAudit) Record(_ context.Context, e kernel.AuditEntry) error {
+func (a *fakeAudit) Record(ctx context.Context, e kernel.AuditEntry) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.j.add("audit:" + e.Action)

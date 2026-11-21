@@ -86,7 +86,7 @@ func syncServer(ctx context.Context, deps Deps, cmd SyncCommand) (SyncCounts, *k
 		}
 		return record(ctx, deps, *cmd.Principal, "server.sync", server.Slug(), meta)
 	}
-	fail := func(failure domain.SyncFailure) (SyncCounts, *kernel.DomainError, error) {
+	fail := func(ctx context.Context, failure domain.SyncFailure) (SyncCounts, *kernel.DomainError, error) {
 		if err := deps.Servers.SaveSyncState(ctx, server.Slug(), domain.SyncFailureRecord(failure, startedAt)); err != nil {
 			return SyncCounts{}, nil, err
 		}
@@ -105,18 +105,23 @@ func syncServer(ctx context.Context, deps Deps, cmd SyncCommand) (SyncCounts, *k
 		return SyncCounts{}, nil, err
 	}
 	if failure != "" {
-		return fail(failure)
+		return fail(ctx, failure)
 	}
 	listed, err := deps.Upstream.ListTools(ctx, kernel.UpstreamTarget{
 		URL: server.URL(), Headers: headers, Timeout: time.Duration(server.TimeoutMs()) * time.Millisecond,
 		MaxResponseBytes: deps.MaxResponseBytes,
 	})
 	if err != nil {
+		// A cancellation before or during tools/list comes back as a non-upstream error (the client
+		// never turns the caller's cancellation into an upstream failure) and records nothing.
 		if ue, ok := kernel.AsUpstreamError(err); ok {
-			return fail(domain.SyncFailureOfUpstream(ue.Kind))
+			return fail(context.WithoutCancel(ctx), domain.SyncFailureOfUpstream(ue.Kind))
 		}
 		return SyncCounts{}, nil, err
 	}
+	// tools/list has answered: what follows is written whole, so tools are never updated while the
+	// sync state and the audit record are lost to a cancelled caller.
+	ctx = context.WithoutCancel(ctx)
 	snapshots := make([]domain.ToolSnapshot, len(listed))
 	for i, u := range listed {
 		snapshots[i] = domain.SnapshotFromUpstream(u)
@@ -190,7 +195,7 @@ func headersFor(ctx context.Context, deps Deps, server *domain.Server, startedBy
 // recorded as nothing.
 func SyncServerRecordingFailure(ctx context.Context, deps Deps, cmd SyncCommand) (SyncCounts, error) {
 	startedAt := deps.Clock.Now()
-	counts, refusal, err := syncServer(ctx, deps, cmd)
+	counts, refusal, err := guardedSync(ctx, deps, cmd)
 	if err == nil {
 		if refusal != nil {
 			return SyncCounts{}, refusal
@@ -205,6 +210,24 @@ func SyncServerRecordingFailure(ctx context.Context, deps Deps, cmd SyncCommand)
 		logError(deps, "sync state not saved", "server", cmd.Slug, "err", kernel.ErrorLabel(stateErr))
 	}
 	return SyncCounts{}, kernel.NewDomainError(CodeInternal, domain.SyncFailureText(domain.FailureInternal))
+}
+
+// errPanicked stands for a recovered panic; its value is never kept (it may quote secrets).
+type errPanicked struct{}
+
+func (errPanicked) Error() string { return "panic during sync" }
+
+// Code is the content-free label ErrorLabel logs.
+func (errPanicked) Code() string { return "panic" }
+
+// guardedSync is syncServer with a panic turned into an unexpected error.
+func guardedSync(ctx context.Context, deps Deps, cmd SyncCommand) (counts SyncCounts, refusal *kernel.DomainError, err error) {
+	defer func() {
+		if recover() != nil {
+			counts, refusal, err = SyncCounts{}, nil, errPanicked{}
+		}
+	}()
+	return syncServer(ctx, deps, cmd)
 }
 
 func logError(deps Deps, msg string, args ...any) {

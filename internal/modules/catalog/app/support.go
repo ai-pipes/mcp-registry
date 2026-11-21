@@ -49,10 +49,12 @@ func load(ctx context.Context, deps Deps, slug string) (*domain.Server, error) {
 	return server, nil
 }
 
-// record writes one audit record about the acting person.
+// record writes one audit record about the acting person. The change it describes is already
+// committed, so a cancelled request must not lose the record: it is written under a context that
+// ignores the caller's cancellation.
 func record(ctx context.Context, deps Deps, p Principal, action, target string, meta map[string]any) error {
 	actor, tgt := p.UserID, target
-	return deps.Audit.Record(ctx, kernel.AuditEntry{ActorID: &actor, Action: action, Target: &tgt, Meta: meta})
+	return deps.Audit.Record(context.WithoutCancel(ctx), kernel.AuditEntry{ActorID: &actor, Action: action, Target: &tgt, Meta: meta})
 }
 
 // viewWithCount is the view of the server with its current visible tool count.

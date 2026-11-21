@@ -1,6 +1,7 @@
 package app_test
 
 import (
+	"context"
 	"encoding/json"
 	"reflect"
 	"strings"
@@ -549,3 +550,27 @@ func TestRepositoryErrorsPropagate(t *testing.T) {
 type errBoom struct{}
 
 func (errBoom) Error() string { return "boom" }
+
+// cancelAfterSave cancels the caller's context right after a successful repository write.
+type cancelAfterSave struct {
+	*fakeServers
+	cancel context.CancelFunc
+}
+
+func (c cancelAfterSave) Save(ctx context.Context, s *domain.Server, ev []kernel.Event) error {
+	err := c.fakeServers.Save(ctx, s, ev)
+	c.cancel()
+	return err
+}
+
+func TestAuditSurvivesACancelledRequest(t *testing.T) {
+	h := newHarness()
+	h.mustCreate(t, "gitea", nil)
+	h.clean()
+	cctx, cancel := context.WithCancel(ctx)
+	h.deps.Servers = cancelAfterSave{h.servers, cancel}
+	if err := app.SetStatus(cctx, h.deps, app.SetStatusCommand{Principal: admin, Slug: "gitea", Status: domain.StatusDisabled}); err != nil {
+		t.Fatal(err)
+	}
+	equalStrings(t, h.audit.actions(), []string{"server.status"})
+}

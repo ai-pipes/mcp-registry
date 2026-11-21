@@ -27,6 +27,7 @@ type fakeUpstream struct {
 	parked   chan holdAnswer
 	started  chan struct{}
 	duringFn func() // runs inside ListTools, before it answers
+	afterFn  func() // runs inside ListTools, after the answer is known, just before it returns
 }
 
 type holdAnswer struct {
@@ -38,7 +39,7 @@ func (u *fakeUpstream) ListTools(_ context.Context, t kernel.UpstreamTarget) ([]
 	u.mu.Lock()
 	u.j.add("upstream.list")
 	u.targets = append(u.targets, t)
-	parked, started, during := u.parked, u.started, u.duringFn
+	parked, started, during, after := u.parked, u.started, u.duringFn, u.afterFn
 	u.parked = nil
 	tools, failure := u.tools, u.failure
 	u.mu.Unlock()
@@ -49,6 +50,9 @@ func (u *fakeUpstream) ListTools(_ context.Context, t kernel.UpstreamTarget) ([]
 		started <- struct{}{}
 		a := <-parked
 		return a.tools, a.err
+	}
+	if after != nil {
+		after()
 	}
 	return tools, failure
 }
@@ -897,4 +901,81 @@ func TestRegisterServer(t *testing.T) {
 			t.Fatal("something happened")
 		}
 	})
+}
+
+func TestSyncCancelledAfterTheAnswerStillWritesEverything(t *testing.T) {
+	t.Run("success: tools, sync state and audit all land", func(t *testing.T) {
+		h := newSyncHarness()
+		h.seed(t, authNone, "gitea", nil)
+		cctx, cancel := context.WithCancel(ctx)
+		h.upstream.tools = []kernel.UpstreamTool{utool("a")}
+		h.upstream.afterFn = cancel
+		counts, err := app.SyncServer(cctx, h.deps, app.SyncCommand{Principal: &admin, Slug: "gitea"})
+		if err != nil || counts.Added != 1 {
+			t.Fatalf("counts = %+v, err = %v", counts, err)
+		}
+		equalStrings(t, h.journal.all(), []string{"upstream.list", "tools.apply:gitea", "servers.syncstate:gitea", "audit:server.sync"})
+	})
+
+	t.Run("failure: the failure record and the audit land", func(t *testing.T) {
+		h := newSyncHarness()
+		h.seed(t, authNone, "gitea", nil)
+		cctx, cancel := context.WithCancel(ctx)
+		h.upstream.failure = kernel.NewUpstreamError(kernel.UpstreamTransport)
+		h.upstream.afterFn = cancel
+		_, err := app.SyncServer(cctx, h.deps, app.SyncCommand{Principal: &admin, Slug: "gitea"})
+		wantCode(t, err, "sync_failed")
+		equalStrings(t, h.journal.all(), []string{"upstream.list", "servers.syncstate:gitea", "audit:server.sync"})
+	})
+
+	t.Run("cancelled before tools/list: nothing is recorded", func(t *testing.T) {
+		h := newSyncHarness()
+		h.seed(t, authNone, "gitea", nil)
+		cctx, cancel := context.WithCancel(ctx)
+		h.upstream.failure = context.Canceled
+		h.upstream.duringFn = cancel
+		_, err := app.SyncServer(cctx, h.deps, app.SyncCommand{Principal: &admin, Slug: "gitea"})
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("err = %v", err)
+		}
+		equalStrings(t, h.journal.all(), []string{"upstream.list"})
+	})
+}
+
+type panickingServers struct {
+	*fakeServers
+	slug string
+}
+
+func (p panickingServers) FindBySlug(c context.Context, slug string) (*domain.Server, error) {
+	if slug == p.slug {
+		panic("boom token=sekret")
+	}
+	return p.fakeServers.FindBySlug(c, slug)
+}
+
+func TestAPanickingSyncIsRecordedAsInternal(t *testing.T) {
+	h := newSyncHarness()
+	h.seed(t, authNone, "alpha", nil)
+	h.seed(t, authNone, "beta", nil)
+	h.seed(t, authNone, "gamma", nil)
+	h.upstream.tools = []kernel.UpstreamTool{utool("a")}
+	h.deps.Servers = panickingServers{h.servers, "beta"}
+	out, err := app.SyncAllServers(ctx, h.deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []app.SyncOutcome{{Slug: "alpha", OK: true}, {Slug: "beta", Code: "internal"}, {Slug: "gamma", OK: true}}
+	if !reflect.DeepEqual(out, want) {
+		t.Fatalf("outcomes = %+v", out)
+	}
+	if got := h.servers.row(t, "beta").LastSyncError; got == nil || *got != "Internal sync error" {
+		t.Fatalf("stored = %v", got)
+	}
+	if len(h.logger.records) != 1 || h.logger.records[0][0] != "catalog sync failed" || contains(h.logger.records[0], "beta") == false {
+		t.Fatalf("log = %v", h.logger.records)
+	}
+	if strings.Contains(strings.Join(flat(h.logger.records), " "), "sekret") {
+		t.Fatal("the panic value was logged")
+	}
 }
