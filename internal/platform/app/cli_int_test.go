@@ -18,6 +18,9 @@ import (
 	"github.com/ai-pipes/mcp-registry/internal/platform/scheduler"
 )
 
+// marker stands for a secret that an error or a panic value could quote.
+const marker = "secret-token-xyz"
+
 // cliRun is one RunCLI over a stub module.
 type cliRun struct {
 	code           int
@@ -77,7 +80,8 @@ func (c *stubCalls) module(rt Runtime) []Module {
 			cmd("fails", GuardWarn, func(CLIIO) error { return CommandError("it failed") }),
 			cmd("bad-args", GuardWarn, func(CLIIO) error { return UsageError("bad arguments") }),
 			cmd("domain", GuardWarn, func(CLIIO) error { return kernel.NewDomainError("not_found", "no such person") }),
-			cmd("boom", GuardWarn, func(CLIIO) error { return errors.New("dial tcp secret-token-xyz") }),
+			cmd("boom", GuardWarn, func(CLIIO) error { return errors.New("dial tcp " + marker) }),
+			cmd("panics", GuardWarn, func(CLIIO) error { panic("panic value " + marker) }),
 			cmd("rotate-secrets-key", GuardNone, func(cio CLIIO) error { _, _ = io.WriteString(cio.Stdout, "rotated\n"); return nil }),
 			cmd("seals", GuardRefuse, func(cio CLIIO) error { _, _ = io.WriteString(cio.Stdout, "sealed\n"); return nil }),
 		},
@@ -140,10 +144,10 @@ func TestCLIMapsTheErrorsACommandReturns(t *testing.T) {
 		{"fails", 1, "error: it failed\n"},
 		{"bad-args", 2, "error: bad arguments\nUsage: mcp-registry"},
 		{"domain", 1, "error: not_found: no such person\n"},
-		{"boom", 1, "error: unexpected failure\n"},
+		{"boom", 1, "error: unexpected failure\n"}, // after the "command failed" record
 	} {
 		r := runCLI(t, url, key, &calls, tc.cmd)
-		if r.code != tc.code || r.stdout != "" || !strings.HasPrefix(r.stderr, tc.stderr) || (tc.code == 1 && r.stderr != tc.stderr) {
+		if r.code != tc.code || r.stdout != "" || (tc.cmd != "boom" && !strings.HasPrefix(r.stderr, tc.stderr)) || (tc.code == 1 && tc.cmd != "boom" && r.stderr != tc.stderr) || (tc.cmd == "boom" && !strings.HasSuffix(r.stderr, tc.stderr)) {
 			t.Errorf("%s: %+v, want %d %q", tc.cmd, r, tc.code, tc.stderr)
 		}
 	}
@@ -323,4 +327,38 @@ func TestCLIOnAnUnreachableDatabaseIsExitOneWithoutUsage(t *testing.T) {
 	if strings.Contains(errOut.String(), "127.0.0.1") {
 		t.Errorf("the address is quoted: %q", errOut.String())
 	}
+}
+
+// An unexpected error is logged (type and label, never the message) before the neutral line.
+func TestCLILogsAnUnexpectedErrorWithoutItsText(t *testing.T) {
+	url := pgtest.StartURL(t)
+	var calls stubCalls
+	r := runCLI(t, url, newKey(t), &calls, "boom")
+	if r.code != 1 || r.stdout != "" || !strings.HasSuffix(r.stderr, "error: unexpected failure\n") {
+		t.Fatalf("%+v", r)
+	}
+	if !strings.Contains(r.stderr, `"msg":"command failed"`) || !strings.Contains(r.stderr, `"level":50`) || !strings.Contains(r.stderr, `"type":"`) {
+		t.Errorf("no error record with a type: %q", r.stderr)
+	}
+	if strings.Contains(r.stderr, marker) || strings.Contains(r.stdout, marker) {
+		t.Errorf("the error's text reached the output: %q", r.stderr)
+	}
+}
+
+// A panic in a command is exit 1 (never Go's 2), the value is not printed or logged, the frames are,
+// and the pool is closed.
+func TestCLIRecoversAPanickingCommand(t *testing.T) {
+	url := pgtest.StartURL(t)
+	var calls stubCalls
+	r := runCLI(t, url, newKey(t), &calls, "panics")
+	if r.code != 1 || r.stdout != "" || !strings.HasSuffix(r.stderr, "error: unexpected failure\n") {
+		t.Fatalf("%+v", r)
+	}
+	if strings.Contains(r.stderr, marker) || strings.Contains(r.stdout, marker) {
+		t.Errorf("the panic value reached the output: %q", r.stderr)
+	}
+	if !strings.Contains(r.stderr, `"msg":"command panicked"`) || !strings.Contains(r.stderr, `"stack":[`) || !strings.Contains(r.stderr, `"level":50`) {
+		t.Errorf("no panic record with frames: %q", r.stderr)
+	}
+	eventuallyNoConnections(t, url)
 }

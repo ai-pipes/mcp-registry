@@ -56,6 +56,10 @@ type nameless struct {
 	Role string `json:",omitempty"`
 }
 
+type inlineOnly struct {
+	Role string `json:",inline"`
+}
+
 type mapUntagged struct {
 	M map[string]untagged `json:"m"`
 }
@@ -90,7 +94,7 @@ type ptrUntagged struct {
 func TestDecodeJSONRefusesAnUntaggedExportedField(t *testing.T) {
 	for name, dst := range map[string]any{
 		"direct": &untagged{}, "nested": &nestedUntagged{}, "slice element": &sliceUntagged{}, "pointer": &ptrUntagged{},
-		"a tag without a name": &nameless{}, "map value": &mapUntagged{}, "embedded struct": &embedsUntagged{},
+		"a tag without a name": &nameless{}, "an option-only tag": &inlineOnly{}, "map value": &mapUntagged{}, "embedded struct": &embedsUntagged{},
 	} {
 		func() {
 			defer func() {

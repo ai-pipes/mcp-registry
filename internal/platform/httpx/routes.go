@@ -15,10 +15,11 @@ import (
 type Route struct {
 	Method, Path string
 	Handler      http.Handler
-	// Unguarded opts this route out of the middleware of the prefixes above it, like a hono route
-	// registered before .use(): the connections OAuth callback sits under a guarded prefix but
-	// handles a missing session itself. Only a request that matches the route (method and path,
-	// HEAD by a GET route) skips the guards; every other path under the prefix is still guarded.
+	// Unguarded opts this route out of EVERY enclosing prefix's middleware, also that of an outer
+	// prefix registered by another module. Only a request that matches the route (method and
+	// path, HEAD by a GET route) skips the guards; every other path under the prefixes, and
+	// another method on the same path, is still guarded. For a route that sits under a guarded
+	// prefix but handles a missing session itself (the connections OAuth callback).
 	Unguarded bool
 }
 

@@ -28,7 +28,8 @@ import (
 // never be filled (json/v2 would look for "Role", clients send "role"). DecodeJSON therefore
 // refuses a destination type that has an exported field without a `json` tag, in any nested
 // struct, slice, array, map value or pointer, by panicking with the type and field: a programming
-// error that the first test of the handler hits. Tag `json:"-"` to skip a field on purpose. Types
+// error that the first test of the handler hits. A tag must carry a name: option-only tags such as
+// `json:",omitempty"` or `json:",inline"` are refused too (json/v2 would match the Go field name). Tag `json:"-"` to skip a field on purpose. Types
 // that decode themselves (json or text unmarshalers, such as time.Time) are not looked into.
 func DecodeJSON(r *http.Request, dst any) error {
 	requireJSONTags(reflect.TypeOf(dst))
@@ -132,7 +133,7 @@ func checkTags(t reflect.Type, where string, seen map[reflect.Type]bool) {
 			}
 			if name, _, _ := strings.Cut(tag, ","); name == "" {
 				// json/v2 takes the Go field name here, which no client sends.
-				panic("httpx.DecodeJSON: field " + where + "." + f.Name + " has a json tag without a name (json/v2 would match the Go name): write json:\"name,...\" or json:\"-\"")
+				panic("httpx.DecodeJSON: field " + where + "." + f.Name + " has a json tag without a name, e.g. json:\",omitempty\" or json:\",inline\" (json/v2 would match the Go name): write json:\"name,...\" or json:\"-\"")
 			}
 			checkTags(f.Type, where+"."+f.Name, seen)
 		}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"slices"
 	"strings"
 
@@ -70,7 +71,7 @@ func CommandError(msg string) error { return &CommandErr{Msg: msg} }
 // error are exit 1. Any other error is `error: unexpected failure` and exit 1: the TypeScript CLI
 // lets it escape as a stack trace, this one never prints the text of an unexpected error (it may
 // quote values).
-func exitFor(err error, stderr io.Writer, usage string) int {
+func exitFor(err error, stderr io.Writer, usage string, logger *slog.Logger) int {
 	var usageErr *UsageErr
 	var commandErr *CommandErr
 	switch {
@@ -87,8 +88,24 @@ func exitFor(err error, stderr io.Writer, usage string) int {
 		_, _ = io.WriteString(stderr, "error: "+de.Code+": "+de.Message+"\n")
 		return 1
 	}
+	// Type and neutral label only: the message may quote values.
+	logger.Error("command failed", logging.ErrAttr(err))
 	_, _ = io.WriteString(stderr, "error: unexpected failure\n")
 	return 1
+}
+
+// runCommand runs a command and turns a panic into an error record with the call frames (never
+// the value, which may carry a secret) and the unexpected-failure line, exit 1: an unrecovered
+// panic would end the process with Go's exit code 2, the code of a bad invocation.
+func runCommand(ctx context.Context, c CLICommand, cio CLIIO, args []string, logger *slog.Logger, usage string) (code int) {
+	defer func() {
+		if recover() != nil {
+			logger.Error("command panicked", "stack", logging.PanicFrames())
+			_, _ = io.WriteString(cio.Stderr, "error: unexpected failure\n")
+			code = 1
+		}
+	}()
+	return exitFor(c.Run(ctx, cio, args), cio.Stderr, usage, logger)
 }
 
 // msgKeyMismatchWarning is the one warning line printed before a command when the stored key
@@ -185,8 +202,8 @@ func RunCLI(ctx context.Context, o CLIOptions) int {
 	if stdin == nil {
 		stdin = strings.NewReader("")
 	}
-	err = command.Run(ctx, CLIIO{Stdin: stdin, Stdout: o.Stdout, Stderr: o.Stderr, Env: o.Env}, args)
-	return exitFor(err, o.Stderr, usageFor(asm.commands))
+	cio := CLIIO{Stdin: stdin, Stdout: o.Stdout, Stderr: o.Stderr, Env: o.Env}
+	return runCommand(ctx, command, cio, args, logger, usageFor(asm.commands))
 }
 
 // cliLogLevel keeps the CLI quiet: the server's default info becomes warn (cli.ts).

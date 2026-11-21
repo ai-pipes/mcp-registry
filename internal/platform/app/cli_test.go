@@ -59,7 +59,7 @@ func TestEveryErrorIsMappedInOnePlace(t *testing.T) {
 		{"unexpected error", errors.New("dial tcp 10.0.0.1: secret-token-xyz"), 1, "error: unexpected failure\n"},
 	} {
 		var out bytes.Buffer
-		if code := exitFor(tc.err, &out, usage); code != tc.code || out.String() != tc.stderr {
+		if code := exitFor(tc.err, &out, usage, discardLogger()); code != tc.code || out.String() != tc.stderr {
 			t.Errorf("%s: %d %q, want %d %q", tc.name, code, out.String(), tc.code, tc.stderr)
 		}
 	}
