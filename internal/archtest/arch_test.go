@@ -170,6 +170,9 @@ var archFixtures = []struct{ rule, fixture, component, badImport string }{
 func TestEveryRuleHasAFailingFixture(t *testing.T) {
 	for _, tc := range archFixtures {
 		t.Run(tc.rule, func(t *testing.T) {
+			// Each subtest builds its own temp project (t.TempDir) and runs the pinned tool on it;
+			// nothing is shared but the read-only repository and the concurrency-safe Go caches.
+			t.Parallel()
 			rep, code := archLint(t, fixtureProject(t, tc.fixture))
 			if code == 0 {
 				t.Fatalf("fixture %s passed; a rule without a failing fixture does not count", tc.fixture)
@@ -247,12 +250,19 @@ func TestRepositoryPassesArchLint(t *testing.T) {
 
 // TestDepguardDeniesStdlibCrypto proves the crypto/* half of deps-only-in-infra, which
 // go-arch-lint cannot see (it ignores the standard library), through the repository's
-// real .golangci.yml.
+// real .golangci.yml: in a domain package and in a module's root package.
 func TestDepguardDeniesStdlibCrypto(t *testing.T) {
+	for _, fixture := range []string{"deps-only-in-infra-stdlib", "deps-only-in-infra-stdlib-root"} {
+		t.Run(fixture, func(t *testing.T) { depguardDeniesCrypto(t, fixture) })
+	}
+}
+
+func depguardDeniesCrypto(t *testing.T, fixture string) {
+	t.Helper()
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "go.mod"), readFile(t, filepath.Join(repoRoot, "go.mod")))
 	writeFile(t, filepath.Join(dir, ".golangci.yml"), readFile(t, filepath.Join(repoRoot, ".golangci.yml")))
-	copyTree(t, filepath.Join("testdata", "deps-only-in-infra-stdlib"), dir)
+	copyTree(t, filepath.Join("testdata", fixture), dir)
 
 	cmd := exec.Command("go", "run", pinnedTool(t, "print-golangci-lint"), "run", "--enable-only", "depguard",
 		"--output.json.path=stdout", "--output.text.path=", "--show-stats=false")
