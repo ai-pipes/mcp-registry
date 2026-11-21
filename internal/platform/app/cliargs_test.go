@@ -44,22 +44,33 @@ func TestParseArgs(t *testing.T) {
 	}
 }
 
-func TestParseArgsRefusalsAreUsageErrors(t *testing.T) {
-	spec := argSpec{Strings: []string{"sub"}, Bools: []string{"admin"}}
+// Each expected text is pasted from Node 22.21 (the image's major version):
+// util.parseArgs({args, options: {sub: string, name: string, admin: boolean}, strict: true,
+// allowPositionals: true}), e.message. cli-commands.ts prints `error: ${error.message}`.
+func TestParseArgsRefusalsAreTheTextsOfNode(t *testing.T) {
+	spec := argSpec{Strings: []string{"sub", "name"}, Bools: []string{"admin"}}
+	const unknownTail = ". To specify a positional argument starting with a '-', place it at the end of the command after '--', as in '-- \""
+	ambiguous := func(n string) string {
+		return "Option '--" + n + "' argument is ambiguous.\nDid you forget to specify the option argument for '--" + n + "'?\nTo specify an option argument starting with a dash use '--" + n + "=-XYZ'."
+	}
 	for _, tc := range []struct {
-		name, want string
-		args       []string
+		name string
+		args []string
+		want string
 	}{
-		{"unknown long option", "Unknown option '--bogus'", []string{"--bogus"}},
-		{"unknown short option", "Unknown option '-x'", []string{"-x"}},
-		{"a value missing at the end", "Option '--sub <value>' argument missing", []string{"--sub"}},
-		{"a value that is an option", "Option '--sub <value>' argument is ambiguous", []string{"--sub", "--admin"}},
-		{"a value for a boolean", "Option '--admin' does not take an argument", []string{"--admin=1"}},
+		{"a value that looks like an option", []string{"--sub", "--admin"}, ambiguous("sub")},
+		{"a value that looks like a short option", []string{"--sub", "-x"}, ambiguous("sub")},
+		{"unknown long option", []string{"--foo"}, "Unknown option '--foo'" + unknownTail + `--foo"`},
+		{"unknown long option with a value names only the option", []string{"--foo=bar"}, "Unknown option '--foo'" + unknownTail + `--foo"`},
+		{"a short group names its first letter", []string{"-abc"}, "Unknown option '-a'" + unknownTail + `-a"`},
+		{"a single short option", []string{"-a"}, "Unknown option '-a'" + unknownTail + `-a"`},
+		{"a value missing at the end", []string{"--sub"}, "Option '--sub <value>' argument missing"},
+		{"a value for a boolean", []string{"--admin=1"}, "Option '--admin' does not take an argument"},
 	} {
 		_, err := spec.parse(tc.args)
 		var ue *UsageErr
-		if !errors.As(err, &ue) || !strings.HasPrefix(ue.Msg, tc.want) {
-			t.Errorf("%s: %v, want a usage error starting %q", tc.name, err, tc.want)
+		if !errors.As(err, &ue) || ue.Msg != tc.want {
+			t.Errorf("%s: %v\nwant %q", tc.name, err, tc.want)
 		}
 	}
 }

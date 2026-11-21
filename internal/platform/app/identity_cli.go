@@ -67,7 +67,7 @@ func (w identityWiring) createUser(ctx context.Context, cio CLIIO, args []string
 	if r.Created {
 		verb = "created"
 	}
-	out(cio, fmt.Sprintf("%s %s %q (sub %s, id %s)", verb, r.Role, kernel.JSTrim(name), kernel.JSTrim(sub), r.ID))
+	out(cio, fmt.Sprintf("%s %s \"%s\" (sub %s, id %s)", verb, r.Role, kernel.JSTrim(name), kernel.JSTrim(sub), r.ID))
 	return nil
 }
 

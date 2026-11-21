@@ -170,6 +170,12 @@ func TestCLICreateUser(t *testing.T) {
 	}
 	golden(t, "create-user-admin", e.run("create-user", "--sub", "root", "--name", "Root Example", "--admin"), "root", "<ADMIN-SUB>")
 
+	// The name is printed raw between double quotes (TypeScript's template string), not escaped.
+	r = e.ok("create-user", "--sub", "quoted", "--name", `  Ann "Q" \ B `)
+	if !strings.HasPrefix(r.stdout, `created member "Ann "Q" \ B" (sub quoted, id `) {
+		t.Errorf("quoted name: %q", r.stdout)
+	}
+
 	// sub and name are trimmed (JavaScript trim).
 	r = e.ok("create-user", "--sub", "  pad ", "--name", "  Padded Name ")
 	if !strings.HasPrefix(r.stdout, `created member "Padded Name" (sub pad, id `) || e.count(`select count(*) from identity.users where oidc_sub = 'pad'`) != 1 {
@@ -345,5 +351,17 @@ func TestCLIIdentityCommandsWarnOnAKeyMismatch(t *testing.T) {
 	// The warning comes before the argument errors.
 	if r := wrong.run("create-user"); r.code != 2 || !strings.HasPrefix(r.stderr, warningLine+"error: --sub is required\n") {
 		t.Errorf("%+v", r)
+	}
+}
+
+// provisionUser stamps last_login_at on every run, an existing person too: that is what stops the
+// first-start link from being reissued for local-admin (a side effect of the reference).
+func TestCLICreateUserOnAnExistingPersonSetsLastLogin(t *testing.T) {
+	e := newCLIEnv(t)
+	e.ok("create-user", "--sub", "stamped", "--name", "S")
+	exec(t, e.url, `update identity.users set last_login_at = null where oidc_sub = 'stamped'`)
+	e.ok("create-user", "--sub", "stamped", "--name", "S")
+	if n := e.count(`select count(*) from identity.users where oidc_sub = 'stamped' and last_login_at is not null`); n != 1 {
+		t.Error("last_login_at was not set")
 	}
 }

@@ -5,6 +5,8 @@ package app
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -59,9 +61,14 @@ func startReal(t *testing.T, url string, key []byte, edit func(*config.Config)) 
 // call sends one request; non-GET requests carry the Origin the CSRF check wants.
 func call(t *testing.T, method, url, cookie string, body any, header ...string) (int, []byte, http.Header) {
 	t.Helper()
+	// A string body is sent as it is; anything else as JSON.
 	var rd io.Reader
-	if body != nil {
-		b, err := json.Marshal(body)
+	switch v := body.(type) {
+	case nil:
+	case string:
+		rd = strings.NewReader(v)
+	default:
+		b, err := json.Marshal(v)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -74,7 +81,7 @@ func call(t *testing.T, method, url, cookie string, body any, header ...string) 
 	if method != http.MethodGet {
 		req.Header.Set("Origin", publicOrigin)
 	}
-	if body != nil {
+	if _, raw := body.(string); body != nil && !raw {
 		req.Header.Set("Content-Type", "application/json")
 	}
 	if cookie != "" {
@@ -349,7 +356,7 @@ func TestTheGuardsAreWiredIntoTheComposedServer(t *testing.T) {
 	}
 	// The admin check runs before the body is parsed; an unknown path under a prefix is the JSON 404
 	// for an admin; a cookie of 65 characters is no session; the sign-in routes need no session.
-	if status, body, _ := call(t, "POST", s.base+"/api/users/not-a-uuid/disabled", member, nil, "Content-Type", "text/plain"); status != 403 {
+	if status, body, _ := call(t, "POST", s.base+"/api/users/not-a-uuid/disabled", member, "x", "Content-Type", "text/plain"); status != 403 {
 		t.Errorf("member POST /api/users/not-a-uuid/disabled: %d %s", status, body)
 	}
 	if status, body, _ := call(t, "GET", s.base+"/api/users/x/y", admin, nil); status != 404 {
@@ -357,8 +364,16 @@ func TestTheGuardsAreWiredIntoTheComposedServer(t *testing.T) {
 	} else if code, _ := errorCode(t, body); code != "not_found" {
 		t.Errorf("admin unknown path body: %s", body)
 	}
-	if status, _, _ := call(t, "GET", s.base+"/api/auth/me", strings.Repeat("a", 65), nil); status != 401 {
-		t.Errorf("65-character cookie: %d", status)
+	// The longest session id that is looked up is 64 characters: a stored session with a 64-character
+	// id opens /api/auth/me, the same person with a 65-character one is anonymous.
+	for n, want := range map[int]int{64: 200, 65: 401} {
+		id := strings.Repeat("s", n)
+		sum := sha256.Sum256([]byte(id))
+		exec(t, url, `insert into identity.sessions (id_hash, user_id, created_at, last_seen_at, expires_at)
+			select $1, id, now(), now(), now() + interval '1 day' from identity.users where oidc_sub = 'ann'`, hex.EncodeToString(sum[:]))
+		if status, _, _ := call(t, "GET", s.base+"/api/auth/me", id, nil); status != want {
+			t.Errorf("session cookie of %d characters: %d, want %d", n, status, want)
+		}
 	}
 	noFollow := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	for _, path := range []string{"/api/auth/login", "/api/auth/callback"} {
@@ -369,6 +384,9 @@ func TestTheGuardsAreWiredIntoTheComposedServer(t *testing.T) {
 		_ = res.Body.Close()
 		if res.StatusCode != 302 {
 			t.Errorf("anonymous GET %s: %d, want the redirect", path, res.StatusCode)
+		}
+		if loc := res.Header.Get("Location"); path == "/api/auth/login" && loc != "/?loginError=oidc_not_configured" {
+			t.Errorf("GET /api/auth/login without OIDC: Location %q", loc)
 		}
 	}
 	if status, body, _ := call(t, "POST", s.base+"/api/auth/link", "", map[string]string{"code": "ll_nope"}); status != 401 {
@@ -635,4 +653,69 @@ func TestPruningJobDeletesWhatExpired(t *testing.T) {
 		t.Error("the job did not prune")
 	}
 	s2.stop("SIGTERM")
+}
+
+// With another person in the database a start neither announces a link nor creates anybody.
+func TestFirstStartPrintsNothingWhenAnotherPersonExists(t *testing.T) {
+	url := pgtest.StartURL(t)
+	key := newKey(t)
+	startReal(t, url, key, nil).stop("SIGTERM") // creates local-admin
+	exec(t, url, `insert into identity.users (oidc_sub, name, role) values ('bob', 'Bob', 'member')`)
+	s := startReal(t, url, key, nil)
+	if n := len(s.logs.find(t, firstStartMsg)); n != 0 {
+		t.Errorf("%d first-start records although another person exists", n)
+	}
+	if n := queryInt(t, url, `select count(*) from identity.users`); n != 2 {
+		t.Errorf("users: %d", n)
+	}
+	if strings.Contains(s.logs.String(), "ll_") {
+		t.Error("a link code in the log")
+	}
+	s.stop("SIGTERM")
+}
+
+// Paging across 99 -> 100: a text order would put "99" after "100".
+func TestAuditPagingAcrossNinetyNineAndAHundred(t *testing.T) {
+	url := pgtest.StartURL(t)
+	s := startReal(t, url, newKey(t), nil)
+	admin := s.signIn(s.firstLinkCode())
+	exec(t, url, `insert into platform.audit_log (action) select 'test.fill' from generate_series(1, 130)`)
+	if n := queryInt(t, url, `select count(*) from platform.audit_log where id = 99 or id = 100`); n != 2 {
+		t.Fatalf("the ids 99 and 100 must exist, found %d", n)
+	}
+	status, body := s.audit(admin, "?limit=2&before=101")
+	var page []auditRow
+	if err := json.Unmarshal(body, &page); status != 200 || err != nil || len(page) != 2 || page[0].ID != "100" || page[1].ID != "99" {
+		t.Fatalf("before=101: %d %s", status, body)
+	}
+	var got []string
+	q := "?limit=50"
+	for range 10 {
+		_, body := s.audit(admin, q)
+		var p []auditRow
+		if err := json.Unmarshal(body, &p); err != nil {
+			t.Fatal(err)
+		}
+		if len(p) == 0 {
+			break
+		}
+		for _, e := range p {
+			got = append(got, e.ID)
+		}
+		q = "?limit=50&before=" + p[len(p)-1].ID
+	}
+	total := queryInt(t, url, `select count(*) from platform.audit_log`)
+	if len(got) != total {
+		t.Fatalf("paged %d entries, the table holds %d", len(got), total)
+	}
+	for i, id := range got {
+		if i > 0 {
+			prev, _ := strconv.Atoi(got[i-1])
+			cur, _ := strconv.Atoi(id)
+			if cur >= prev {
+				t.Fatalf("not strictly descending at %d: %s after %s", i, id, got[i-1])
+			}
+		}
+	}
+	s.stop("SIGTERM")
 }

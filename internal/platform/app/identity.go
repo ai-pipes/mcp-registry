@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/url"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/ai-pipes/mcp-registry/internal/modules/identity/domain"
 	idhttp "github.com/ai-pipes/mcp-registry/internal/modules/identity/http"
 	idinfra "github.com/ai-pipes/mcp-registry/internal/modules/identity/infra"
+	"github.com/ai-pipes/mcp-registry/internal/platform/config"
 	"github.com/ai-pipes/mcp-registry/internal/platform/logging"
 	"github.com/ai-pipes/mcp-registry/internal/platform/scheduler"
 )
@@ -45,21 +47,27 @@ func (unconfiguredOIDC) Exchange(context.Context, idapp.OIDCExchangeInput) (doma
 	return domain.OIDCClaims{}, errOIDCNotConfigured
 }
 
+// oidcConfigFor is what the provider adapter gets from the configuration: the client, the redirect
+// URI (`new URL('/api/auth/callback', PUBLIC_URL)`), the scopes and the groups claim.
+func oidcConfigFor(cfg config.Config, logger *slog.Logger) idinfra.OIDCConfig {
+	return idinfra.OIDCConfig{
+		Issuer:       cfg.OIDC.Issuer,
+		ClientID:     cfg.OIDC.ClientID,
+		ClientSecret: cfg.OIDC.ClientSecret.Reveal(),
+		RedirectURI:  resolveURL(cfg.PublicURL, "/api/auth/callback"),
+		Scopes:       cfg.OIDCScopes,
+		GroupsClaim:  cfg.OIDCGroupsClaim,
+		Logger:       logger,
+	}
+}
+
 func newIdentityWiring(rt Runtime) identityWiring {
 	cfg := rt.Config
 	// The limiters count in wall-clock time, as the TypeScript ones do: the system clock.
 	pg := idinfra.NewPg(rt.Pool, rt.Clock)
 	var provider idapp.OIDCProvider = unconfiguredOIDC{}
 	if cfg.OIDC != nil {
-		provider = idinfra.NewOIDCProvider(idinfra.OIDCConfig{
-			Issuer:       cfg.OIDC.Issuer,
-			ClientID:     cfg.OIDC.ClientID,
-			ClientSecret: cfg.OIDC.ClientSecret.Reveal(),
-			RedirectURI:  resolveURL(cfg.PublicURL, "/api/auth/callback"),
-			Scopes:       cfg.OIDCScopes,
-			GroupsClaim:  cfg.OIDCGroupsClaim,
-			Logger:       rt.Logger,
-		})
+		provider = idinfra.NewOIDCProvider(oidcConfigFor(cfg, rt.Logger))
 	}
 	return identityWiring{rt: rt, deps: idapp.Deps{
 		Users: pg.Users, Tokens: pg.Tokens, Sessions: pg.Sessions, PendingLogins: pg.PendingLogins,

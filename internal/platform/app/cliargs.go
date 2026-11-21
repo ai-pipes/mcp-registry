@@ -4,6 +4,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // argSpec is the options of a command, parsed like node:util parseArgs({strict: true,
@@ -43,9 +44,9 @@ func (s argSpec) parse(args []string) (parsedArgs, error) {
 						return p, UsageError("Option '--" + name + " <value>' argument missing")
 					}
 					if isOptionLike(rest[0]) {
-						return p, UsageError("Option '--" + name + " <value>' argument is ambiguous.\n" +
+						return p, UsageError("Option '--" + name + "' argument is ambiguous.\n" +
 							"Did you forget to specify the option argument for '--" + name + "'?\n" +
-							"To specify an option argument starting with a dash use '--" + name + "=-XXX'.")
+							"To specify an option argument starting with a dash use '--" + name + "=-XYZ'.")
 					}
 					value = rest[0]
 					i++
@@ -68,9 +69,18 @@ func (s argSpec) parse(args []string) (parsedArgs, error) {
 	return p, nil
 }
 
+// unknownOption is Node's ERR_PARSE_ARGS_UNKNOWN_OPTION text, byte for byte: it names only the
+// option (`--foo` of `--foo=bar`, `-a` of `-abc`) and ends without a closing single quote.
 func unknownOption(arg string) error {
-	return UsageError("Unknown option '" + arg + "'. To specify a positional argument starting with a '-', " +
-		"place it at the end of the command after '--', as in '-- " + strconv.Quote(arg) + "'")
+	name := arg
+	if strings.HasPrefix(arg, "--") {
+		name, _, _ = strings.Cut(arg, "=")
+	} else {
+		_, size := utf8.DecodeRuneInString(arg[1:])
+		name = arg[:1+size]
+	}
+	return UsageError("Unknown option '" + name + "'. To specify a positional argument starting with a '-', " +
+		"place it at the end of the command after '--', as in '-- \"" + name + "\"")
 }
 
 // expectPositionals is the count check of parse() in cli-commands.ts.
