@@ -26,8 +26,14 @@
 #   layer-self-dependency   every layer lists itself: an external test package (package domain_test)
 #                           imports the package it tests; this opens no other layer
 #
-# Platform components: the leaves (httpx, outbox, logging, db), migrate and pgtest (support) and
-# `platform`, the composition (everything else in internal/platform), which may depend on anything.
+#   upstream-client-injected  the upstream MCP client (internal/platform/upstream) is its own component
+#                           that no module layer may import: the composition injects it as the
+#                           kernel.UpstreamClient interface. It imports kernel and the MCP SDK, which
+#                           the composition and this package are the only code to use today
+#
+# Platform components: the leaves (httpx, outbox, logging, db), migrate and pgtest (support),
+# upstream (the client of upstream MCP servers) and `platform`, the composition (everything else in
+# internal/platform), which may depend on anything.
 # The components do not overlap; a package of internal/platform that no component lists is reported
 # by go-arch-lint, so a new one has to be classified.
 version: 3
@@ -81,6 +87,10 @@ components:
     in: platform/logging/**
   platform-db:
     in: platform/db/**
+  # The client of upstream MCP servers: not a leaf (no module layer imports it; the composition
+  # hands it to modules as kernel.UpstreamClient). Imports kernel (common) and the MCP SDK only.
+  platform-upstream:
+    in: platform/upstream/**
   # Support, not leaves: the migration runner, and the throwaway migrated Postgres (pgtest) that
   # the tests of leaves and of infra layers use. No module layer imports migrate.
   platform-migrate:
@@ -174,6 +184,11 @@ deps:
       - platform-pgtest
     canUse:
       - pgx
+  platform-upstream:
+    mayDependOn:
+      - platform-upstream
+    canUse:
+      - mcp-sdk
   platform-migrate:
     mayDependOn:
       - platform-migrate
