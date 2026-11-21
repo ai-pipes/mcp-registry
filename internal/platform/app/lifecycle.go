@@ -24,7 +24,7 @@ import (
 
 // Operator-facing texts, copied from apps/server/src/platform/main.ts and bootstrap.ts.
 const (
-	msgKeyOldSet        = "SECRETS_KEY_OLD is set: key rotation in progress. Run `node dist/cli.js rotate-secrets-key`, then remove SECRETS_KEY_OLD and restart"
+	msgKeyOldSet        = "SECRETS_KEY_OLD is set: key rotation in progress. Run `mcp-registry rotate-secrets-key`, then remove SECRETS_KEY_OLD and restart"
 	msgKeyCreated       = "secrets key check created: SECRETS_KEY is now verified at every start"
 	msgKeyNeedsRotation = "the secrets key check still opens with SECRETS_KEY_OLD only: run rotate-secrets-key"
 	msgKeyMismatch      = `SECRETS_KEY does not match the data in this database; restore the original key (stored secrets cannot be read with this one). See "Recovering from a key mismatch" in the README.`

@@ -161,7 +161,11 @@ func launch(t *testing.T, cfg config.Config, edit func(*Options)) *instance {
 	t.Helper()
 	logs := &logBuf{}
 	ctx, cancel := context.WithCancelCause(context.Background())
-	o := Options{Config: cfg, Version: "9.9.9-test", WebRoot: t.TempDir(), Logger: logging.New("info", logs)}
+	// No modules unless a test asks for them: the lifecycle tests are about the platform alone.
+	o := Options{
+		Config: cfg, Version: "9.9.9-test", WebRoot: t.TempDir(), Logger: logging.New("info", logs),
+		modules: func(Runtime) []Module { return nil },
+	}
 	if edit != nil {
 		edit(&o)
 	}

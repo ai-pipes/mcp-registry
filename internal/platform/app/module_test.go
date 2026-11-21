@@ -6,9 +6,12 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/ai-pipes/mcp-registry/internal/kernel"
 	"github.com/ai-pipes/mcp-registry/internal/platform/httpx"
 	"github.com/ai-pipes/mcp-registry/internal/platform/outbox"
 )
@@ -17,9 +20,27 @@ func say(s string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(s)) })
 }
 
-func TestTheDefaultModuleListIsEmptyUntilIdentityIsWired(t *testing.T) {
-	if got := modules(Runtime{}); len(got) != 0 {
+// Building the modules makes no request (the CLI builds them for every command): a Runtime
+// without a pool is enough.
+func TestTheDefaultModuleListIsIdentityThenThePlatformRoutes(t *testing.T) {
+	got := modules(Runtime{Clock: kernel.SystemClock{}, Logger: discardLogger(), Version: "1.2.3"})
+	if len(got) != 2 {
 		t.Fatalf("modules() = %d entries", len(got))
+	}
+	paths := func(m Module) (out []string) {
+		for _, r := range m.Routes {
+			out = append(out, r.Method+" "+r.Path)
+		}
+		return out
+	}
+	if p := paths(got[0]); !slices.Contains(p, "POST /api/auth/link") || !slices.Contains(p, "GET /api/users") || slices.Contains(p, "GET /api/audit") {
+		t.Errorf("identity routes: %v", p)
+	}
+	if p := paths(got[1]); !slices.Equal(p, []string{"GET /api/version", "GET /api/audit"}) {
+		t.Errorf("platform routes: %v", p)
+	}
+	if len(got[0].Jobs) != 1 || got[0].Jobs[0].Every != 24*time.Hour || got[0].FirstStart == nil {
+		t.Errorf("identity job or first start: %+v", got[0])
 	}
 }
 

@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"slices"
 
 	"github.com/ai-pipes/mcp-registry/internal/kernel"
+	"github.com/ai-pipes/mcp-registry/internal/modules/identity"
 	"github.com/ai-pipes/mcp-registry/internal/platform/audit"
 	"github.com/ai-pipes/mcp-registry/internal/platform/config"
 	"github.com/ai-pipes/mcp-registry/internal/platform/crypto"
@@ -105,9 +107,31 @@ func newRuntime(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, vers
 }
 
 // modules is the list of modules, in the order their routes, prefixes and jobs are merged. The
-// server and the CLI build it from the same Runtime. Identity joins it in milestone 2, the others
-// in later ones.
-func modules(Runtime) []Module { return nil }
+// server and the CLI build it from the same Runtime. Identity is first; the platform's own routes
+// (audit, version) follow, since they use identity's session guards. The other modules join in
+// later milestones.
+func modules(rt Runtime) []Module {
+	id := newIdentityWiring(rt)
+	return []Module{id.module(), platformModule(rt, id)}
+}
+
+// platformModule is the platform's own REST routes, guarded with identity's session checks:
+// `GET /api/version` for any signed-in person and `GET /api/audit` for admins. Like identity's
+// token and user routes, the guards are prefix middleware: every path and method under the prefix
+// is answered by the guard first.
+func platformModule(rt Runtime, id identityWiring) Module {
+	session := identity.RequireSession(id.deps)
+	return Module{
+		Routes: []httpx.Route{
+			{Method: http.MethodGet, Path: "/api/version", Handler: versionHandler(rt.Version)},
+			{Method: http.MethodGet, Path: "/api/audit", Handler: auditHandler(rt.Pool)},
+		},
+		Prefixes: []httpx.Prefix{
+			{Path: "/api/version", Middleware: []httpx.Middleware{session}},
+			{Path: "/api/audit", Middleware: []httpx.Middleware{session, identity.RequireAdmin()}},
+		},
+	}
+}
 
 // modulesOf is the module list for rt: the default, or the test seam.
 func modulesOf(seam func(Runtime) []Module, rt Runtime) []Module {
