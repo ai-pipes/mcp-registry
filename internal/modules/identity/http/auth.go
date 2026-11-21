@@ -121,12 +121,14 @@ func (h *handlers) callback(w http.ResponseWriter, r *http.Request) {
 		iss = f.OptionalString("iss", &v, 2048)
 	}
 	bound, hasBinding := loginBindingOf(r)
-	clearLoginBindingCookie(w, h.o.CookieSecure)
 	// A cancelled or broken provider answer carries no usable code or state; the attempt is not consumed.
+	// The binding cookie is left alone too: it is cleared only for the attempt it belongs to, so a
+	// callback forged by another site cannot break a sign-in in progress.
 	if f.Err() != nil || !hasBinding || bound != state {
 		redirect(w, "/?loginError="+domain.CodeInvalidState)
 		return
 	}
+	clearLoginBindingCookie(w, h.o.CookieSecure)
 	res, err := app.CompleteOIDCLogin(r.Context(), h.d, app.CompleteOIDCLoginInput{State: state, Code: code, Iss: iss, IP: httpx.ClientIPOf(r)})
 	if err != nil {
 		// The browser came back from the provider: a page with a fixed code, not a JSON 500.
