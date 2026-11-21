@@ -17,17 +17,45 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// CLICommand is one operator command of `mcp-registry <name> ...`. Run gets the arguments after
-// the command name and returns the exit code: 0 done, 1 the operation failed, 2 bad invocation
-// (print the reason and usage to stderr).
-type CLICommand struct {
-	Name string
-	Run  func(ctx context.Context, args []string, stdout, stderr io.Writer) int
+// CLIIO is what a command reads and writes: stdin (a pipe, or what the operator types), the
+// two output streams, and the process environment (for `--secret-env`).
+type CLIIO struct {
+	Stdin          io.Reader
+	Stdout, Stderr io.Writer
+	Env            map[string]string
 }
 
-// Module is what a module hands the composition: everything the server and the CLI need from it.
-// The composition merges the modules of modules() in order. The CLI uses Commands only; it never
-// starts the HTTP server, the outbox worker, the scheduler or FirstStart.
+// KeyGuard says what the CLI does before a command when the stored key check is not opened by the
+// configured keys (a "mismatch").
+type KeyGuard int
+
+const (
+	// GuardWarn (the default) prints one `warning:` line to stderr and runs the command.
+	GuardWarn KeyGuard = iota
+	// GuardRefuse refuses the command with exit 1: it seals a new secret with SECRETS_KEY
+	// (create-server).
+	GuardRefuse
+	// GuardNone skips the check: the command handles the key itself (rotate-secrets-key,
+	// reset-key-check).
+	GuardNone
+)
+
+// CLICommand is one operator command of `mcp-registry <name> ...`. Run gets the arguments after
+// the command name. What it returns is mapped in one place (see exitFor): nil is exit 0;
+// UsageError is `error: <msg>` and the usage text, exit 2; CommandError is `error: <msg>`, exit 1;
+// a kernel.DomainError is `error: <code>: <message>`, exit 1; any other error is
+// `error: unexpected failure` (its text is never printed), exit 1. Usage is this command's entry
+// in the usage text.
+type CLICommand struct {
+	Name  string
+	Usage string
+	Guard KeyGuard
+	Run   func(ctx context.Context, io CLIIO, args []string) error
+}
+
+// Module is what a module's wiring hands the composition: everything the server and the CLI need
+// from it. The composition merges the modules of modules() in order. The CLI uses Commands only;
+// it never starts the HTTP server, the outbox worker, the scheduler or FirstStart.
 type Module struct {
 	Routes   []httpx.Route
 	Prefixes []httpx.Prefix
@@ -35,13 +63,20 @@ type Module struct {
 	// Handlers maps an outbox event type to its subscriber. Two modules registering one type is a
 	// start-up error; the worker starts only when the merged table is not empty.
 	Handlers map[string]outbox.Handler
-	// FirstStart runs after the secrets key check and before the listener accepts connections. Its
-	// error is logged at error level (without the error's text) and does not stop the start.
-	FirstStart func(ctx context.Context) error
+	// FirstStart runs after the secrets key check and before the listener accepts connections. It
+	// has no error: the module's wiring logs its own records (with the operator-facing texts). The
+	// composition only recovers a panic (an error record with the call frames, never the value) and
+	// the start goes on.
+	FirstStart func(ctx context.Context)
 	Commands   []CLICommand
 }
 
-// Runtime is what the composition gives the constructor of a module.
+// Runtime is what the per-module wiring inside internal/platform/app reads plain values from
+// (one file per module, e.g. identity.go, which builds the module's infra, app and http pieces and
+// returns its Module). The modules themselves never see it: their layers may not import the
+// composition. Command bodies live in the same wiring files. The server and the CLI build the
+// module list from the same Runtime, and the CLI builds every module for every command, so a
+// constructor must stay cheap: no I/O, no goroutines.
 type Runtime struct {
 	Config  config.Config
 	Pool    *pgxpool.Pool
@@ -88,7 +123,7 @@ type assembled struct {
 	prefixes   []httpx.Prefix
 	jobs       []scheduler.Job
 	handlers   map[string]outbox.Handler
-	firstStart []func(ctx context.Context) error
+	firstStart []func(ctx context.Context)
 	commands   map[string]CLICommand
 }
 

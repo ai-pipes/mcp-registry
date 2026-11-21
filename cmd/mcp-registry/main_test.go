@@ -14,7 +14,7 @@ import (
 
 func TestVersionFlagPrintsVersionAndExitsZero(t *testing.T) {
 	var out bytes.Buffer
-	code := run(context.Background(), []string{"--version"}, nil, &out, io.Discard)
+	code := run(context.Background(), []string{"--version"}, nil, strings.NewReader(""), &out, io.Discard)
 	if code != 0 || out.String() != version+"\n" {
 		t.Fatalf("code=%d out=%q want %q", code, out.String(), version)
 	}
@@ -32,7 +32,7 @@ var validEnv = map[string]string{
 // command with a database (exit 2) is in main_int_test.go.
 func TestACommandNeedsTheDatabaseFirst(t *testing.T) {
 	var errOut, out bytes.Buffer
-	code := run(context.Background(), []string{"anything"}, validEnv, &out, &errOut)
+	code := run(context.Background(), []string{"anything"}, validEnv, strings.NewReader(""), &out, &errOut)
 	if code != 1 || out.Len() != 0 || !strings.HasPrefix(errOut.String(), "error: cannot connect to the database") || strings.Contains(errOut.String(), "Usage:") {
 		t.Fatalf("code=%d stdout=%q stderr=%q", code, out.String(), errOut.String())
 	}
@@ -41,7 +41,7 @@ func TestACommandNeedsTheDatabaseFirst(t *testing.T) {
 // The configuration is read first: a bare environment is a configuration error, not usage.
 func TestUnknownCommandWithBareEnvironmentReportsTheConfiguration(t *testing.T) {
 	var errOut, out bytes.Buffer
-	code := run(context.Background(), []string{"version"}, nil, &out, &errOut)
+	code := run(context.Background(), []string{"version"}, nil, strings.NewReader(""), &out, &errOut)
 	if code != 1 || out.Len() != 0 || !strings.HasPrefix(errOut.String(), "Invalid configuration:\n") {
 		t.Fatalf("code=%d stdout=%q stderr=%q", code, out.String(), errOut.String())
 	}
@@ -52,7 +52,7 @@ func TestUnknownCommandWithBareEnvironmentReportsTheConfiguration(t *testing.T) 
 
 func TestVersionNeedsNoConfiguration(t *testing.T) {
 	var out bytes.Buffer
-	if code := run(context.Background(), []string{"--version"}, nil, &out, io.Discard); code != 0 || out.String() != version+"\n" {
+	if code := run(context.Background(), []string{"--version"}, nil, strings.NewReader(""), &out, io.Discard); code != 0 || out.String() != version+"\n" {
 		t.Fatalf("code=%d out=%q", code, out.String())
 	}
 }
@@ -60,7 +60,7 @@ func TestVersionNeedsNoConfiguration(t *testing.T) {
 // compat: TestConfigRefused: the report on stderr, exit 1, nothing on stdout.
 func TestBadConfigurationExitsOneWithReportOnStderr(t *testing.T) {
 	var out, errOut bytes.Buffer
-	code := run(context.Background(), nil, map[string]string{"PORT": "99999"}, &out, &errOut)
+	code := run(context.Background(), nil, map[string]string{"PORT": "99999"}, strings.NewReader(""), &out, &errOut)
 	if code != 1 || out.Len() != 0 {
 		t.Fatalf("code=%d stdout=%q", code, out.String())
 	}

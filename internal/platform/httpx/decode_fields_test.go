@@ -52,6 +52,35 @@ type sliceUntagged struct {
 	Items []untagged `json:"items"`
 }
 
+type nameless struct {
+	Role string `json:",omitempty"`
+}
+
+type mapUntagged struct {
+	M map[string]untagged `json:"m"`
+}
+
+type Embedded struct{ Deep string }
+
+type embedsUntagged struct {
+	Embedded
+	Name string `json:"name"`
+}
+
+type EmbeddedOK struct {
+	Deep string `json:"deep"`
+}
+
+type embedsTagged struct {
+	EmbeddedOK
+	Name string `json:"name"`
+}
+
+type dashAndNames struct {
+	A string `json:"-"`
+	B string `json:"b,omitempty"`
+}
+
 type ptrUntagged struct {
 	P *untagged `json:"p"`
 }
@@ -61,6 +90,7 @@ type ptrUntagged struct {
 func TestDecodeJSONRefusesAnUntaggedExportedField(t *testing.T) {
 	for name, dst := range map[string]any{
 		"direct": &untagged{}, "nested": &nestedUntagged{}, "slice element": &sliceUntagged{}, "pointer": &ptrUntagged{},
+		"a tag without a name": &nameless{}, "map value": &mapUntagged{}, "embedded struct": &embedsUntagged{},
 	} {
 		func() {
 			defer func() {
@@ -72,5 +102,16 @@ func TestDecodeJSONRefusesAnUntaggedExportedField(t *testing.T) {
 			}()
 			_ = decode(t, `{}`, dst)
 		}()
+	}
+}
+
+func TestDecodeJSONAcceptsDashNamedOptionsAndTaggedEmbeddedStructs(t *testing.T) {
+	var a dashAndNames
+	if err := decode(t, `{"b":"x"}`, &a); err != nil || a.B != "x" {
+		t.Fatalf("%+v %v", a, err)
+	}
+	var e embedsTagged
+	if err := decode(t, `{"deep":"d","name":"n"}`, &e); err != nil || e.Deep != "d" || e.Name != "n" {
+		t.Fatalf("%+v %v", e, err)
 	}
 }

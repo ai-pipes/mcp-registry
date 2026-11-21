@@ -28,12 +28,6 @@ func TestUTF16LenCountsCodeUnits(t *testing.T) {
 	}
 }
 
-func TestJSTrimIsTheKernelOne(t *testing.T) {
-	if got := httpx.JSTrim(" \u00a0x\ufeff"); got != "x" {
-		t.Errorf("JSTrim = %q", got)
-	}
-}
-
 func TestFieldsStringCountsUTF16(t *testing.T) {
 	var f httpx.Fields
 	// 50 emoji are 100 UTF-16 units (allowed) and 50 code points; 51 are 102 units (too long).
@@ -158,6 +152,10 @@ func TestFieldsQueryIntCoercesLikeJavaScriptNumber(t *testing.T) {
 		{"a fraction", q("1.5"), 0, "limit: must be an integer"},
 		{"not a number", q("abc"), 0, "limit: must be a number"},
 		{"infinity", q("1e999"), 0, "limit: must be a number"},
+		{"Infinity", q("Infinity"), 0, "limit: must be a number"},
+		{"+Infinity", q("+Infinity"), 0, "limit: must be a number"},
+		{"-Infinity", q("-Infinity"), 0, "limit: must be a number"},
+		{"lowercase infinity is NaN", q("infinity"), 0, "limit: must be a number"},
 		{"first value wins", url.Values{"limit": {"7", "9"}}, 7, ""},
 	} {
 		var f httpx.Fields

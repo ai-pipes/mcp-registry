@@ -90,6 +90,21 @@ func requireJSONTags(t reflect.Type) {
 	taggedTypes.Store(t, struct{}{})
 }
 
+// embeddedStruct is the struct type of an embedded field (or of an embedded pointer), else nil.
+func embeddedStruct(f reflect.StructField) reflect.Type {
+	if !f.Anonymous {
+		return nil
+	}
+	t := f.Type
+	if t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	if t.Kind() != reflect.Struct {
+		return nil
+	}
+	return t
+}
+
 func checkTags(t reflect.Type, where string, seen map[reflect.Type]bool) {
 	switch t.Kind() {
 	case reflect.Pointer, reflect.Slice, reflect.Array:
@@ -106,13 +121,18 @@ func checkTags(t reflect.Type, where string, seen map[reflect.Type]bool) {
 			if !f.IsExported() {
 				continue
 			}
-			if _, ok := f.Tag.Lookup("json"); !ok {
-				if f.Anonymous && f.Type.Kind() == reflect.Struct {
+			tag, ok := f.Tag.Lookup("json")
+			if !ok {
+				if et := embeddedStruct(f); et != nil {
 					// An embedded struct without a tag is inlined: its own fields are checked.
-					checkTags(f.Type, where, seen)
+					checkTags(et, where, seen)
 					continue
 				}
 				panic("httpx.DecodeJSON: field " + where + "." + f.Name + " has no json tag (json/v2 would never match it)")
+			}
+			if name, _, _ := strings.Cut(tag, ","); name == "" {
+				// json/v2 takes the Go field name here, which no client sends.
+				panic("httpx.DecodeJSON: field " + where + "." + f.Name + " has a json tag without a name (json/v2 would match the Go name): write json:\"name,...\" or json:\"-\"")
 			}
 			checkTags(f.Type, where+"."+f.Name, seen)
 		}

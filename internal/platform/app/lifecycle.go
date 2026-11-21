@@ -146,23 +146,21 @@ func databasePassword(cfg config.Config) *string {
 	return &pw
 }
 
-// msgFirstStartFailed is logged when a module's FirstStart fails; the error's text is never part
-// of the record (it may quote values or secrets).
-const msgFirstStartFailed = "module first start failed"
+// msgFirstStartPanicked is logged when a module's FirstStart panics; the panic value is never
+// part of the record (it may quote values or secrets).
+const msgFirstStartPanicked = "module first start panicked"
 
-// runFirstStart runs the modules' FirstStart functions in order. A failure (or a panic) is logged
-// and the start goes on.
-func runFirstStart(ctx context.Context, logger *slog.Logger, funcs []func(context.Context) error) {
+// runFirstStart runs the modules' FirstStart functions in order. A panic is logged and the start
+// goes on.
+func runFirstStart(ctx context.Context, logger *slog.Logger, funcs []func(context.Context)) {
 	for _, f := range funcs {
 		func() {
 			defer func() {
 				if recover() != nil {
-					logger.Error(msgFirstStartFailed, "stack", logging.PanicFrames())
+					logger.Error(msgFirstStartPanicked, "stack", logging.PanicFrames())
 				}
 			}()
-			if err := f(ctx); err != nil {
-				logger.Error(msgFirstStartFailed, logging.ErrAttr(err))
-			}
+			f(ctx)
 		}()
 	}
 }

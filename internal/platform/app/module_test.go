@@ -28,7 +28,7 @@ func TestAssembleMergesInOrder(t *testing.T) {
 	a, err := assemble([]Module{
 		{
 			Routes: []httpx.Route{{Method: "GET", Path: "/a", Handler: say("a")}}, Handlers: map[string]outbox.Handler{"x.one": h},
-			Commands: []CLICommand{{Name: "one"}}, FirstStart: func(context.Context) error { return nil },
+			Commands: []CLICommand{{Name: "one"}}, FirstStart: func(context.Context) {},
 		},
 		{
 			Routes: []httpx.Route{{Method: "GET", Path: "/b", Handler: say("b")}}, Handlers: map[string]outbox.Handler{"x.two": h},

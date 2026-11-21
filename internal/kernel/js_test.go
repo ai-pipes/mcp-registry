@@ -52,3 +52,16 @@ func TestJSNumberIsNumberOfAString(t *testing.T) {
 		t.Errorf("a huge literal is Infinity, got %v %v", f, ok)
 	}
 }
+
+func TestJSNumberParsesInfinityLikeJavaScript(t *testing.T) {
+	for in, sign := range map[string]int{"Infinity": 1, "+Infinity": 1, "-Infinity": -1, " Infinity ": 1} {
+		if f, ok := kernel.JSNumber(in); !ok || !math.IsInf(f, sign) {
+			t.Errorf("JSNumber(%q) = %v, %v", in, f, ok)
+		}
+	}
+	for _, in := range []string{"infinity", "INFINITY", "Inf", "Infinity1", "--Infinity", "+-Infinity", "0xInfinity"} {
+		if _, ok := kernel.JSNumber(in); ok {
+			t.Errorf("JSNumber(%q) is NaN in JavaScript", in)
+		}
+	}
+}

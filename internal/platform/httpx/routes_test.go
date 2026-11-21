@@ -196,3 +196,73 @@ func TestPathParamOutsideARouteIsEmpty(t *testing.T) {
 		t.Errorf("PathParam = %q", got)
 	}
 }
+
+// A route registered Unguarded is reached without the prefix middleware (a hono route registered
+// before .use()): the connections OAuth callback handles a missing session itself.
+func TestRouterUnguardedRouteSkipsThePrefixGuardButNothingElseDoes(t *testing.T) {
+	h := httpx.NewRouter([]httpx.Route{
+		{Method: "GET", Path: "/api/connections", Handler: say("list")},
+		{Method: "GET", Path: "/api/connections/callback", Handler: say("callback"), Unguarded: true},
+		{Method: "DELETE", Path: "/api/connections/{id}", Handler: say("delete")},
+	}, []httpx.Prefix{{Path: "/api/connections", Middleware: []httpx.Middleware{refuse(401)}}}, httpx.NotFound())
+	for _, tc := range []struct {
+		method, path string
+		code         int
+		body         string
+	}{
+		{"GET", "/api/connections/callback", 200, "callback"}, // anonymous
+		{"HEAD", "/api/connections/callback", 200, ""},        // HEAD is served by the GET route
+		{"POST", "/api/connections/callback", 401, ""},        // another method: the guard answers
+		{"DELETE", "/api/connections/callback", 401, ""},      // the parameter route is guarded
+		{"GET", "/api/connections", 401, ""},                  // a sibling route
+		{"GET", "/api/connections/other", 401, ""},            // an unknown path
+		{"GET", "/api/connections/callback/x", 401, ""},       // under the unguarded path
+		{"GET", "/api/connections/callback/", 401, ""},        // not clean, still under the prefix
+	} {
+		w := serveRaw(h, tc.method, tc.path)
+		if w.Code != tc.code || (tc.body != "" && w.Body.String() != tc.body) {
+			t.Errorf("%s %s: %d %q, want %d %q", tc.method, tc.path, w.Code, w.Body, tc.code, tc.body)
+		}
+	}
+}
+
+func TestRouterParameterHardening(t *testing.T) {
+	h := httpx.NewRouter([]httpx.Route{
+		{Method: "DELETE", Path: "/api/tokens/{id}", Handler: sayParam("id")},
+		{Method: "GET", Path: "/{id}", Handler: sayParam("id")},
+	}, nil, httpx.NotFound())
+	for _, tc := range []struct {
+		method, path string
+		code         int
+	}{
+		{"DELETE", "/api/tokens/..", 404},     // not clean
+		{"DELETE", "/api/tokens/.", 404},      // not clean
+		{"DELETE", "/api/tokens/%2e%2e", 404}, // clean when escaped, ".." once decoded
+		{"DELETE", "/api/tokens/%2E", 404},
+		{"DELETE", "/api/tokens/%ff", 404},    // not UTF-8 once decoded
+		{"DELETE", "/api/tokens/a%c3", 404},   // truncated UTF-8
+		{"DELETE", "/api/tokens/%c3%a9", 200}, // valid UTF-8
+		{"DELETE", "/api/tokens/..a", 200},    // not a dot segment
+		{"GET", "/", 404},                     // an empty parameter at the root
+		{"GET", "/x", 200},
+	} {
+		if w := serveRaw(h, tc.method, tc.path); w.Code != tc.code {
+			t.Errorf("%s %s: %d, want %d", tc.method, tc.path, w.Code, tc.code)
+		}
+	}
+}
+
+func TestRouterRefusesAnEmptyOrRootPrefix(t *testing.T) {
+	for _, p := range []string{"", "/", "api", "/api/", "/a/{x}"} {
+		func() {
+			defer func() {
+				r := recover()
+				msg, _ := r.(string)
+				if !strings.Contains(msg, "prefix") {
+					t.Errorf("prefix %q: recovered %v, want a panic naming the prefix", p, r)
+				}
+			}()
+			httpx.NewRouter(nil, []httpx.Prefix{{Path: p}}, httpx.NotFound())
+		}()
+	}
+}

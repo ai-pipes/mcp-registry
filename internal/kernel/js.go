@@ -29,12 +29,19 @@ var (
 )
 
 // JSNumber is Number(s) for a string: ok is false where JavaScript gives NaN. Whitespace-only is
-// 0; unsigned 0x/0o/0b literals are accepted; the result may be infinite (a huge literal):
+// 0; unsigned 0x/0o/0b literals are accepted; "Infinity" (optionally signed, case-sensitive) is
+// +-Inf; the result may be infinite (also a huge literal):
 // callers refuse NaN and Infinity.
 func JSNumber(s string) (float64, bool) {
 	s = JSTrim(s)
 	if s == "" {
 		return 0, true
+	}
+	switch s {
+	case "Infinity", "+Infinity":
+		return math.Inf(1), true
+	case "-Infinity":
+		return math.Inf(-1), true
 	}
 	if jsRadix.MatchString(s) {
 		base := map[byte]int{'x': 16, 'o': 8, 'b': 2}[s[1]|0x20]

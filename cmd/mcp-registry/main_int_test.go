@@ -22,7 +22,7 @@ func envFor(url string) map[string]string {
 // compat: TestCLIVersion: "version" is not a command; the name is printed raw. The usage follows.
 func TestUnknownCommandWithADatabaseExitsTwo(t *testing.T) {
 	var errOut, out bytes.Buffer
-	code := run(context.Background(), []string{`ver\sion`}, envFor(pgtest.StartURL(t)), &out, &errOut)
+	code := run(context.Background(), []string{`ver\sion`}, envFor(pgtest.StartURL(t)), strings.NewReader(""), &out, &errOut)
 	if code != 2 || out.Len() != 0 {
 		t.Fatalf("code=%d stdout=%q", code, out.String())
 	}

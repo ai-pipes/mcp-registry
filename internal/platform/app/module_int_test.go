@@ -4,7 +4,6 @@ package app
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"slices"
 	"strings"
@@ -47,10 +46,7 @@ func TestAStubModulePlugsIntoTheServer(t *testing.T) {
 					delivered <- p
 					return nil
 				}},
-				FirstStart: func(context.Context) error {
-					rt.Logger.Info("stub first start")
-					return nil
-				},
+				FirstStart: func(context.Context) { rt.Logger.Info("stub first start") },
 			}}
 		}
 	})
@@ -99,10 +95,7 @@ func TestFirstStartRunsAfterTheKeyCheckAndBeforeListening(t *testing.T) {
 	url := pgtest.StartURL(t)
 	in := startInstance(t, baseConfig(url, newKey(t)), func(o *Options) {
 		o.modules = func(rt Runtime) []Module {
-			return []Module{{FirstStart: func(context.Context) error {
-				rt.Logger.Info("stub first start")
-				return nil
-			}}}
+			return []Module{{FirstStart: func(context.Context) { rt.Logger.Info("stub first start") }}}
 		}
 	})
 	got := in.logs.messages(t)
@@ -113,29 +106,29 @@ func TestFirstStartRunsAfterTheKeyCheckAndBeforeListening(t *testing.T) {
 	in.stop("SIGTERM")
 }
 
-// A failing FirstStart is an error record without the message, and the server starts anyway.
-func TestFirstStartFailureIsLoggedWithoutItsTextAndDoesNotStopTheStart(t *testing.T) {
+// FirstStart has no error: the module's wiring logs its own records. The composition only
+// recovers a panic (error level, frames, never the value) and the start goes on.
+func TestAPanickingFirstStartIsLoggedWithoutItsValueAndDoesNotStopTheStart(t *testing.T) {
 	url := pgtest.StartURL(t)
 	const secret = "tok-SECRET-value"
+	var second bool
 	in := startInstance(t, baseConfig(url, newKey(t)), func(o *Options) {
 		o.modules = func(Runtime) []Module {
 			return []Module{
-				{FirstStart: func(context.Context) error { return errors.New("cannot create the admin: " + secret) }},
-				{FirstStart: func(context.Context) error { panic("boom " + secret) }},
+				{FirstStart: func(context.Context) { panic("boom " + secret) }},
+				{FirstStart: func(context.Context) { second = true }},
 			}
 		}
 	})
-	failed := in.logs.find(t, msgFirstStartFailed)
-	if len(failed) != 2 {
-		t.Fatalf("first start failures: %v", failed)
-	}
-	for _, r := range failed {
-		if levelOf(r) != levelError {
-			t.Errorf("level %v", r["level"])
-		}
+	failed := in.logs.find(t, msgFirstStartPanicked)
+	if len(failed) != 1 || levelOf(failed[0]) != levelError || failed[0]["stack"] == nil {
+		t.Fatalf("panic records: %v", failed)
 	}
 	if strings.Contains(in.logs.String(), secret) {
-		t.Fatal("the error's or panic's text reached the log")
+		t.Fatal("the panic value reached the log")
+	}
+	if !second {
+		t.Error("the next module's FirstStart did not run")
 	}
 	if code, body, _ := get(t, in.base+"/healthz"); code != 200 || body != "ok" {
 		t.Errorf("the server is not serving: %d %q", code, body)
@@ -153,7 +146,7 @@ func TestTwoModulesHandlingOneEventTypeRefuseTheStart(t *testing.T) {
 	in := launch(t, cfg, func(o *Options) {
 		o.modules = func(Runtime) []Module {
 			return []Module{
-				{Handlers: map[string]outbox.Handler{"catalog.tools_changed": h}, FirstStart: func(context.Context) error { firstStarted = true; return nil }},
+				{Handlers: map[string]outbox.Handler{"catalog.tools_changed": h}, FirstStart: func(context.Context) { firstStarted = true }},
 				{Handlers: map[string]outbox.Handler{"catalog.tools_changed": h}},
 			}
 		}

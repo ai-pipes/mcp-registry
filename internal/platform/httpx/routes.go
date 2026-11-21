@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"path"
 	"strings"
+	"unicode/utf8"
 )
 
 // Route is one handler of the REST API. Path is exact ("/api/tokens") or has one parameter
@@ -14,6 +15,11 @@ import (
 type Route struct {
 	Method, Path string
 	Handler      http.Handler
+	// Unguarded opts this route out of the middleware of the prefixes above it, like a hono route
+	// registered before .use(): the connections OAuth callback sits under a guarded prefix but
+	// handles a missing session itself. Only a request that matches the route (method and path,
+	// HEAD by a GET route) skips the guards; every other path under the prefix is still guarded.
+	Unguarded bool
 }
 
 // Prefix puts middleware in front of every path at or under Path ("/api/tokens" covers
@@ -33,16 +39,22 @@ func PathParam(r *http.Request, name string) string {
 	return p[name]
 }
 
+// entry is the handler of a route and whether it skips the prefix middleware.
+type entry struct {
+	h         http.Handler
+	unguarded bool
+}
+
 type pattern struct {
 	segments []string // literal text, or "" at the parameter position
 	param    string   // the parameter's name, "" for an exact path
 	at       int      // the parameter's segment index
-	handlers map[string]http.Handler
+	handlers map[string]entry
 }
 
 type router struct {
-	exact    map[string]map[string]http.Handler // path -> method -> handler
-	params   []*pattern                         // in registration order
+	exact    map[string]map[string]entry // path -> method -> handler
+	params   []*pattern                  // in registration order
 	prefixes []Prefix
 	notFound http.Handler
 }
@@ -58,10 +70,10 @@ type router struct {
 // parameter that is not a whole segment, a missing method or handler, the same method and shape
 // twice) is a programming error and panics.
 func NewRouter(routes []Route, prefixes []Prefix, notFound http.Handler) http.Handler {
-	rt := &router{exact: map[string]map[string]http.Handler{}, prefixes: prefixes, notFound: notFound}
+	rt := &router{exact: map[string]map[string]entry{}, prefixes: prefixes, notFound: notFound}
 	for _, p := range prefixes {
-		if !isClean(p.Path) || strings.ContainsAny(p.Path, "{}") {
-			panic(fmt.Sprintf("httpx: invalid prefix %q", p.Path))
+		if !isClean(p.Path) || p.Path == "/" || strings.ContainsAny(p.Path, "{}") {
+			panic(fmt.Sprintf("httpx: invalid prefix %q: a prefix is an absolute, clean path below the root without parameters", p.Path))
 		}
 	}
 	for _, r := range routes {
@@ -93,13 +105,13 @@ func (rt *router) add(r Route) {
 	if at < 0 {
 		byMethod := rt.exact[r.Path]
 		if byMethod == nil {
-			byMethod = map[string]http.Handler{}
+			byMethod = map[string]entry{}
 			rt.exact[r.Path] = byMethod
 		}
-		if byMethod[r.Method] != nil {
+		if _, dup := byMethod[r.Method]; dup {
 			panic(fmt.Sprintf("httpx: route %s %q registered twice", r.Method, r.Path))
 		}
-		byMethod[r.Method] = r.Handler
+		byMethod[r.Method] = entry{r.Handler, r.Unguarded}
 		return
 	}
 	var pat *pattern
@@ -112,13 +124,13 @@ func (rt *router) add(r Route) {
 		}
 	}
 	if pat == nil {
-		pat = &pattern{segments: segs, param: name, at: at, handlers: map[string]http.Handler{}}
+		pat = &pattern{segments: segs, param: name, at: at, handlers: map[string]entry{}}
 		rt.params = append(rt.params, pat)
 	}
-	if pat.handlers[r.Method] != nil {
+	if _, dup := pat.handlers[r.Method]; dup {
 		panic(fmt.Sprintf("httpx: route %s %q registered twice", r.Method, r.Path))
 	}
-	pat.handlers[r.Method] = r.Handler
+	pat.handlers[r.Method] = entry{r.Handler, r.Unguarded}
 }
 
 func sameSegments(a, b []string) bool {
@@ -138,6 +150,14 @@ func underPrefix(p, prefix string) bool {
 }
 
 func (rt *router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	h, req, unguarded := rt.lookup(r)
+	if h == nil {
+		h = rt.notFound
+	}
+	if unguarded {
+		h.ServeHTTP(w, req)
+		return
+	}
 	raw := r.URL.EscapedPath()
 	var guards []Middleware
 	for _, p := range rt.prefixes {
@@ -145,38 +165,39 @@ func (rt *router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			guards = append(guards, p.Middleware...)
 		}
 	}
-	Chain(http.HandlerFunc(rt.route), guards...).ServeHTTP(w, r)
+	// The guards run before the route (or the not-found answer) whatever the path is.
+	Chain(h, guards...).ServeHTTP(w, req)
 }
 
-// route looks the request up and serves it, or answers not found.
-func (rt *router) route(w http.ResponseWriter, r *http.Request) {
+// lookup finds the handler for r and the request to hand it (carrying the path parameter); nil
+// when no route matches.
+func (rt *router) lookup(r *http.Request) (h http.Handler, req *http.Request, unguarded bool) {
 	raw := r.URL.EscapedPath()
 	if !isClean(raw) {
-		rt.notFound.ServeHTTP(w, r)
-		return
+		return nil, r, false
 	}
-	if h := handlerFor(rt.exact[raw], r.Method); h != nil {
-		h.ServeHTTP(w, r)
-		return
+	if e, ok := entryFor(rt.exact[raw], r.Method); ok {
+		return e.h, r, e.unguarded
 	}
 	segs := strings.Split(raw[1:], "/")
 	for _, p := range rt.params {
 		if len(segs) != len(p.segments) {
 			continue
 		}
-		h := handlerFor(p.handlers, r.Method)
-		if h == nil || !p.matches(segs) {
+		e, ok := entryFor(p.handlers, r.Method)
+		if !ok || !p.matches(segs) {
 			continue
 		}
 		value, err := url.PathUnescape(segs[p.at])
-		if err != nil {
+		// An encoded dot segment ("%2e%2e") is clean as escaped but not as a value; a value that is
+		// not UTF-8 is never a name of ours.
+		if err != nil || !utf8.ValidString(value) || value == "." || value == ".." {
 			continue
 		}
 		ctx := context.WithValue(r.Context(), paramKey{}, map[string]string{p.param: value})
-		h.ServeHTTP(w, r.WithContext(ctx))
-		return
+		return e.h, r.WithContext(ctx), e.unguarded
 	}
-	rt.notFound.ServeHTTP(w, r)
+	return nil, r, false
 }
 
 func (p *pattern) matches(segs []string) bool {
@@ -194,13 +215,14 @@ func (p *pattern) matches(segs []string) bool {
 	return true
 }
 
-// handlerFor is the handler of method, a GET handler serving HEAD.
-func handlerFor(byMethod map[string]http.Handler, method string) http.Handler {
-	if h := byMethod[method]; h != nil {
-		return h
+// entryFor is the entry of method, a GET entry serving HEAD.
+func entryFor(byMethod map[string]entry, method string) (entry, bool) {
+	if e, ok := byMethod[method]; ok {
+		return e, true
 	}
 	if method == http.MethodHead {
-		return byMethod[http.MethodGet]
+		e, ok := byMethod[http.MethodGet]
+		return e, ok
 	}
-	return nil
+	return entry{}, false
 }

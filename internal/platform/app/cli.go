@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strings"
 
 	"github.com/ai-pipes/mcp-registry/apps/server/migrations"
+	"github.com/ai-pipes/mcp-registry/internal/kernel"
 	"github.com/ai-pipes/mcp-registry/internal/platform/config"
 	"github.com/ai-pipes/mcp-registry/internal/platform/crypto"
 	"github.com/ai-pipes/mcp-registry/internal/platform/db"
@@ -15,20 +17,86 @@ import (
 	"github.com/ai-pipes/mcp-registry/internal/platform/migrate"
 )
 
-// Usage is the text printed with a bad invocation (apps/server/src/platform/cli-commands.ts USAGE;
-// it lists the commands the Go server has).
-const Usage = `Usage: mcp-registry
-       mcp-registry --version
-  Without a command the server starts. Operator commands arrive in a later release.
-`
+// usageOrder is the fixed order of the commands in the usage text (the order of USAGE in
+// apps/server/src/platform/cli-commands.ts); registered commands not listed follow by name.
+var usageOrder = []string{
+	"create-user", "create-token", "login-link", "create-server", "sync", "reindex",
+	"rotate-secrets-key", "reset-key-check",
+}
 
-// keyAwareCommands handle the secrets key themselves (rotate-secrets-key, reset-key-check): they
-// run on a key mismatch without the guard. Neither exists in the Go server yet.
-var keyAwareCommands = []string{"rotate-secrets-key", "reset-key-check"}
+// usageFor is the usage text of the registered commands: a header, then each command's Usage entry
+// in usageOrder. With no command at all it is the text of the server before the operator commands
+// arrived.
+func usageFor(cmds map[string]CLICommand) string {
+	if len(cmds) == 0 {
+		return "Usage: mcp-registry\n       mcp-registry --version\n" +
+			"  Without a command the server starts. Operator commands arrive in a later release.\n"
+	}
+	var b strings.Builder
+	b.WriteString("Usage: mcp-registry <command>\n       mcp-registry --version\n       mcp-registry (the server starts)\n\n")
+	names := slices.DeleteFunc(slices.Clone(usageOrder), func(n string) bool { _, ok := cmds[n]; return !ok })
+	var rest []string
+	for n := range cmds {
+		if !slices.Contains(usageOrder, n) {
+			rest = append(rest, n)
+		}
+	}
+	slices.Sort(rest)
+	for _, n := range append(names, rest...) {
+		b.WriteString(cmds[n].Usage)
+	}
+	return b.String()
+}
+
+// UsageErr is a bad invocation: `error: <msg>`, the usage text, exit 2.
+type UsageErr struct{ Msg string }
+
+func (e *UsageErr) Error() string { return e.Msg }
+
+// UsageError is a UsageErr with msg.
+func UsageError(msg string) error { return &UsageErr{Msg: msg} }
+
+// CommandErr is an operation that failed for a reason the operator can fix: `error: <msg>`,
+// exit 1, no usage.
+type CommandErr struct{ Msg string }
+
+func (e *CommandErr) Error() string { return e.Msg }
+
+// CommandError is a CommandErr with msg.
+func CommandError(msg string) error { return &CommandErr{Msg: msg} }
+
+// exitFor maps what a command returned to what the operator sees and the exit code, mirroring
+// runCli in cli-commands.ts: a usage error is exit 2 with the usage, a command error and a domain
+// error are exit 1. Any other error is `error: unexpected failure` and exit 1: the TypeScript CLI
+// lets it escape as a stack trace, this one never prints the text of an unexpected error (it may
+// quote values).
+func exitFor(err error, stderr io.Writer, usage string) int {
+	var usageErr *UsageErr
+	var commandErr *CommandErr
+	switch {
+	case err == nil:
+		return 0
+	case errors.As(err, &usageErr):
+		_, _ = io.WriteString(stderr, "error: "+usageErr.Msg+"\n"+usage)
+		return 2
+	case errors.As(err, &commandErr):
+		_, _ = io.WriteString(stderr, "error: "+commandErr.Msg+"\n")
+		return 1
+	}
+	if de, ok := kernel.AsDomainError(err); ok {
+		_, _ = io.WriteString(stderr, "error: "+de.Code+": "+de.Message+"\n")
+		return 1
+	}
+	_, _ = io.WriteString(stderr, "error: unexpected failure\n")
+	return 1
+}
 
 // msgKeyMismatchWarning is the one warning line printed before a command when the stored key
 // check is not opened by the configured keys (guardKey in cli-commands.ts).
 const msgKeyMismatchWarning = `warning: SECRETS_KEY does not match the data in this database. See "Recovering from a key mismatch" in the README.`
+
+// msgKeyMismatchRefusal is what a GuardRefuse command gets instead of running (create-server).
+const msgKeyMismatchRefusal = `error: SECRETS_KEY does not match the data in this database; refusing to seal a new secret with it. See "Recovering from a key mismatch" in the README.`
 
 // CLIOptions configures RunCLI.
 type CLIOptions struct {
@@ -36,7 +104,9 @@ type CLIOptions struct {
 	Version string
 	// Args is the command and its arguments (never empty: no command starts the server).
 	Args           []string
+	Stdin          io.Reader
 	Stdout, Stderr io.Writer
+	Env            map[string]string // the process environment, for commands that read a variable
 
 	// Seam for tests in this package.
 	modules func(Runtime) []Module // replaces modules (a stub module); nil means modules
@@ -94,20 +164,29 @@ func RunCLI(ctx context.Context, o CLIOptions) int {
 			// The name is printed raw between double quotes, as the TypeScript template string does.
 			reason = `unknown command "` + name + `"`
 		}
-		_, _ = io.WriteString(o.Stderr, "error: "+reason+"\n"+Usage)
+		_, _ = io.WriteString(o.Stderr, "error: "+reason+"\n"+usageFor(asm.commands))
 		return 2
 	}
 
-	if !slices.Contains(keyAwareCommands, name) {
+	if command.Guard != GuardNone {
 		verdict, err := crypto.Inspect(ctx, pool, crypto.Keys{Current: cfg.SecretsKey.Reveal(), Previous: cfg.SecretsKeyOld.Reveal()})
 		if err != nil {
 			return fail("secrets key check failed")
 		}
 		if verdict == crypto.KeyCheckMismatch {
+			if command.Guard == GuardRefuse {
+				_, _ = fmt.Fprintln(o.Stderr, msgKeyMismatchRefusal)
+				return 1
+			}
 			_, _ = fmt.Fprintln(o.Stderr, msgKeyMismatchWarning)
 		}
 	}
-	return command.Run(ctx, args, o.Stdout, o.Stderr)
+	stdin := o.Stdin
+	if stdin == nil {
+		stdin = strings.NewReader("")
+	}
+	err = command.Run(ctx, CLIIO{Stdin: stdin, Stdout: o.Stdout, Stderr: o.Stderr, Env: o.Env}, args)
+	return exitFor(err, o.Stderr, usageFor(asm.commands))
 }
 
 // cliLogLevel keeps the CLI quiet: the server's default info becomes warn (cli.ts).

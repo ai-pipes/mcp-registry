@@ -27,7 +27,7 @@ func readTextFile(path string) (string, error) {
 // the server (cancelled with an app.Signal cause on SIGTERM or SIGINT); env is the environment as
 // a map. Exit codes: 0 stopped cleanly, 1 operation failed (configuration, start, shutdown),
 // 2 bad invocation.
-func run(ctx context.Context, args []string, env map[string]string, stdout, stderr io.Writer) int {
+func run(ctx context.Context, args []string, env map[string]string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) > 0 && args[0] == "--version" {
 		_, _ = fmt.Fprintln(stdout, version)
 		return 0
@@ -51,6 +51,8 @@ func run(ctx context.Context, args []string, env map[string]string, stdout, stde
 		Config:  cfg,
 		Version: version,
 		Args:    args,
+		Stdin:   stdin,
+		Env:     env,
 		Stdout:  stdout,
 		Stderr:  stderr,
 	})
@@ -88,5 +90,5 @@ func main() {
 	sigs := make(chan os.Signal, 2)
 	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT)
 	go watchSignals(sigs, cancel)
-	os.Exit(run(ctx, os.Args[1:], environ(os.Environ()), os.Stdout, os.Stderr))
+	os.Exit(run(ctx, os.Args[1:], environ(os.Environ()), os.Stdin, os.Stdout, os.Stderr))
 }

@@ -19,9 +19,6 @@ func UTF16Len(s string) int {
 	return n
 }
 
-// JSTrim is String.prototype.trim (the single implementation lives in the kernel).
-func JSTrim(s string) string { return kernel.JSTrim(s) }
-
 // Fields collects input problems in call order. The TypeScript server reports the first zod
 // issue as `invalid_request` with the message "<dotted.path>: <reason>"; so does Err. The path
 // is the one the TypeScript server reports (the compatibility suite pins it); the reason is ours,
@@ -67,7 +64,7 @@ func (f *Fields) String(path, value string, minUTF16, maxUTF16 int) string {
 
 // TrimmedString is z.string().trim().min().max(): JavaScript trim first, then String.
 func (f *Fields) TrimmedString(path, value string, minUTF16, maxUTF16 int) string {
-	return f.String(path, JSTrim(value), minUTF16, maxUTF16)
+	return f.String(path, kernel.JSTrim(value), minUTF16, maxUTF16)
 }
 
 // RequiredString is String for a member decoded into a pointer: absent (or null) is "is required".
