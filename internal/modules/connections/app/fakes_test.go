@@ -73,15 +73,31 @@ type lockMark struct{}
 type violations struct {
 	mu   sync.Mutex
 	list []string
+	// held counts the row locks held now. While strict, ANY other port call while one is held is a
+	// violation, whichever context it was made with. Tests that overlap calls on purpose turn it off
+	// (another goroutine's legitimate call would count); the context tag still applies.
+	held   int
+	strict bool
+}
+
+func (v *violations) lock(delta int) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.held += delta
+}
+
+func (v *violations) setStrict(on bool) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.strict = on
 }
 
 func (v *violations) check(c context.Context, port string) {
-	if c.Value(lockMark{}) == nil {
-		return
-	}
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	v.list = append(v.list, port)
+	if c.Value(lockMark{}) != nil || (v.strict && v.held > 0) {
+		v.list = append(v.list, port)
+	}
 }
 
 func (v *violations) all() []string {
@@ -274,6 +290,8 @@ func (s *fakeStore) WithLock(c context.Context, userID, server string, fn app.Lo
 	m.Lock()
 	defer m.Unlock()
 	s.j.add("lock.begin")
+	s.v.lock(1)
+	defer s.v.lock(-1)
 	defer s.j.add("lock.end")
 	if s.afterOp != nil {
 		defer s.afterOp()
@@ -680,7 +698,7 @@ type harness struct {
 
 func newHarness(t *testing.T) *harness {
 	t.Helper()
-	j, v := &journal{}, &violations{}
+	j, v := &journal{}, &violations{strict: true}
 	h := &harness{t: t, j: j, v: v, clock: &fakeClock{t: t0}, box: newBox(1)}
 	h.store = newStore(j, v)
 	h.pending = newPending(j, v)
@@ -695,6 +713,11 @@ func newHarness(t *testing.T) *harness {
 		{slug: "secret", name: "Secret", kind: catalog.AuthOAuthUser, groups: []string{"ops"}, url: "https://mcp.example.com/secret", oauth: &oa, clientSecret: "client-secret", hasSecret: true},
 		{slug: "shared", name: "Shared", kind: catalog.AuthSharedSecret, url: "https://mcp.example.com/shared"},
 	}
+	t.Cleanup(func() {
+		if got := v.all(); len(got) != 0 {
+			t.Errorf("ports used under the connection lock: %v", got)
+		}
+	})
 	h.d = app.Deps{
 		Connections: h.store, Pending: h.pending, Servers: h.dir, OAuth: h.oauth, Pkce: h.pkce,
 		Box: h.box, Flights: app.NewSingleFlight[app.CredentialResult](), Clock: h.clock, Audit: h.audit,

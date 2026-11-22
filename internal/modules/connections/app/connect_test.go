@@ -281,6 +281,7 @@ func TestCompleteConnect(t *testing.T) {
 
 	t.Run("two concurrent callbacks with one state exchange exactly once", func(t *testing.T) {
 		h := newHarness(t)
+		h.v.setStrict(false) // calls overlap on purpose
 		state := stateOf(startURL(t, h, "gitea"))
 		const n = 8
 		errs := make([]error, n)

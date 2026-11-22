@@ -9,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/ai-pipes/mcp-registry/internal/modules/catalog"
 	"github.com/ai-pipes/mcp-registry/internal/modules/connections/app"
@@ -176,6 +177,7 @@ func TestResolveNothingButTheRowAndTheProviderUnderTheLock(t *testing.T) {
 func TestResolveParallelCallsOneOneTimeRefreshToken(t *testing.T) {
 	const n = 12
 	h := newHarness(t)
+	h.v.setStrict(false) // calls overlap on purpose
 	h.seedOAuth(tp(at(-1000)), "R1", "alice")
 	// A provider whose refresh tokens are one-time: R1 works once, then it is gone.
 	var mu sync.Mutex
@@ -229,6 +231,7 @@ func TestResolveParallelCallsOneOneTimeRefreshToken(t *testing.T) {
 
 func TestResolveTwoProcessesTheRowLockLetsOneRefresh(t *testing.T) {
 	h := newHarness(t)
+	h.v.setStrict(false) // calls overlap on purpose
 	h.seedOAuth(tp(at(-1000)), "R1", "alice")
 	h.oauth.next = app.TokenSet{AccessToken: "A2", RefreshToken: "R2", ExpiresAt: tp(at(3_600_000))}
 	gate := make(chan struct{})
@@ -270,6 +273,7 @@ func TestResolveForceRefresh(t *testing.T) {
 		t.Fatalf("refreshed: %v", got)
 	}
 
+	h.v.setStrict(false) // the second half overlaps calls on purpose
 	// Another process read A2's row before, then waits on the lock while this one refreshes again:
 	// it finds the row changed after it read it and takes the new token instead of refreshing a
 	// third time.
@@ -668,6 +672,7 @@ func TestResolveAuditErrorPropagates(t *testing.T) {
 
 func TestResolveDifferentPeopleDoNotBlockEachOther(t *testing.T) {
 	h := newHarness(t)
+	h.v.setStrict(false) // calls overlap on purpose
 	h.seedOAuth(tp(at(-1000)), "R1", "alice")
 	h.seedOAuth(tp(at(-1000)), "R1", "bob")
 	aliceIn := make(chan struct{})
@@ -700,6 +705,7 @@ func TestResolveDifferentPeopleDoNotBlockEachOther(t *testing.T) {
 
 func TestResolveCancelledCallerReturnsWhileTheRefreshCompletes(t *testing.T) {
 	h := newHarness(t)
+	h.v.setStrict(false) // calls overlap on purpose
 	h.seedOAuth(tp(at(-1000)), "R1", "alice")
 	h.oauth.next = app.TokenSet{AccessToken: "A2", RefreshToken: "R2", ExpiresAt: tp(at(3_600_000))}
 	gate := make(chan struct{})
@@ -739,5 +745,80 @@ func TestResolveCancelledCallerReturnsWhileTheRefreshCompletes(t *testing.T) {
 	row, _ := h.store.snap("alice", "gitea")
 	if got, _ := h.box.Open(row.Refresh); got != "R2" {
 		t.Fatalf("stored refresh token %q", got)
+	}
+}
+
+// addOAuthServer registers a second OAuth server and seeds an expired connection of user to it.
+func (h *harness) seedOther(user, server, access, refresh string) {
+	h.t.Helper()
+	if h.dir.find(server) == nil {
+		oa := giteaClient
+		h.dir.servers = append(h.dir.servers, &fakeServer{slug: server, name: server, kind: catalog.AuthOAuthUser, url: "https://mcp.example.com/" + server, oauth: &oa, clientSecret: "s", hasSecret: true})
+	}
+	h.store.put(domain.ConnectOAuth(domain.OAuthConnect{
+		UserID: user, Server: server, IssuedFor: h.fingerprintOf(h.dir.find(server)), Now: t0,
+		Tokens: domain.SealedTokens{Access: mustSeal(h.t, h.box, access), Refresh: mustSeal(h.t, h.box, refresh), ExpiresAt: tp(at(-1000))},
+	}))
+}
+
+// bothInFlight runs two resolves at once, holds both provider calls until both are under way (a
+// renewal key that merged them would never get the second one there) and returns the secrets.
+func bothInFlight(t *testing.T, h *harness, a, b app.ResolveQuery) (string, string) {
+	t.Helper()
+	h.v.setStrict(false)
+	h.oauth.entered = make(chan string, 4)
+	gate := make(chan struct{})
+	h.oauth.gate = gate
+	h.oauth.refreshFn = func(_ context.Context, rt string) (app.TokenSet, error) {
+		return app.TokenSet{AccessToken: "new-" + rt, ExpiresAt: tp(at(3_600_000))}, nil
+	}
+	type out struct {
+		r   app.CredentialResult
+		err error
+	}
+	ch := make([]chan out, 2)
+	for i, q := range []app.ResolveQuery{a, b} {
+		ch[i] = make(chan out, 1)
+		go func() {
+			r, err := app.ResolveCredential(ctx, h.d, q)
+			ch[i] <- out{r, err}
+		}()
+	}
+	for range 2 {
+		select {
+		case <-h.oauth.entered:
+		case <-time.After(10 * time.Second):
+			t.Fatal("the two renewals were merged into one flight")
+		}
+	}
+	close(gate)
+	var got [2]string
+	for i := range ch {
+		o := <-ch[i]
+		if o.err != nil || o.r.Failure != "" {
+			t.Fatal(o.r.Failure, o.err)
+		}
+		got[i] = o.r.Secret
+	}
+	return got[0], got[1]
+}
+
+func TestResolveOnePersonTwoServersEachGetsItsOwnToken(t *testing.T) {
+	h := newHarness(t)
+	h.seedOther("alice", "s1", "a1", "r-s1")
+	h.seedOther("alice", "s2", "a2", "r-s2")
+	g1, g2 := bothInFlight(t, h, app.ResolveQuery{UserID: "alice", Server: "s1"}, app.ResolveQuery{UserID: "alice", Server: "s2"})
+	if g1 != "new-r-s1" || g2 != "new-r-s2" {
+		t.Fatalf("got %q and %q: a token was handed out for the wrong server", g1, g2)
+	}
+}
+
+func TestResolveTwoPeopleOneServerEachGetsTheirOwnToken(t *testing.T) {
+	h := newHarness(t)
+	h.seedOther("alice", "s1", "a1", "r-alice")
+	h.seedOther("bob", "s1", "b1", "r-bob")
+	g1, g2 := bothInFlight(t, h, app.ResolveQuery{UserID: "alice", Server: "s1"}, app.ResolveQuery{UserID: "bob", Server: "s1"})
+	if g1 != "new-r-alice" || g2 != "new-r-bob" {
+		t.Fatalf("got %q and %q: a token was handed out to the wrong person", g1, g2)
 	}
 }

@@ -2,6 +2,10 @@ package app_test
 
 import (
 	"context"
+	"encoding"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -41,13 +45,37 @@ func seedMarked(t *testing.T, h *harness, expiresAt int64, refresh string) {
 	}))
 }
 
-// leaks reports every marker found in any rendering of v.
+// forbidden is every form a marker can take: plain, and sealed by the fake box (it transforms the
+// bytes) as raw bytes, hex and base64, for both key ids the tests use.
+var forbidden = func() map[string]string {
+	out := map[string]string{}
+	for _, m := range markers {
+		out[m] = m
+		for _, id := range []byte{1, 2} {
+			sealed, _ := newBox(id).Seal(m)
+			for _, form := range []string{
+				string(sealed), hex.EncodeToString(sealed), strings.ToUpper(hex.EncodeToString(sealed)),
+				base64.StdEncoding.EncodeToString(sealed), base64.URLEncoding.EncodeToString(sealed),
+				base64.RawStdEncoding.EncodeToString(sealed), base64.RawURLEncoding.EncodeToString(sealed),
+				fmt.Sprintf("%v", sealed),
+			} {
+				out[form] = m + " (sealed)"
+			}
+		}
+	}
+	return out
+}()
+
+// leaks reports every marker, plain or sealed, found in any rendering of v.
 func leaks(v any) []string {
 	var found []string
 	text := fmt.Sprintf("%v|%+v|%#v|%s|%q", v, v, v, v, v)
-	for _, m := range markers {
-		if strings.Contains(text, m) {
-			found = append(found, m)
+	if j, err := json.Marshal(v); err == nil {
+		text += string(j)
+	}
+	for form, name := range forbidden {
+		if strings.Contains(text, form) {
+			found = append(found, name)
 		}
 	}
 	return found
@@ -173,6 +201,24 @@ func TestNoSecretInErrorsAuditOrPrintedValues(t *testing.T) {
 			h.oauth.revokeErr = errSloppy
 			return []any{app.Disconnect(ctx, h.d, app.DisconnectCommand{Principal: alice, Server: "gitea"})}
 		}},
+		{"complete: client secret read fails", func(h *harness) []any {
+			url, _ := app.StartConnect(ctx, h.d, app.StartConnectCommand{Principal: alice, Server: "gitea"})
+			h.dir.secretErr = errors.New("cannot open the stored secret")
+			res, err := app.CompleteConnect(ctx, h.d, app.CompleteConnectCommand{Principal: alice, State: stateOf(url), Code: "CODEMARK"})
+			if err == nil || err.Error() != `connections: read the OAuth client secret of "gitea": cannot open the stored secret` {
+				t.Fatalf("error text: %v", err)
+			}
+			return []any{res, err}
+		}},
+		{"disconnect: client secret read fails", func(h *harness) []any {
+			seedMarked(t, h, 3_600_000, "REFRESHMARK")
+			h.dir.secretErr = errors.New("cannot open the stored secret")
+			err := app.Disconnect(ctx, h.d, app.DisconnectCommand{Principal: alice, Server: "gitea"})
+			if err == nil || err.Error() != `connections: read the OAuth client secret of "gitea": cannot open the stored secret` {
+				t.Fatalf("error text: %v", err)
+			}
+			return []any{err}
+		}},
 		{"disconnect: key mismatch", func(h *harness) []any {
 			seedMarked(t, h, 3_600_000, "REFRESHMARK")
 			h.box.failOpenOf("REFRESHMARK")
@@ -216,12 +262,31 @@ func TestSecretCarryingTypesRedactWhenPrinted(t *testing.T) {
 		app.TokenSet{AccessToken: "ACCESSMARK", RefreshToken: "REFRESHMARK"},
 		&app.TokenSet{AccessToken: "ACCESSMARK", RefreshToken: "REFRESHMARK"},
 		app.NewClientSecret("CLIENTSECRETMARK"),
+		&app.ExchangeInput{Code: "CODEMARK", CodeVerifier: "VERIFIERMARK"},
+		&app.AuthorizeInput{State: "STATEMARK"},
+		app.CredentialResult{Secret: "ACCESSMARK"},
 		app.ExchangeInput{Code: "CODEMARK", CodeVerifier: "VERIFIERMARK", RedirectURI: "https://x"},
 		app.AuthorizeInput{State: "STATEMARK", CodeChallenge: "c", RedirectURI: "https://x"},
 	}
 	for _, v := range values {
 		if found := leaks(v); len(found) != 0 {
 			t.Errorf("%T prints %v", v, found)
+		}
+		for _, form := range []any{v, &v} {
+			j, err := json.Marshal(map[string]any{"v": form})
+			if err != nil {
+				t.Errorf("%T: %v", v, err)
+			}
+			for _, m := range markers {
+				if strings.Contains(string(j), m) {
+					t.Errorf("%T marshals %s: %s", v, m, j)
+				}
+			}
+		}
+		if tm, ok := v.(encoding.TextMarshaler); ok {
+			if b, _ := tm.MarshalText(); strings.Contains(string(b), "MARK") {
+				t.Errorf("%T MarshalText: %s", v, b)
+			}
 		}
 		var sb strings.Builder
 		slog.New(slog.NewTextHandler(&sb, nil)).Info("x", "v", v)

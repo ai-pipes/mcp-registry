@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -49,6 +50,12 @@ func (r CredentialResult) GoString() string { return r.text() }
 
 // Format prints String for every verb.
 func (r CredentialResult) Format(f fmt.State, _ rune) { _, _ = io.WriteString(f, r.text()) }
+
+// MarshalJSON writes the text form: the failure, or "[redacted]" in place of the secret.
+func (r CredentialResult) MarshalJSON() ([]byte, error) { return json.Marshal(r.text()) }
+
+// MarshalText writes the text form.
+func (r CredentialResult) MarshalText() ([]byte, error) { return []byte(r.text()), nil }
 
 // LogValue is the slog form.
 func (r CredentialResult) LogValue() slog.Value { return slog.StringValue(r.text()) }

@@ -12,8 +12,11 @@ import (
 const flightBound = 30 * time.Second
 
 // errFlightPanic is what the waiters get when the shared work panicked. The panic value is not
-// kept: it could quote a token.
-var errFlightPanic = errors.New("connections: the credential renewal failed unexpectedly")
+// kept: it could quote a token. The package has no logger (Deps carries none), so nothing is
+// logged here: the error reaches every waiter, and the caller's own error path (the REST layer's
+// 500 handler, the gateway's internal-error text, the sync's failure record) logs it, with the
+// fixed text below as the only thing to look for.
+var errFlightPanic = errors.New("connections: credential renewal panicked")
 
 type flightCall[T any] struct {
 	done    chan struct{}
@@ -31,6 +34,12 @@ type flightCall[T any] struct {
 // cancellation, bounded by flightBound. A caller whose context ends returns at once with the
 // context's error and the work goes on for the others (a provider that has used up a one-time
 // refresh token must get its answer stored). Build it with NewSingleFlight.
+//
+// When the 30 s bound elapses the work's context ends and every waiter receives whatever fn returns
+// for an ended context: for ResolveCredential the provider call fails as "no answer" (the unexpired
+// access token is used, else FailureUnavailable) or, when the bound ends while waiting for the row
+// lock, the store's error (an unexpected error, not a CredentialFailure). Waiters are not cut off
+// separately: they return when fn does, or when their own context ends.
 type SingleFlight[T any] struct {
 	mu    sync.Mutex
 	calls map[string]*flightCall[T]

@@ -38,6 +38,15 @@ func (TokenSet) Format(f fmt.State, _ rune) { _, _ = io.WriteString(f, redacted)
 // LogValue is the slog form.
 func (TokenSet) LogValue() slog.Value { return slog.StringValue(redacted) }
 
+// MarshalJSON writes "[redacted]".
+func (TokenSet) MarshalJSON() ([]byte, error) { return redactedJSON, nil }
+
+// MarshalText writes "[redacted]".
+func (TokenSet) MarshalText() ([]byte, error) { return []byte(redacted), nil }
+
+// redactedJSON is the JSON form of every value that carries a secret.
+var redactedJSON = []byte(`"` + redacted + `"`)
+
 // ClientSecret is the OAuth client secret of a server. The zero value is a public client (none).
 // It prints redacted on every path; read it with Value.
 type ClientSecret struct {
@@ -63,6 +72,12 @@ func (ClientSecret) Format(f fmt.State, _ rune) { _, _ = io.WriteString(f, redac
 // LogValue is the slog form.
 func (ClientSecret) LogValue() slog.Value { return slog.StringValue(redacted) }
 
+// MarshalJSON writes "[redacted]".
+func (ClientSecret) MarshalJSON() ([]byte, error) { return redactedJSON, nil }
+
+// MarshalText writes "[redacted]".
+func (ClientSecret) MarshalText() ([]byte, error) { return []byte(redacted), nil }
+
 // AuthorizeInput is what AuthorizeURL needs besides the server's OAuth configuration. State is a
 // secret (it is the one-time proof of the callback), so it prints redacted.
 type AuthorizeInput struct {
@@ -81,6 +96,12 @@ func (a AuthorizeInput) LogValue() slog.Value {
 	return slog.GroupValue(slog.String("redirectURI", a.RedirectURI))
 }
 
+// MarshalJSON writes "[redacted]".
+func (AuthorizeInput) MarshalJSON() ([]byte, error) { return redactedJSON, nil }
+
+// MarshalText writes "[redacted]".
+func (AuthorizeInput) MarshalText() ([]byte, error) { return []byte(redacted), nil }
+
 // ExchangeInput is the code exchange of the callback. Code and CodeVerifier are secrets, so it
 // prints redacted. RedirectURI is exactly the one sent with the authorize request.
 type ExchangeInput struct {
@@ -98,6 +119,12 @@ func (e ExchangeInput) Format(f fmt.State, _ rune) {
 func (e ExchangeInput) LogValue() slog.Value {
 	return slog.GroupValue(slog.String("redirectURI", e.RedirectURI))
 }
+
+// MarshalJSON writes "[redacted]".
+func (ExchangeInput) MarshalJSON() ([]byte, error) { return redactedJSON, nil }
+
+// MarshalText writes "[redacted]".
+func (ExchangeInput) MarshalText() ([]byte, error) { return []byte(redacted), nil }
 
 // TokenEndpointError says the token endpoint ANSWERED a request with an error: its HTTP status and
 // the OAuth `error` code ("" when the answer had none). OAuthClient returns it (possibly wrapped:
