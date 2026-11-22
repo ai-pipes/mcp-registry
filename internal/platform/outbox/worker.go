@@ -5,9 +5,11 @@ import (
 	"errors"
 	"log/slog"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/ai-pipes/mcp-registry/internal/kernel"
 	"github.com/ai-pipes/mcp-registry/internal/platform/logging"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -246,6 +248,101 @@ func (w *worker) maybeSweep(ctx context.Context) {
 }
 
 func (w *worker) runSweep(ctx context.Context, s *Sweep) (err error) {
+	defer func() {
+		if recover() != nil {
+			err = handlerPanic{frames: logging.PanicFrames()}
+		}
+	}()
+	return s.Run(ctx)
+}
+
+// ComposeSweeps merges the sweeps of several modules into the one the worker takes. Each member
+// keeps its own Every (the first run is on the first pass); the composite wakes at the shortest
+// period and runs the members that are due, one after another, so two sweeps never overlap each
+// other or a delivery. A member that returns an error or panics does not stop the others; their
+// errors are joined (a panic stays recognisable for the worker's log). Members without Run are
+// ignored; no members give nil; one member is returned as it is.
+func ComposeSweeps(sweeps ...Sweep) *Sweep { return composeSweeps(time.Now, sweeps) }
+
+func composeSweeps(now func() time.Time, sweeps []Sweep) *Sweep {
+	members := make([]Sweep, 0, len(sweeps))
+	for _, s := range sweeps {
+		if s.Run != nil {
+			members = append(members, s)
+		}
+	}
+	if len(members) == 0 {
+		return nil
+	}
+	if len(members) == 1 {
+		return &members[0] // the worker gates it already; a second gate on another now() could skip a run
+	}
+	every := members[0].Every
+	for _, s := range members[1:] {
+		every = min(every, s.Every)
+	}
+	last := make([]time.Time, len(members))
+	ran := make([]bool, len(members))
+	return &Sweep{Every: every, Run: func(ctx context.Context) error {
+		var errs []error
+		t := now() // once: a slow member does not count against the periods of the ones after it
+		for i, s := range members {
+			if ran[i] && t.Sub(last[i]) < s.Every {
+				continue
+			}
+			ran[i], last[i] = true, t
+			if err := runMember(ctx, s); err != nil {
+				errs = append(errs, err)
+			}
+		}
+		switch len(errs) {
+		case 0:
+			return nil
+		case 1:
+			return errs[0] // its own label, not a wrapper's
+		}
+		return newSweepFailures(errs)
+	}}
+}
+
+// sweepFailures is the error of a composed run in which several members failed. Its message and
+// its code list the members' labels (type names, never messages), since the label is what the
+// log and the operator see. The members stay reachable through errors.As.
+type sweepFailures struct {
+	errs   []error
+	labels []string
+}
+
+func newSweepFailures(errs []error) sweepFailures {
+	f := sweepFailures{errs: errs}
+	for _, e := range errs {
+		f.labels = append(f.labels, kernel.ErrorLabel(e))
+	}
+	return f
+}
+
+func (f sweepFailures) Error() string { return "sweeps failed: " + strings.Join(f.labels, "; ") }
+
+func (f sweepFailures) Unwrap() []error { return f.errs }
+
+// Code is the labels joined and cut to the 32 characters a label code may have (kernel.ErrorLabel
+// appends it to the type name).
+func (f sweepFailures) Code() string {
+	short := make([]string, len(f.labels))
+	for i, l := range f.labels {
+		typ, _, _ := strings.Cut(l, ": ")
+		short[i] = typ[strings.LastIndex(typ, ".")+1:] // without the package, to fit the limit
+	}
+	code := strings.Map(func(r rune) rune {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' {
+			return r
+		}
+		return '_'
+	}, strings.Join(short, "_"))
+	return code[:min(len(code), 32)]
+}
+
+func runMember(ctx context.Context, s Sweep) (err error) {
 	defer func() {
 		if recover() != nil {
 			err = handlerPanic{frames: logging.PanicFrames()}

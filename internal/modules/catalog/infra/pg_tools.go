@@ -78,6 +78,9 @@ func listTools(ctx context.Context, q queryer, sql string, args ...any) ([]*doma
 }
 
 func (r *pgTools) appendEvents(ctx context.Context, tx pgx.Tx, events []kernel.Event) error {
+	if err := checkEventTypes(events); err != nil {
+		return err
+	}
 	if err := outbox.Append(ctx, tx, events); err != nil {
 		return err
 	}

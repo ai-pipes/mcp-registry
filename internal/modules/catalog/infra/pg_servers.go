@@ -122,6 +122,9 @@ func (r *pgServers) Create(ctx context.Context, s *domain.Server, events []kerne
 }
 
 func (r *pgServers) appendEvents(ctx context.Context, tx pgx.Tx, events []kernel.Event) error {
+	if err := checkEventTypes(events); err != nil {
+		return err
+	}
 	if err := outbox.Append(ctx, tx, events); err != nil {
 		return err
 	}

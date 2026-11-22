@@ -141,6 +141,13 @@ var archFixtures = []struct{ rule, fixture, component, badImport string }{
 	{"no-inward-infra", "no-inward-infra", "catalog-app", modPath + "modules/catalog/http"},
 	{"deps-only-in-infra (vendors)", "deps-only-in-infra", "catalog-app", "github.com/jackc/pgx/v5"},
 	{"deps-only-in-infra (x/oauth2 root package)", "deps-only-in-infra-oauth2", "catalog-app", "golang.org/x/oauth2"},
+	{"deps-only-in-infra (ONNX binding)", "deps-only-in-infra-onnx", "catalog-app", "github.com/yalue/onnxruntime_go"},
+	{"deps-only-in-infra (tokenizer)", "deps-only-in-infra-tokenizers", "catalog-app", "github.com/daulet/tokenizers"},
+	{"deps-only-in-infra (x/text)", "deps-only-in-infra-xtext", "catalog-app", "golang.org/x/text/unicode/norm"},
+	// The embedder's libraries are search/infra's alone: another module's infra may not use them.
+	{"deps-only-in-infra (ONNX binding in another module's infra)", "embedder-libs-other-infra-onnx", "catalog-infra", "github.com/yalue/onnxruntime_go"},
+	{"deps-only-in-infra (tokenizer in another module's infra)", "embedder-libs-other-infra-tokenizers", "catalog-infra", "github.com/daulet/tokenizers"},
+	{"deps-only-in-infra (x/text in another module's infra)", "embedder-libs-other-infra-xtext", "catalog-infra", "golang.org/x/text/unicode/norm"},
 	{"deps-only-in-infra (x/term is the composition's, not even infra's)", "deps-only-in-infra-term", "catalog-infra", "golang.org/x/term"},
 	{"modules-via-index", "modules-via-index", "gateway-infra", modPath + "modules/catalog/domain"},
 	{"migrations-only-platform", "migrations-only-platform", "catalog-infra", "github.com/ai-pipes/mcp-registry/apps/server/migrations"},
@@ -247,6 +254,18 @@ func TestLeavesAndSelfImportsAreAllowed(t *testing.T) {
 	}
 }
 
+// TestSearchInfraMayUseTheEmbedderLibraries is the positive side of the embedder rules: search/infra
+// imports the ONNX binding, the tokenizer and x/text. It must raise nothing.
+func TestSearchInfraMayUseTheEmbedderLibraries(t *testing.T) {
+	rep, code := archLint(t, fixtureProject(t, "search-infra-embedder-libs"))
+	if code != 0 {
+		t.Fatalf("an allowed import was reported: %+v", rep.Payload)
+	}
+	if n := len(rep.Payload.ArchWarningsDeps) + len(rep.Payload.ArchWarningsNotMatched) + len(rep.Payload.ArchWarningsDeepScan) + len(rep.Payload.ExecutionWarnings); n != 0 {
+		t.Fatalf("unexpected warnings: %+v", rep.Payload)
+	}
+}
+
 func TestRepositoryPassesArchLint(t *testing.T) {
 	rep, code := archLint(t, repoRoot)
 	if code != 0 {
@@ -259,11 +278,25 @@ func TestRepositoryPassesArchLint(t *testing.T) {
 // real .golangci.yml: in a domain package and in a module's root package.
 func TestDepguardDeniesStdlibCrypto(t *testing.T) {
 	for _, fixture := range []string{"deps-only-in-infra-stdlib", "deps-only-in-infra-stdlib-root"} {
-		t.Run(fixture, func(t *testing.T) { depguardDeniesCrypto(t, fixture) })
+		t.Run(fixture, func(t *testing.T) { depguardDenies(t, fixture, "crypto/sha256") })
 	}
 }
 
-func depguardDeniesCrypto(t *testing.T, fixture string) {
+// TestDepguardDeniesTheEmbedderLibraries is the second line of the vendor rule for the local
+// embedder's libraries (go-arch-lint has the first): a domain package importing each is refused.
+func TestDepguardDeniesTheEmbedderLibraries(t *testing.T) {
+	for _, tc := range []struct{ fixture, pkg string }{
+		{"deps-only-in-infra-depguard-onnx", "github.com/yalue/onnxruntime_go"},
+		{"deps-only-in-infra-depguard-tokenizers", "github.com/daulet/tokenizers"},
+		{"deps-only-in-infra-depguard-xtext", "golang.org/x/text/unicode/norm"},
+	} {
+		t.Run(tc.fixture, func(t *testing.T) { depguardDenies(t, tc.fixture, tc.pkg) })
+	}
+}
+
+// depguardDenies runs the repository's .golangci.yml (depguard only) on a fixture and wants exactly
+// one issue, about the import pkg.
+func depguardDenies(t *testing.T, fixture, pkg string) {
 	t.Helper()
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "go.mod"), readFile(t, filepath.Join(repoRoot, "go.mod")))
@@ -288,7 +321,7 @@ func depguardDeniesCrypto(t *testing.T, fixture string) {
 	if err := json.Unmarshal(stdout.Bytes(), &rep); err != nil {
 		t.Fatalf("unexpected output (%v):\n%s\n%s", err, stdout.String(), stderr.String())
 	}
-	if len(rep.Issues) != 1 || rep.Issues[0].FromLinter != "depguard" || !strings.Contains(rep.Issues[0].Text, "'crypto/sha256'") {
-		t.Fatalf("want exactly one depguard issue about crypto/sha256, got %+v", rep.Issues)
+	if len(rep.Issues) != 1 || rep.Issues[0].FromLinter != "depguard" || !strings.Contains(rep.Issues[0].Text, "'"+pkg+"'") {
+		t.Fatalf("want exactly one depguard issue about %s, got %+v", pkg, rep.Issues)
 	}
 }

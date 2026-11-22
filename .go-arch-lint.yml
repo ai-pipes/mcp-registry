@@ -13,8 +13,10 @@
 #   application-only-domain app imports its own domain and app, kernel and the root package of
 #                           other modules
 #   no-inward-infra         domain and app never import infra, http or platform
-#   deps-only-in-infra      pgx, go-oidc, x/oauth2 and ONNX only in infra (and platform); the MCP
-#                           SDK also in http; x/term only in the composition (platform)
+#   deps-only-in-infra      pgx, go-oidc and x/oauth2 only in infra (and platform); the MCP SDK also
+#                           in http; x/term only in the composition (platform); the local embedder's
+#                           libraries (onnx, daulet-tokenizers, x-text) only in search/infra (and
+#                           platform), not in another module's infra
 #   modules-via-index       another module is imported only by its root package; a module's http
 #                           layer may also import its OWN root (the session guards, the principal),
 #                           which does not make a cycle: a root never imports its http or infra
@@ -58,8 +60,16 @@ vendors:
     in:
       - golang.org/x/oauth2
       - golang.org/x/oauth2/**
+  # The local embedder (cgo, build tag onnx): the ONNX Runtime binding, the tokenizer and the
+  # Unicode normalisation of the tokenizer's JavaScript normaliser port. Only search-infra lists them.
   onnx:
     in: github.com/yalue/onnxruntime_go
+  daulet-tokenizers:
+    in: github.com/daulet/tokenizers
+  x-text:
+    in:
+      - golang.org/x/text
+      - golang.org/x/text/**
   # Terminal handling (reading a secret without echo): the composition only (platform has
   # anyVendorDeps); no module layer lists it under canUse, infra included.
   x-term:
@@ -245,7 +255,6 @@ deps:
       - pgx
       - go-oidc
       - x-oauth2
-      - onnx
       - mcp-sdk
   identity-http:
     mayDependOn:
@@ -295,7 +304,6 @@ deps:
       - pgx
       - go-oidc
       - x-oauth2
-      - onnx
       - mcp-sdk
   catalog-http:
     mayDependOn:
@@ -345,7 +353,6 @@ deps:
       - pgx
       - go-oidc
       - x-oauth2
-      - onnx
       - mcp-sdk
   connections-http:
     mayDependOn:
@@ -396,6 +403,8 @@ deps:
       - go-oidc
       - x-oauth2
       - onnx
+      - daulet-tokenizers
+      - x-text
       - mcp-sdk
   search-http:
     mayDependOn:
@@ -445,7 +454,6 @@ deps:
       - pgx
       - go-oidc
       - x-oauth2
-      - onnx
       - mcp-sdk
   gateway-http:
     mayDependOn:

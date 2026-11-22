@@ -3,7 +3,7 @@ GO_ARCH_LINT := github.com/fe3dback/go-arch-lint@v1.19.2
 GOFUMPT := mvdan.cc/gofumpt@v0.12.0
 VERSION := $(shell node -p "require('./apps/server/package.json').version")
 
-.PHONY: compat compat-selfcheck compat-schemas compat-image-ts compat-image-go compat-go e2e-flows e2e-flows-go go-lint go-lint-new go-fmt-check go-arch-lint go-verify go-test-int go-build print-go-arch-lint print-golangci-lint
+.PHONY: native-libs native-model go-test-onnx go-test-onnx-parity go-vet-onnx go-lint-onnx go-verify-onnx compat compat-selfcheck compat-schemas compat-image-ts compat-image-go compat-go e2e-flows e2e-flows-go go-lint go-lint-new go-fmt-check go-arch-lint go-verify go-test-int go-build print-go-arch-lint print-golangci-lint
 
 go-lint:
 	go run $(GOLANGCI_LINT) run
@@ -61,12 +61,18 @@ compat-schemas:
 compat-image-ts:
 	docker build -t mcp-registry:compat-ts .
 
-# The Go image (Dockerfile target go), tagged mcp-registry:compat-go; the version comes from the same
-# place as for go-build. The default target (runtime, the TypeScript image) is untouched.
+# The Go image (Dockerfile target go), tagged mcp-registry:compat-go: cgo, build tag onnx, ONNX
+# Runtime and the model inside. It is built natively for the host architecture; PLATFORM builds
+# another one (emulated where needed): make compat-image-go PLATFORM=linux/amd64, tagged
+# mcp-registry:compat-go-linux-amd64 so that the host image is not overwritten. The version comes
+# from the same place as for go-build. The default target (runtime, the TypeScript image) is
+# untouched.
+PLATFORM :=
+GO_IMAGE := mcp-registry:compat-go$(if $(PLATFORM),-$(subst /,-,$(PLATFORM)))
 compat-image-go:
 	@test -n "$(VERSION)" || { echo "compat-image-go: the version read from apps/server/package.json is empty (is node on PATH?)"; exit 1; }
-	docker build --target go --build-arg VERSION=$(VERSION) -t mcp-registry:compat-go .
-	@got="$$(docker run --rm mcp-registry:compat-go mcp-registry --version)"; \
+	docker build $(if $(PLATFORM),--platform $(PLATFORM)) --target go --build-arg VERSION=$(VERSION) -t $(GO_IMAGE) .
+	@got="$$(docker run --rm $(if $(PLATFORM),--platform $(PLATFORM)) $(GO_IMAGE) mcp-registry --version)"; \
 	if [ "$$got" != "$(VERSION)" ]; then echo "compat-image-go: the image reports version '$$got', the package says '$(VERSION)'"; exit 1; fi
 
 # The scenarios the Go server passes so far (the milestone list); it grows with every milestone.
@@ -84,8 +90,15 @@ compat-image-go:
 #   - TestConfigNetworkAndRetention, TestConfigSecretsFromFiles: their cleanup demands that the
 #     scenario's MCP ledger saw an answer (milestone 6), whatever subtests are skipped.
 #   - TestUpgradeKeepsEverything, TestGatewayAuditAPI, TestConfigModelDirMissing and every
-#     connections, search, gateway, MCP scenario and the operator commands reindex,
-#     rotate-secrets-key, reset-key-check (milestones 4 to 7).
+#     connections, gateway, MCP scenario and the operator commands rotate-secrets-key and
+#     reset-key-check (milestones 5 to 7).
+# Milestone 4 (search) added the scenarios that judge the index, the stored vectors and the reindex
+# command without /mcp: TestSearchStoredVectors (the milestone's judge: every stored vector equals
+# the reference image's on the same machine), TestCLIReindexEmpty, TestConfigOpenAICompatibleEmbedder,
+# TestConfigModelDirMissing, and TestCatalogSearch with its /mcp subtests skipped (what stays: "the
+# index follows the catalog", "a change of the server is reindexed", the reindex command). Not
+# added: TestSearchReadyBeforeServing (its decided branch compares a search made at once with a
+# settled one: /mcp, milestone 6) and TestUpgradeKeepsEverything (search through /mcp, 6).
 COMPAT_GO_TESTS := TestConfigRefused TestPlatformStartsOnReferenceDatabase TestPlatformReverseHandOver \
 	TestPlatformWithoutPeople TestPlatformMigrationsAndKeyCheck TestPlatformStaticFilesAndSPA \
 	TestIdentityOIDC TestIdentityOIDCFailedCallbackAudit TestIdentityOIDCProviderDownAtStart \
@@ -95,7 +108,9 @@ COMPAT_GO_TESTS := TestConfigRefused TestPlatformStartsOnReferenceDatabase TestP
 	TestConfigEmptyMeansUnset TestPlatformMethodsWithoutOIDC TestPlatformCSRF TestPlatformHealthz \
 	TestPlatformAccessLog TestPlatformBodyLimit TestPlatformSecurityHeaders TestIdentityOIDCBindingKept \
 	TestCatalogOptimisticConcurrency TestCatalogValidation TestCatalogServers TestCLIServers \
-	TestPlatformBearerNeverOpensTheWebAPI
+	TestPlatformBearerNeverOpensTheWebAPI \
+	TestCatalogSearch TestSearchStoredVectors TestCLIReindexEmpty TestConfigOpenAICompatibleEmbedder \
+	TestConfigModelDirMissing
 
 # Subtests of the scenarios above that need a later milestone, as a go test -skip expression: one
 # entry per line below, joined with `|` (slash-separated regular expressions per level; spaces of a
@@ -136,8 +151,19 @@ COMPAT_GO_TESTS := TestConfigRefused TestPlatformStartsOnReferenceDatabase TestP
 #   milestone 5 (connections: PUT /api/connections/<slug>/pat)
 #   - TestCLIServers, "sync of a personal-auth server uses the connection of the administrator it
 #     names".
-#   milestone 4 (search: the index and its command)
-#   - TestCLIServers, "reindex rebuilds the search index and prints the number of indexed tools".
+#   milestone 6 also (the search scenarios reach it; their SQL and CLI steps are judged)
+#   - TestCatalogSearch: every subtest that asks search_tools, describe_tool, list_servers or
+#     call_tool: "the recorded queries" (also the rankings against the reference image),
+#     "searching every usable server ...", "limit is respected", "the servers filter applies before
+#     the limit", "an unknown server and an empty filter are refused", "list_servers and
+#     describe_tool" (also connections, 5), "hiding, removing and changing a tool ...", "a disabled
+#     server leaves the index ...", "names with dots and dashes ..." and "access by groups".
+#   - TestSearchStoredVectors, "SEARCH_MIN_SIMILARITY sets the floor of vector candidates".
+#   - TestCLIServers, "reindex rebuilds the search index ...": its three nested searches ("search
+#     finds ..."); the reindex itself, the digests and the wording are judged.
+#   - TestConfigOpenAICompatibleEmbedder, "a query is embedded with the query: prefix ..." and the
+#     nested "text search over MCP ..." of "with the embedder down ..."; TestConfigModelDirMissing,
+#     its nested "text search over MCP ...".
 COMPAT_GO_SKIP_ENTRIES := \
 	^TestPlatformMigrationsAndKeyCheck$$/^the_old_key_alone:_healthy,_one_warning;_rotate-secrets-key_re-seals_the_check$$ \
 	^TestPlatformStaticFilesAndSPA$$/^$$/^api,_$$/^mcp_and_$$/^healthz_are_never_the_shell$$ \
@@ -159,20 +185,38 @@ COMPAT_GO_SKIP_ENTRIES := \
 	^TestPlatformBearerNeverOpensTheWebAPI$$/^the_same_token_opens_ \
 	^TestPlatformBearerNeverOpensTheWebAPI$$/^a_bad_token_on_ \
 	^TestCLIServers$$/^sync_of_a_personal-auth_server_uses_ \
-	^TestCLIServers$$/^reindex_rebuilds_
+	^TestCatalogSearch$$/^the_recorded_queries$$ \
+	^TestCatalogSearch$$/^searching_every_usable_server_ \
+	^TestCatalogSearch$$/^limit_is_respected$$ \
+	^TestCatalogSearch$$/^the_servers_filter_applies_before_the_limit$$ \
+	^TestCatalogSearch$$/^an_unknown_server_and_an_empty_filter_are_refused$$ \
+	^TestCatalogSearch$$/^list_servers_and_describe_tool$$ \
+	^TestCatalogSearch$$/^hiding, \
+	^TestCatalogSearch$$/^a_disabled_server_leaves_the_index; \
+	^TestCatalogSearch$$/^names_with_dots_and_dashes_ \
+	^TestCatalogSearch$$/^access_by_groups$$ \
+	^TestSearchStoredVectors$$/^SEARCH_MIN_SIMILARITY_ \
+	^TestCLIServers$$/^reindex_rebuilds_.*$$/^search_ \
+	^TestConfigOpenAICompatibleEmbedder$$/^a_query_is_embedded_ \
+	^TestConfigOpenAICompatibleEmbedder$$/^with_the_embedder_down_.*$$/^text_search_over_MCP_ \
+	^TestConfigModelDirMissing$$/^text_search_over_MCP_
 
 space := $(subst ,, )
 COMPAT_GO_SKIP := $(subst $(space),|,$(strip $(COMPAT_GO_SKIP_ENTRIES)))
 COMPAT_GO_RUN := ^($(subst $(space),|,$(strip $(COMPAT_GO_TESTS))))$$
 
+# The deviations (compat/harness/deviations.go) whose decided behaviour the Go server has, for
+# compat-go and e2e-flows-go: config-errors (milestone 1), audit-login-via, create-user-keeps-role
+# and oidc-binding-kept (milestone 2), create-server-sync-exit (milestone 3), reindex-wording
+# (milestone 4). Left out, each until the milestone that implements it: token-429-retry-after and
+# request-id-on-refusals (the /mcp route, milestone 6), oauth-state-kept (connections, milestone 5),
+# ready-before-serving (its scenario compares a search made at once with a settled one, so it needs
+# /mcp, milestone 6; the Go server already loads the model before it listens).
+COMPAT_GO_FIXED := config-errors,audit-login-via,create-user-keeps-role,oidc-binding-kept,create-server-sync-exit,reindex-wording
+
 # The suite against the Go image. The reference image (mcp-registry:compat-ts) must exist as well:
 # some scenarios compare with it on the same machine, and the new-database scenario starts from it.
-# COMPAT_FIXED: the deviations (compat/harness/deviations.go) whose decided behaviour the Go server
-# has: config-errors (milestone 1), audit-login-via, create-user-keeps-role and oidc-binding-kept (milestone 2),
-# create-server-sync-exit (milestone 3). Left out, each until the milestone that implements it:
-# token-429-retry-after and request-id-on-refusals (the /mcp route, milestone 6), oauth-state-kept
-# (connections, milestone 5), reindex-wording (the reindex command, milestone 4 or 7),
-# ready-before-serving (search, milestone 4). Before it runs, the pattern is
+# Before it runs, the pattern is
 # listed (nothing is started): it must match exactly the scenarios named in COMPAT_GO_TESTS, so a
 # renamed or mistyped scenario fails here instead of passing by running nothing.
 compat-go:
@@ -181,7 +225,7 @@ compat-go:
 	@listed="$$(go test -tags compat -count=1 -list '$(COMPAT_GO_RUN)' ./compat/ | grep -c '^Test')"; \
 	if [ "$$listed" != "$(words $(COMPAT_GO_TESTS))" ]; then \
 		echo "compat-go: the pattern '$(COMPAT_GO_RUN)' matches $$listed scenario(s), COMPAT_GO_TESTS names $(words $(COMPAT_GO_TESTS)): $(COMPAT_GO_TESTS)"; exit 1; fi
-	COMPAT_IMAGE=mcp-registry:compat-go COMPAT_CLI=mcp-registry COMPAT_FIXED=config-errors,audit-login-via,create-user-keeps-role,oidc-binding-kept,create-server-sync-exit \
+	COMPAT_IMAGE=mcp-registry:compat-go COMPAT_CLI=mcp-registry COMPAT_FIXED=$(COMPAT_GO_FIXED) \
 		go test -tags compat -count=1 -p 1 -timeout 30m -run '$(COMPAT_GO_RUN)' $(if $(COMPAT_GO_SKIP),-skip '$(COMPAT_GO_SKIP)') $(COMPAT_ARGS) ./compat/
 
 # COMPAT_ARGS adds go test arguments, e.g. make compat COMPAT_ARGS='-run ^TestPlatform' (the -run
@@ -221,7 +265,7 @@ E2E_GO_SPECS := 00-guard-selftest.spec.ts 01-first-start-link.spec.ts 02-oidc-lo
 	10-disable-person.spec.ts 11-session-expiry.spec.ts
 e2e-flows-go:
 	@docker image inspect mcp-registry:compat-go >/dev/null 2>&1 || { echo "e2e-flows-go: the image mcp-registry:compat-go is missing: run make compat-image-go"; exit 1; }
-	COMPAT_IMAGE=mcp-registry:compat-go COMPAT_CLI=mcp-registry COMPAT_FIXED=config-errors,audit-login-via,create-user-keeps-role,oidc-binding-kept,create-server-sync-exit \
+	COMPAT_IMAGE=mcp-registry:compat-go COMPAT_CLI=mcp-registry COMPAT_FIXED=$(COMPAT_GO_FIXED) \
 		E2E_PLAYWRIGHT_ARGS='$(E2E_GO_SPECS)' \
 		go test -tags "compat e2e" -count=1 -timeout 30m -v -run '^TestBrowserFlows$$' ./compat/e2e/
 
@@ -232,3 +276,81 @@ compat-selfcheck: compat-image-ts
 
 go-build:
 	go build -ldflags "-X main.version=$(VERSION)" -o bin/mcp-registry ./cmd/mcp-registry
+
+# --- The local embedder (build tag onnx) ---------------------------------------------------------
+#
+# The package internal/modules/search/infra/onnx compiles its cgo files only with `-tags onnx`;
+# `make go-verify` never needs native libraries. Local builds and tests of the tagged code use the
+# libraries below, downloaded into a git-ignored cache (.cache/native/<platform>/) with every
+# SHA-256 verified and nothing downloaded ever executed (native/fetch.sh).
+#
+# Pins: URLs and SHA-256 values live only in internal/modules/search/infra/onnx/native/pins.env
+# (provenance in its header). The Makefile includes it for the file name; fetch.sh and the
+# Dockerfile stage go-native read it themselves, so there is one list. A Go test fails if a
+# pin is repeated elsewhere.
+include internal/modules/search/infra/onnx/native/pins.env
+NATIVE_ROOT := .cache/native
+NATIVE_PLATFORM := $(shell go env GOOS)-$(shell go env GOARCH)
+NATIVE_KEY := $(subst -,_,$(NATIVE_PLATFORM))
+NATIVE_DIR := $(NATIVE_ROOT)/$(NATIVE_PLATFORM)
+NATIVE_ABS := $(abspath $(NATIVE_DIR))
+
+ONNX_PKG := ./internal/modules/search/infra/onnx/...
+# Variables the tagged tests read (names are for local development only, not operator settings).
+ONNX_TEST_ENV = CGO_ENABLED=1 CGO_LDFLAGS="-L$(NATIVE_ABS)" ONNX_TEST_LIB="$(NATIVE_ABS)/$(ORT_FILE_$(NATIVE_KEY))" ONNX_TEST_MODEL_DIR="$(abspath $(NATIVE_ROOT))/models"
+
+native-libs:
+	@test -n "$(ORT_FILE_$(NATIVE_KEY))" || { echo "native-libs: no pinned libraries for $(NATIVE_PLATFORM)"; exit 1; }
+	sh internal/modules/search/infra/onnx/native/fetch.sh $(NATIVE_PLATFORM) $(NATIVE_DIR)
+
+# The model and tokenizer the TypeScript server uses (revision and SHA-256 pinned in the script),
+# in the layout <root>/Xenova/multilingual-e5-small/. Needs node, like VERSION above.
+native-model:
+	node scripts/download-model.mjs $(NATIVE_ROOT)/models
+
+go-vet-onnx: native-libs
+	$(ONNX_TEST_ENV) go vet -tags onnx $(ONNX_PKG)
+
+go-lint-onnx: native-libs
+	$(ONNX_TEST_ENV) go run $(GOLANGCI_LINT) run --build-tags onnx $(ONNX_PKG)
+
+go-test-onnx: native-libs native-model
+	$(ONNX_TEST_ENV) go test -tags onnx -count=1 $(ONNX_PKG)
+
+go-verify-onnx: go-vet-onnx go-lint-onnx go-test-onnx
+
+# Vector parity with the reference, linux containers only: the reference image (mcp-registry:compat-ts)
+# makes the vectors of the committed texts with Node (--network none), then the tagged test runs in a
+# golang container of the same architecture with the linux native libraries, so both sides run the
+# same ONNX Runtime build on the same machine. Vectors depend on the CPU, so they are never committed.
+PARITY_DIR := $(abspath $(NATIVE_ROOT))/parity
+PARITY_LINUX := linux-$(shell go env GOARCH)
+ONNX_GEN := /repo/internal/modules/search/infra/onnx/testdata
+
+# The parity run is only worth something when the two tests really ran: ONNX_TEST_PARITY_REQUIRED=1
+# makes them fail instead of skip when an input is missing, and the recipe fails unless the log
+# reports both as passed. The first container runs as the caller's user (on a GitHub-hosted runner
+# that is not uid 1000, `node` of the image, and could not write into the output directory; HOME is
+# a writable /tmp for node). The second one runs as root on purpose: it only reads its bind mounts
+# (all :ro) and writes only to its own /tmp (GOCACHE), so no user id can make it fail. The golang
+# image is the Dockerfile's, by digest (a test in infra/onnx keeps the two equal).
+PARITY_GO_IMAGE := golang:1.27-bookworm@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea
+
+go-test-onnx-parity:
+	@docker image inspect mcp-registry:compat-ts >/dev/null 2>&1 || { echo "go-test-onnx-parity: the reference image mcp-registry:compat-ts is missing; build it with: make compat-image-ts"; exit 1; }
+	$(MAKE) native-libs NATIVE_PLATFORM=$(PARITY_LINUX)
+	$(MAKE) native-model
+	mkdir -p $(PARITY_DIR)
+	rm -f $(PARITY_DIR)/node-vectors.json $(PARITY_DIR)/go-test.log
+	docker run --rm --network none --user "$$(id -u):$$(id -g)" -e HOME=/tmp -v "$(CURDIR)":/repo:ro -v "$(PARITY_DIR)":/out mcp-registry:compat-ts \
+		node $(ONNX_GEN)/gen/vectors.mjs /app/apps/server/node_modules/@huggingface/transformers/dist/transformers.node.mjs \
+		/app/models $(ONNX_GEN)/reference.json /out/node-vectors.json
+	docker run --rm --network none -v "$(CURDIR)":/src:ro -v "$$(go env GOMODCACHE)":/gomod:ro -v "$(PARITY_DIR)":/out:ro \
+		-e GOMODCACHE=/gomod -e GOPROXY=off -e GOTOOLCHAIN=local -e GOCACHE=/tmp/gocache -e GOFLAGS=-buildvcs=false \
+		-e CGO_ENABLED=1 -e CGO_LDFLAGS=-L/src/$(NATIVE_ROOT)/$(PARITY_LINUX) \
+		-e ONNX_TEST_LIB=/src/$(NATIVE_ROOT)/$(PARITY_LINUX)/libonnxruntime.so.1 -e ONNX_TEST_MODEL_DIR=/src/$(NATIVE_ROOT)/models \
+		-e ONNX_TEST_REFERENCE_VECTORS=/out/node-vectors.json -e ONNX_TEST_PARITY_REQUIRED=1 -w /src $(PARITY_GO_IMAGE) \
+		go test -tags onnx -count=1 -v -run 'TestTokenIDsMatchTheReference|TestVectorsMatchTheReferenceBitForBit' ./internal/modules/search/infra/onnx/ \
+		> $(PARITY_DIR)/go-test.log 2>&1; rc=$$?; cat $(PARITY_DIR)/go-test.log; [ $$rc -eq 0 ] || exit $$rc
+	@for t in TestTokenIDsMatchTheReference TestVectorsMatchTheReferenceBitForBit; do \
+		grep -q -- "--- PASS: $$t " $(PARITY_DIR)/go-test.log || { echo "go-test-onnx-parity: $$t did not report PASS"; exit 1; }; done

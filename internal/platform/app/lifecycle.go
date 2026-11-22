@@ -59,7 +59,7 @@ func Run(ctx context.Context, o Options) int {
 	cancelOpen()
 	if err != nil {
 		if ctx.Err() != nil {
-			return stopBeforeServing(ctx, logger, nil)
+			return stopBeforeServing(ctx, logger, nil, nil)
 		}
 		// db.Open's text is fixed and never quotes the address or a password.
 		logging.Fatal(logger, err.Error())
@@ -70,12 +70,12 @@ func Run(ctx context.Context, o Options) int {
 		pool.Close()
 		return 1
 	case startCancelled:
-		return stopBeforeServing(ctx, logger, pool)
+		return stopBeforeServing(ctx, logger, pool, nil)
 	}
 
 	if ctx.Err() != nil {
 		// A signal arrived during the start: do not open the port, stop at once.
-		return stopBeforeServing(ctx, logger, pool)
+		return stopBeforeServing(ctx, logger, pool, nil)
 	}
 
 	rt, err := newRuntime(cfg, logger, pool, o.Version)
@@ -93,11 +93,17 @@ func Run(ctx context.Context, o Options) int {
 	}
 	// After the key check, before the first request: a module's one-time provisioning.
 	runFirstStart(ctx, logger, asm.firstStart)
-	if ctx.Err() != nil {
-		// A signal arrived while FirstStart ran: do not start the worker or open the port.
-		return stopBeforeServing(ctx, logger, pool)
+	if ctx.Err() == nil {
+		// Slow preparation (the embedding model) is finished before the first request, so the
+		// first search equals the settled one and /healthz never waits for it.
+		runHooks(ctx, logger, asm.beforeServing, msgBeforeServingPanicked)
 	}
-	stopWorker := startOutbox(logger, pool, asm.handlers)
+	if ctx.Err() != nil {
+		// A signal arrived while FirstStart or a BeforeServing hook ran: do not start the worker
+		// or open the port.
+		return stopBeforeServing(ctx, logger, pool, asm.closers)
+	}
+	stopWorker := startOutbox(logger, pool, asm.handlers, asm.sweep)
 	stopScheduler := scheduler.Start(logger, asm.jobs)
 
 	ln := o.listener
@@ -108,7 +114,7 @@ func Run(ctx context.Context, o Options) int {
 		logging.Fatal(logger, "cannot listen on port "+strconv.Itoa(cfg.Port), logging.ErrAttr(err))
 		limit, cancel := context.WithTimeout(context.Background(), shutdownLimitOf(o))
 		defer cancel()
-		_ = stopAll(limit, stopWorker, stopScheduler)
+		_ = stopAllThenClose(limit, []func(context.Context) error{stopWorker, stopScheduler}, asm.closers)
 		pool.Close()
 		return 1
 	}
@@ -138,7 +144,7 @@ func Run(ctx context.Context, o Options) int {
 		exit = 1
 	}
 
-	return shutdown(o, logger, srv, pool, []func(context.Context) error{stopWorker, stopScheduler}, exit)
+	return shutdown(o, logger, srv, pool, []func(context.Context) error{stopWorker, stopScheduler}, asm.closers, exit)
 }
 
 // databasePassword is the PGPASSWORD_FILE value for db.Open, nil when unset.
@@ -150,18 +156,27 @@ func databasePassword(cfg config.Config) *string {
 	return &pw
 }
 
-// msgFirstStartPanicked is logged when a module's FirstStart panics; the panic value is never
+// The records logged when a module's FirstStart or BeforeServing panics; the panic value is never
 // part of the record (it may quote values or secrets).
-const msgFirstStartPanicked = "module first start panicked"
+const (
+	msgFirstStartPanicked    = "module first start panicked"
+	msgBeforeServingPanicked = "module preparation before serving panicked"
+)
 
 // runFirstStart runs the modules' FirstStart functions in order. A panic is logged and the start
 // goes on.
 func runFirstStart(ctx context.Context, logger *slog.Logger, funcs []func(context.Context)) {
+	runHooks(ctx, logger, funcs, msgFirstStartPanicked)
+}
+
+// runHooks runs funcs in order; a panic is logged as msg (error level, call frames) and the next
+// one runs.
+func runHooks(ctx context.Context, logger *slog.Logger, funcs []func(context.Context), msg string) {
 	for _, f := range funcs {
 		func() {
 			defer func() {
 				if recover() != nil {
-					logger.Error(msgFirstStartPanicked, "stack", logging.PanicFrames())
+					logger.Error(msg, "stack", logging.PanicFrames())
 				}
 			}()
 			f(ctx)
@@ -172,8 +187,10 @@ func runFirstStart(ctx context.Context, logger *slog.Logger, funcs []func(contex
 // startOutbox starts the delivery worker, but only when there is a handler. The worker marks an
 // event of a type without a handler as processed (the TypeScript server registers every handler,
 // so there it never happens); a Go image pointed at a 1.0.x database must therefore not run one
-// before the handlers exist, or it would consume the pending catalog events for good.
-func startOutbox(logger *slog.Logger, pool *pgxpool.Pool, handlers map[string]outbox.Handler) func(context.Context) error {
+// before the handlers exist, or it would consume the pending catalog events for good. The merged
+// sweep (nil when no module has one) runs from the worker's loop, so without handlers it does not
+// run either. assemble has already checked that the table covers every emitted event type.
+func startOutbox(logger *slog.Logger, pool *pgxpool.Pool, handlers map[string]outbox.Handler, sweep *outbox.Sweep) func(context.Context) error {
 	if len(handlers) == 0 {
 		logger.Info(msgNoOutboxWorker)
 		return func(context.Context) error { return nil }
@@ -183,6 +200,7 @@ func startOutbox(logger *slog.Logger, pool *pgxpool.Pool, handlers map[string]ou
 		Handlers: handlers,
 		Interval: outboxInterval,
 		Logger:   logger,
+		Sweep:    sweep,
 	})
 }
 
@@ -194,8 +212,16 @@ func shutdownLimitOf(o Options) time.Duration {
 }
 
 // stopBeforeServing ends a start that was cancelled before the port was opened.
-func stopBeforeServing(ctx context.Context, logger *slog.Logger, pool *pgxpool.Pool) int {
+func stopBeforeServing(ctx context.Context, logger *slog.Logger, pool *pgxpool.Pool, closers []func(context.Context) error) int {
 	logger.Info("shutting down", "signal", signalName(ctx))
+	if len(closers) > 0 {
+		// Nothing else was started; release what the modules built (the embedder may be loading).
+		limit, cancel := context.WithTimeout(context.Background(), shutdownLimit)
+		if err := stopAllThenClose(limit, nil, closers); err != nil {
+			logger.Error("shutdown failed", logging.ErrAttr(err))
+		}
+		cancel()
+	}
 	if pool != nil {
 		pool.Close()
 	}
@@ -269,13 +295,31 @@ func stopAll(ctx context.Context, stops ...func(context.Context) error) error {
 	return errors.Join(errs...)
 }
 
+// stopAllThenClose runs the stops at once and waits for all; only when every one returned without
+// error the closers run, one after another, and every one is tried. The closers release what the
+// stopped parts used (the embedder: a worker still indexing would get a closed embedder with a
+// live context and clear the vectors it already has), so they never run beside a stop, and not at
+// all when a stop failed or timed out (then something may still be using what they release; the
+// process is about to exit). The errors are joined.
+func stopAllThenClose(ctx context.Context, stops, closers []func(context.Context) error) error {
+	if err := stopAll(ctx, stops...); err != nil {
+		return err
+	}
+	var errs []error
+	for _, closer := range closers {
+		errs = append(errs, closer(ctx))
+	}
+	return errors.Join(errs...)
+}
+
 // shutdown stops accepting connections and drains requests while the worker and the scheduler
-// stop, all under one limit; then the pool is closed, only after every one of them has returned
-// (a request or a job in flight still uses it). exit is the code to return when it all goes well.
-func shutdown(o Options, logger *slog.Logger, srv *http.Server, pool *pgxpool.Pool, stops []func(context.Context) error, exit int) int {
+// stop, all under one limit; then the closers of the modules run, then the pool is closed, only
+// after every one of them has returned (a request or a job in flight still uses it). exit is the
+// code to return when it all goes well.
+func shutdown(o Options, logger *slog.Logger, srv *http.Server, pool *pgxpool.Pool, stops []func(context.Context) error, closers []func(context.Context) error, exit int) int {
 	ctx, cancel := context.WithTimeout(context.Background(), shutdownLimitOf(o))
 	defer cancel()
-	err := stopAll(ctx, append(stops, srv.Shutdown)...)
+	err := stopAllThenClose(ctx, append(stops, srv.Shutdown), closers)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
 			logger.Error("shutdown timed out")

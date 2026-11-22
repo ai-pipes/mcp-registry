@@ -638,10 +638,12 @@ func TestConfigOpenAICompatibleEmbedder(t *testing.T) {
 			err := s.DB.QueryRow(t.Context(), "select count(*), count(embedding) from search.documents where server = $1", down).Scan(&total, &embedded)
 			return err == nil && total == 2 && embedded == 0
 		})
-		c := s.MCP(t, token)
-		if hits := catalogHitRefs(catalogSearch(t, c, "striped zebra", 5, []string{down})); !slices.Contains(hits, down+".tame_zebra") {
-			t.Fatalf("text search with the embedder down: %v", hits)
-		}
+		t.Run("text search over MCP finds the tool", func(t *testing.T) {
+			c := s.MCP(t, token)
+			if hits := catalogHitRefs(catalogSearch(t, c, "striped zebra", 5, []string{down})); !slices.Contains(hits, down+".tame_zebra") {
+				t.Fatalf("text search with the embedder down: %v", hits)
+			}
+		})
 		// The embedder was asked and refused (the control that "down" was in effect).
 		refused := 0
 		for _, r := range embedder.Requests() {
@@ -703,10 +705,12 @@ func TestConfigModelDirMissing(t *testing.T) {
 		err := s.DB.QueryRow(t.Context(), "select count(*), count(embedding) from search.documents where server = $1", slug).Scan(&total, &embedded)
 		return err == nil && total == 2 && embedded == 0
 	})
-	c := s.MCP(t, token)
-	if hits := catalogHitRefs(catalogSearch(t, c, "striped zebra", 5, []string{slug})); !slices.Contains(hits, slug+".tame_zebra") {
-		t.Fatalf("text search without a model: %v", hits)
-	}
+	t.Run("text search over MCP finds the tool", func(t *testing.T) {
+		c := s.MCP(t, token)
+		if hits := catalogHitRefs(catalogSearch(t, c, "striped zebra", 5, []string{slug})); !slices.Contains(hits, slug+".tame_zebra") {
+			t.Fatalf("text search without a model: %v", hits)
+		}
+	})
 	harness.Eventually(t, "a warn-or-error record after the registration", func() bool { return logCountFrom(t, s, "warn") > baseline })
 	if n := countSQL(t, s, "select count(embedding) from search.documents where server = $1", slug); n != 0 {
 		t.Fatalf("%d documents got a vector without a model", n)

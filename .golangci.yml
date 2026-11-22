@@ -37,6 +37,10 @@ linters:
               desc: deps-only-in-infra, use a port implemented in infra
             - pkg: github.com/yalue/onnxruntime_go
               desc: deps-only-in-infra, use a port implemented in infra
+            - pkg: github.com/daulet/tokenizers
+              desc: deps-only-in-infra, the local embedder lives in modules/search/infra
+            - pkg: golang.org/x/text
+              desc: deps-only-in-infra, Unicode normalisation belongs to the local embedder in modules/search/infra
             - pkg: golang.org/x/term
               desc: deps-only-in-infra, terminal handling belongs to the composition (internal/platform)
             - pkg: crypto

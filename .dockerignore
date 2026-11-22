@@ -10,3 +10,5 @@ docs
 .env.*
 !.env.example
 *.log
+.cache
+bin

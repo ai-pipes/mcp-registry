@@ -108,6 +108,8 @@ func TestUsageNamesEveryCommandOfTheReferenceBeforeTheirMilestones(t *testing.T)
 		// Registered since milestone 3: their pending entries are gone.
 		"create-server": {Name: "create-server", Usage: "  create-server --x\n"},
 		"sync":          {Name: "sync", Usage: "  sync --x\n"},
+		// Registered since milestone 4.
+		"reindex": {Name: "reindex", Usage: "  reindex\n"},
 	})
 	for _, name := range usageOrder {
 		if !strings.Contains(got, name) {

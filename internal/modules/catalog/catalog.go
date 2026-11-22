@@ -246,3 +246,9 @@ func (s *Service) ResealServerSecrets(ctx context.Context, from, to kernel.Secre
 // create-server) in schema order; the missing-field problems come from the shape step of the
 // caller.
 func ValidateServerInput(in ServerInput) []Issue { return app.ValidateServerInput(in) }
+
+// EventTypes lists every outbox event type the catalog emits (domain.EventTypes). The composition
+// checks that the outbox handler table has a handler for each of them (an event of an unhandled
+// type is marked processed by the worker and lost). The catalog's repositories refuse an event
+// whose type is not in the list, so it cannot go stale unnoticed.
+func EventTypes() []string { return domain.EventTypes() }

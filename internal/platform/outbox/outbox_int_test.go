@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -753,5 +754,93 @@ func TestPanicWhileStoppingIsLogged(t *testing.T) {
 	}
 	if attempts != 0 || processed {
 		t.Fatalf("attempts=%d processed=%v: a stop-time panic must not count as an attempt", attempts, processed)
+	}
+}
+
+// A sweep that panics or fails on every pass never stops deliveries: events appended later are
+// still delivered, in id order, and the sweep runs on the pass after its deliveries.
+func TestAFailingOrPanickingSweepDoesNotStopDeliveries(t *testing.T) {
+	for name, run := range map[string]func(context.Context) error{
+		"error": func(context.Context) error { return errors.New("sweep secret") },
+		"panic": func(context.Context) error { panic("sweep panic secret") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			pool := fresh(t)
+			var buf bytes.Buffer
+			timers := newFakeTimers()
+			var mu sync.Mutex
+			var got []float64
+			stop := startWorker(WorkerOptions{
+				Pool: pool, Interval: time.Hour, Logger: logging.New("info", &buf),
+				Handlers: map[string]Handler{"t": func(_ context.Context, p map[string]any) error {
+					mu.Lock()
+					defer mu.Unlock()
+					got = append(got, p["n"].(float64))
+					return nil
+				}},
+				Sweep: &Sweep{Every: time.Nanosecond, Run: run},
+			}, timers.clock())
+			defer stopWorker(t, stop)
+
+			next := timers.passDone(t) // the first pass: nothing to deliver, the sweep ran and failed
+			appendEvents(t, pool, ev("t", 1), ev("t", 2))
+			timers.advance(time.Second)
+			next <- time.Time{}
+			next = timers.passDone(t)
+			appendEvents(t, pool, ev("t", 3))
+			next <- time.Time{}
+			timers.passDone(t)
+
+			mu.Lock()
+			defer mu.Unlock()
+			if !slices.Equal(got, []float64{1, 2, 3}) {
+				t.Fatalf("delivered %v", got)
+			}
+			out := buf.String()
+			if !strings.Contains(out, `"msg":"outbox: sweep failed"`) || strings.Contains(out, "secret") {
+				t.Fatalf("log: %s", out)
+			}
+		})
+	}
+}
+
+// Rows written while no worker ran (attempts 0) are delivered once each, in id order, by the
+// first worker that has handlers, whatever mix of types they are, and are marked processed.
+func TestBacklogWrittenWithoutAWorkerIsDeliveredInIDOrderOnce(t *testing.T) {
+	pool := fresh(t)
+	ctx := context.Background()
+	appendEvents(t, pool, ev("x.b", 1))
+	appendEvents(t, pool, ev("x.c", 2), ev("x.a", 3))
+	appendEvents(t, pool, ev("x.a", 4))
+	var n int
+	if err := pool.QueryRow(ctx, `select count(*) from platform.outbox where attempts = 0 and processed_at is null`).Scan(&n); err != nil || n != 4 {
+		t.Fatalf("backlog rows: %d %v", n, err)
+	}
+
+	timers := newFakeTimers()
+	var mu sync.Mutex
+	var got []string
+	record := func(_ context.Context, p map[string]any) error {
+		mu.Lock()
+		defer mu.Unlock()
+		got = append(got, strconv.Itoa(int(p["n"].(float64))))
+		return nil
+	}
+	stop := startWorker(WorkerOptions{
+		Pool: pool, Interval: time.Hour, Logger: logging.New("silent", io.Discard),
+		Handlers: map[string]Handler{"x.a": record, "x.b": record, "x.c": record},
+	}, timers.clock())
+	next := timers.passDone(t)
+	next <- time.Time{}
+	timers.passDone(t) // a second pass delivers nothing again
+	stopWorker(t, stop)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if !slices.Equal(got, []string{"1", "2", "3", "4"}) {
+		t.Fatalf("delivered %v, want each once in id order", got)
+	}
+	if err := pool.QueryRow(ctx, `select count(*) from platform.outbox where attempts = 1 and processed_at is not null and last_error is null`).Scan(&n); err != nil || n != 4 {
+		t.Fatalf("processed rows with one attempt: %d %v", n, err)
 	}
 }

@@ -71,15 +71,16 @@ func catalogWiringOver(rt Runtime, id identityWiring, repos catinfra.Repos, clie
 }
 
 // module is what the catalog adds to the server: its routes with identity's guards, and the
-// synchronisation job. Its events (catalog.tools_changed, tools_removed, server_changed) pile up
-// in platform.outbox until the search module registers handlers (milestone 4): the worker does
-// not start without handlers.
+// synchronisation job. Its events (catalog.tools_changed, tools_removed, server_changed) go to
+// platform.outbox in the aggregate's transaction; the search module's handlers (registered in
+// search.go) deliver them, and the outbox worker starts because the handler table is not empty.
 func (w catalogWiring) module() Module {
 	routes, prefixes := cathttp.Routes(w.id.service, w.deps)
 	return Module{
 		Routes:   routes,
 		Prefixes: prefixes,
 		Jobs:     []scheduler.Job{{Name: "catalog-sync", Every: w.interval, Run: w.syncAll}},
+		Emits:    catalog.EventTypes(),
 		Commands: w.commands(),
 	}
 }

@@ -110,6 +110,36 @@ jobs:
           node-version: 22
       - run: make go-verify
 
+  # The code behind the build tag onnx (the local embedder: cgo and the pinned ONNX Runtime library)
+  # is not part of make go-verify, which needs no native library. It is vetted, linted and tested
+  # here on both architectures: the unit tests compare token ids with files recorded from the
+  # reference and check the arithmetic; no vector is recorded (vectors depend on the CPU), vector
+  # parity is judged by the compat-go job (make go-test-onnx-parity and TestSearchStoredVectors).
+  # make native-libs downloads the pinned libraries and checks their SHA-256 (make go-verify-onnx needs them too; a separate step shows a failed download on its own).
+  go-onnx:
+    name: go-onnx (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+          - arch: amd64
+            runner: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      # make native-model and the version read use node.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - run: make native-libs
+      - run: make go-verify-onnx
+
   # The Go compatibility suite (compat/, tag compat) against the image built from this tree, on both
   # architectures. Vectors and rankings are compared with the reference image (the image built by
   # make compat-image-ts) on the same runner, so both entries run the same steps.
@@ -152,11 +182,22 @@ jobs:
 
   # The Go server (Dockerfile target go) under the compat suite: the scenarios of the milestone pattern
   # (COMPAT_GO_TESTS and COMPAT_GO_SKIP in the Makefile). The reference image is built too: the scenarios start from it or
-  # compare with it. Not a required check. arm64 only, like e2e-flows.
+  # compare with it. On both architectures, each building both images natively on its own runner:
+  # TestSearchStoredVectors compares the stored vectors with the reference's on the same machine, and
+  # they must be equal on arm64 and on amd64. Not a required check.
   compat-go:
     needs: [go]
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 40
+    name: compat-go (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+          - arch: amd64
+            runner: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -168,13 +209,17 @@ jobs:
           node-version: 22
       - run: make compat-image-ts
       - run: make compat-image-go
+      # The embedder's vectors against the reference image's, in containers of this runner's architecture
+      # (the Go dependencies are fetched first: the container has no network).
+      - run: go mod download
+      - run: make go-test-onnx-parity
       - run: make compat-go
         env:
           COMPAT_LOG_DIR: ${{ runner.temp }}/compat-logs
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: compat-go-app-logs
+          name: compat-go-app-logs-${{ matrix.arch }}
           path: ${{ runner.temp }}/compat-logs
           if-no-files-found: ignore
           retention-days: 7

@@ -379,12 +379,14 @@ func TestScheduledSyncAtStart(t *testing.T) {
 		if up.listed.Load() != before+1 {
 			t.Fatalf("upstream tools/list requests: %d, want 1 (the personal server is not contacted)", up.listed.Load()-before)
 		}
-		// The events are still in the table: nobody consumes them before milestone 4.
+		// Search handles the events now: the worker runs. This build has no local embedder (the
+		// default build: a stub that never loads), so every handler fails after writing the text
+		// rows and the events stay unprocessed, to be retried.
+		if len(again.logs.find(t, msgNoOutboxWorker)) != 0 {
+			t.Fatalf("the worker should run: search registers handlers\n%s", again.logs.String())
+		}
 		if got := outboxTypes(t, url); got["catalog.tools_changed"] == 0 {
 			t.Fatalf("outbox: %v", got)
-		}
-		if len(again.logs.find(t, "outbox worker not started: no handler is registered")) != 1 {
-			t.Fatalf("the worker should report that it is off\n%s", again.logs.String())
 		}
 	})
 }

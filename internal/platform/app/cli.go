@@ -29,9 +29,6 @@ var usageOrder = []string{
 // (apps/server/src/platform/cli-commands.ts, with this image's name); a milestone that registers
 // the command sets CLICommand.Usage and the entry here goes.
 var pendingUsage = map[string]string{
-	"reindex": `  reindex
-      Rebuild the search index for every server.
-`,
 	"rotate-secrets-key": `  rotate-secrets-key
       Re-seal every stored secret (server secrets and people's tokens) from SECRETS_KEY_OLD
       to SECRETS_KEY. Safe to repeat.
@@ -200,6 +197,10 @@ func RunCLI(ctx context.Context, o CLIOptions) int {
 		return fail(err.Error())
 	}
 
+	// What the modules built (the embedder's native session) is released when the command is
+	// done, whatever it returned.
+	defer closeModules(logger, asm.closers)
+
 	command, ok := asm.commands[name]
 	if !ok {
 		reason := "no command given"
@@ -230,6 +231,19 @@ func RunCLI(ctx context.Context, o CLIOptions) int {
 	}
 	cio := CLIIO{Stdin: stdin, Stdout: o.Stdout, Stderr: o.Stderr, Env: o.Env, Terminal: terminalOf(stdin)}
 	return runCommand(ctx, command, cio, args, logger, usageFor(asm.commands))
+}
+
+// closeModules runs the modules' closers after a command; a failure is logged and does not change
+// the command's exit code (the work is done).
+func closeModules(logger *slog.Logger, closers []func(context.Context) error) {
+	if len(closers) == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), shutdownLimit)
+	defer cancel()
+	if err := stopAllThenClose(ctx, nil, closers); err != nil {
+		logger.Error("closing the modules failed", logging.ErrAttr(err))
+	}
 }
 
 // cliLogLevel keeps the CLI quiet: the server's default info becomes warn (cli.ts).

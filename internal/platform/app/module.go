@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"slices"
+	"strings"
 
 	"github.com/ai-pipes/mcp-registry/internal/kernel"
 	"github.com/ai-pipes/mcp-registry/internal/modules/identity"
@@ -68,12 +69,39 @@ type Module struct {
 	// Handlers maps an outbox event type to its subscriber. Two modules registering one type is a
 	// start-up error; the worker starts only when the merged table is not empty.
 	Handlers map[string]outbox.Handler
+	// Emits lists the outbox event types this module writes. Once any module registers a handler
+	// (the table is not empty and the worker starts), every listed type must have one: the worker
+	// marks an event of an unhandled type as processed, so a partial table loses events for good.
+	// An incomplete table is a start-up error naming the missing types. With an empty table
+	// nothing is checked (the worker is off and events wait). The module's wiring passes its
+	// module's own list (the catalog: catalog.EventTypes()), so the outbox package knows no module.
+	Emits []string
+	// Sweeps are periodic repair jobs run by the outbox worker's loop (see outbox.Sweep): after a
+	// pass's deliveries, so never concurrently with one, first on the first pass and then at most
+	// once per Every; an error or panic is logged and the loop goes on. The sweeps of all modules
+	// are composed (outbox.ComposeSweeps), each keeping its own period. They run only while the
+	// worker runs, i.e. when some module has a handler. The search module's
+	// indexMissingEmbeddings plugs in here.
+	Sweeps []outbox.Sweep
 	// FirstStart runs after the secrets key check and before the listener accepts connections. It
 	// has no error: the module's wiring logs its own records (with the operator-facing texts). The
 	// composition only recovers a panic (an error record with the call frames, never the value) and
 	// the start goes on.
 	FirstStart func(ctx context.Context)
-	Commands   []CLICommand
+	// BeforeServing runs after FirstStart and before the outbox worker starts and the listener
+	// accepts connections: slow preparation a module wants finished before the first request (the
+	// search module loads its embedding model here, so the first search equals the settled one and
+	// /healthz never waits for it). It has no error: a failure must not stop the start, so the
+	// module logs its own record. A panic is recovered like FirstStart's. The server only; the CLI
+	// never runs it.
+	BeforeServing func(ctx context.Context)
+	// Closers release what the module holds (the embedder's native session). The server runs them
+	// at the very end of the shutdown, one after another, only after the HTTP server, the outbox
+	// worker and the scheduler have stopped (all of them may still use what a closer releases),
+	// and only when those stopped within the limit; the CLI runs them when the command returned.
+	// They must be safe to call on something that never loaded.
+	Closers  []func(ctx context.Context) error
+	Commands []CLICommand
 }
 
 // Runtime is what the per-module wiring inside internal/platform/app reads plain values from
@@ -111,11 +139,14 @@ func newRuntime(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, vers
 
 // modules is the list of modules, in the order their routes, prefixes and jobs are merged. The
 // server and the CLI build it from the same Runtime. Identity is first; the platform's own routes
-// (audit, version) follow, since they use identity's session guards; then the catalog. The other
-// modules join in later milestones.
+// (audit, version) follow, since they use identity's session guards; then the catalog, then search
+// (it reads the catalog through the catalog's public API). The other modules join in later
+// milestones. Tests pick modules by name or position from the end of the list: append, never
+// insert.
 func modules(rt Runtime) []Module {
 	id := newIdentityWiring(rt)
-	return []Module{id.module(), platformModule(rt, id), newCatalogWiring(rt, id).module()}
+	cat := newCatalogWiring(rt, id)
+	return []Module{id.module(), platformModule(rt, id), cat.module(), newSearchWiring(rt, cat).module()}
 }
 
 // platformModule is the platform's own REST routes, guarded with identity's session checks:
@@ -150,15 +181,23 @@ type assembled struct {
 	prefixes   []httpx.Prefix
 	jobs       []scheduler.Job
 	handlers   map[string]outbox.Handler
+	sweep      *outbox.Sweep
 	firstStart []func(ctx context.Context)
-	commands   map[string]CLICommand
+	// beforeServing and closers: see Module.
+	beforeServing []func(ctx context.Context)
+	closers       []func(ctx context.Context) error
+	commands      map[string]CLICommand
 }
 
 // assemble merges the modules in order. A second registration of an outbox event type or of a
 // command name is an error naming it (they are names, never data).
 func assemble(mods []Module) (assembled, error) {
 	a := assembled{handlers: map[string]outbox.Handler{}, commands: map[string]CLICommand{}}
+	var emitted []string
+	var sweeps []outbox.Sweep
 	for _, m := range mods {
+		emitted = append(emitted, m.Emits...)
+		sweeps = append(sweeps, m.Sweeps...)
 		a.routes = append(a.routes, m.Routes...)
 		a.prefixes = append(a.prefixes, m.Prefixes...)
 		a.jobs = append(a.jobs, m.Jobs...)
@@ -171,6 +210,10 @@ func assemble(mods []Module) (assembled, error) {
 		if m.FirstStart != nil {
 			a.firstStart = append(a.firstStart, m.FirstStart)
 		}
+		if m.BeforeServing != nil {
+			a.beforeServing = append(a.beforeServing, m.BeforeServing)
+		}
+		a.closers = append(a.closers, m.Closers...)
 		for _, c := range m.Commands {
 			if _, dup := a.commands[c.Name]; dup {
 				return assembled{}, fmt.Errorf("command %q is registered by two modules", c.Name)
@@ -178,7 +221,30 @@ func assemble(mods []Module) (assembled, error) {
 			a.commands[c.Name] = c
 		}
 	}
+	if err := checkHandlerTable(a.handlers, emitted); err != nil {
+		return assembled{}, err
+	}
+	a.sweep = outbox.ComposeSweeps(sweeps...)
 	return a, nil
+}
+
+// checkHandlerTable refuses a non-empty table that lacks a handler for an emitted event type. The
+// text names types (names, never data).
+func checkHandlerTable(handlers map[string]outbox.Handler, emitted []string) error {
+	if len(handlers) == 0 {
+		return nil
+	}
+	var missing []string
+	for _, typ := range emitted {
+		if _, ok := handlers[typ]; !ok && !slices.Contains(missing, typ) {
+			missing = append(missing, typ)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	slices.Sort(missing)
+	return fmt.Errorf("outbox handler table is incomplete: no handler for %s (the worker would mark those events processed and lose them)", strings.Join(missing, ", "))
 }
 
 func sortedKeys[V any](m map[string]V) []string {

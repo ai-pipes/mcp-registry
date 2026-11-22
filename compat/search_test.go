@@ -70,7 +70,7 @@ var catalogSearchQueries = []struct {
 func TestCatalogSearch(t *testing.T) {
 	s := harness.Start(t, harness.Options{})
 	admin := s.Admin(t)
-	c := s.MCP(t, admin.Token(t, "catalog-search"))
+	token := admin.Token(t, "catalog-search")
 
 	gitea := fakes.StartUpstream(t, fakes.UpstreamOptions{Tools: fakes.FixtureTools("gitea")})
 	youtrack := fakes.StartUpstream(t, fakes.UpstreamOptions{Tools: fakes.FixtureTools("youtrack")})
@@ -99,6 +99,7 @@ func TestCatalogSearch(t *testing.T) {
 	// determinism check between two instances; for another image (the Go server) it is the real
 	// comparison. Everything else here does not depend on the CPU.
 	t.Run("the recorded queries", func(t *testing.T) {
+		c := s.MCP(t, token)
 		harness.RequireReferenceImage(t)
 		ref := harness.Start(t, harness.Options{Image: harness.ReferenceImage(), CLI: harness.ReferenceCLI()})
 		refAdmin := ref.Admin(t)
@@ -154,6 +155,7 @@ func TestCatalogSearch(t *testing.T) {
 	// Order-dependent by design: subtests run in declaration order and only gitea and youtrack
 	// exist on this stack until the later subtests register their own servers.
 	t.Run("searching every usable server equals searching both explicitly", func(t *testing.T) {
+		c := s.MCP(t, token)
 		for _, q := range []string{"create an issue in the tracker", "list pull requests in a repository", "weather in Berlin"} {
 			all := catalogSearch(t, c, q, 10, nil)
 			explicit := catalogSearch(t, c, q, 10, both)
@@ -164,6 +166,7 @@ func TestCatalogSearch(t *testing.T) {
 	})
 
 	t.Run("limit is respected", func(t *testing.T) {
+		c := s.MCP(t, token)
 		full := catalogSearch(t, c, "issue", 25, both)
 		if len(full) < 5 {
 			t.Fatalf("only %d hits for \"issue\"", len(full))
@@ -189,6 +192,7 @@ func TestCatalogSearch(t *testing.T) {
 	})
 
 	t.Run("the servers filter applies before the limit", func(t *testing.T) {
+		c := s.MCP(t, token)
 		unfiltered := catalogSearch(t, c, "create an issue in the tracker", 1, both)
 		if len(unfiltered) != 1 || unfiltered[0].Server != "youtrack" {
 			t.Fatalf("unfiltered top hit: %v", catalogHitRefs(unfiltered))
@@ -210,6 +214,7 @@ func TestCatalogSearch(t *testing.T) {
 	})
 
 	t.Run("an unknown server and an empty filter are refused", func(t *testing.T) {
+		c := s.MCP(t, token)
 		res := catalogCallMCP(t, c, "search_tools", catalogSearchArgs("issue", 0, []string{"nope"}))
 		if !res.IsError || catalogText(res) != `Unknown server "nope". Call list_servers.` {
 			t.Fatalf("unknown slug: isError %v %q", res.IsError, catalogText(res))
@@ -232,6 +237,7 @@ func TestCatalogSearch(t *testing.T) {
 	})
 
 	t.Run("list_servers and describe_tool", func(t *testing.T) {
+		c := s.MCP(t, token)
 		list := catalogListServers(t, c)
 		if len(list) != 2 || list[0].Slug != "gitea" || list[0].Tools != 61 || list[0].Name != "Gitea" || list[0].Connection != "not_required" ||
 			list[1].Slug != "youtrack" || list[1].Tools != 23 || list[0].ConnectURL != "" {
@@ -249,6 +255,7 @@ func TestCatalogSearch(t *testing.T) {
 	})
 
 	t.Run("hiding, removing and changing a tool reach the search results", func(t *testing.T) {
+		c := s.MCP(t, token)
 		upstreamTools := []fakes.Tool{
 			{Name: "frobnicate_quuxwidget", Description: "Frobnicates the quuxwidget of a repository.", InputSchema: map[string]any{"type": "object"}},
 			{Name: "static_item", Description: "Neutralizes the blargle.", InputSchema: map[string]any{"type": "object"}},
@@ -353,6 +360,7 @@ func TestCatalogSearch(t *testing.T) {
 	})
 
 	t.Run("a disabled server leaves the index; enabling brings it back", func(t *testing.T) {
+		c := s.MCP(t, token)
 		up := fakes.StartUpstream(t, fakes.UpstreamOptions{Tools: fakes.Tools("alpha_gizmo", "beta_gizmo")})
 		slug := harness.Unique("dsb")
 		catalogRegister(t, admin, fakes.ServerInput(up, slug, "none"))
@@ -436,6 +444,7 @@ func TestCatalogSearch(t *testing.T) {
 	})
 
 	t.Run("names with dots and dashes are found by their words", func(t *testing.T) {
+		c := s.MCP(t, token)
 		up := fakes.StartUpstream(t, fakes.UpstreamOptions{Tools: []fakes.Tool{
 			{Name: "issues.create", Description: "x", InputSchema: map[string]any{"type": "object"}},
 			{Name: "get-file_contents", Description: "y", InputSchema: map[string]any{"type": "object"}},
@@ -472,8 +481,13 @@ func TestCatalogSearch(t *testing.T) {
 		if r.Code != 0 || r.Stderr != "" {
 			t.Fatalf("reindex: code %d stderr %q", r.Code, r.Stderr)
 		}
-		// The count in the message is the number of documents written (the wording says servers).
-		if want := fmt.Sprintf("reindexed %d server(s)\n", total); r.Stdout != want {
+		// The count in the message is the number of documents written. 1.0.x words it "server(s)";
+		// decided (reindex-wording): "tool(s)".
+		unit := "server(s)"
+		if s.Fixed(harness.DevReindexWording) {
+			unit = "tool(s)"
+		}
+		if want := fmt.Sprintf("reindexed %d %s\n", total, unit); r.Stdout != want {
 			t.Fatalf("reindex stdout %q, want %q", r.Stdout, want)
 		}
 		catalogWaitDocs(t, s, slug, 2)
