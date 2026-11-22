@@ -69,7 +69,15 @@ func TestEveryPlatformHasEveryPin(t *testing.T) {
 
 func TestNoPinIsRepeatedOutsidePinsEnv(t *testing.T) {
 	pins := readPins(t)
-	for _, name := range []string{"Dockerfile", "Makefile"} {
+	// Every file that could carry a second copy: a value set later in fetch.sh would override the
+	// pin unnoticed.
+	files := []string{"Dockerfile", "Makefile", "internal/modules/search/infra/onnx/native/fetch.sh"}
+	workflows, err := fs.Glob(os.DirFS("../../../../.."), ".github/workflows/*.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	files = append(files, workflows...)
+	for _, name := range files {
 		text := repoFile(t, name)
 		for k, v := range pins {
 			if strings.Contains(v, "/") || len(v) == 64 { // URLs, members and hashes

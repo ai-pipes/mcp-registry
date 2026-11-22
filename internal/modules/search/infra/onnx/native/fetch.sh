@@ -38,13 +38,14 @@ fail() { echo "native-libs: $*" >&2; exit 1; }
 have() { [ -f "$1" ] && [ "$(sha256 "$1")" = "$2" ]; }
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/native-libs.XXXXXX")
-trap 'rm -rf "$work"' EXIT INT TERM
+trap 'rm -rf "$work"' EXIT
+trap 'rm -rf "$work"; exit 1' INT TERM
 mkdir -p "$dest"
 
 # fetch <url> <expected sha256> <out>: download and verify.
 fetch() {
 	echo "native-libs: downloading $1"
-	curl -fsSL --retry 3 --connect-timeout 20 -o "$3" "$1" || fail "download of $1 failed"
+	curl -fsSL --proto '=https' --proto-redir '=https' --retry 3 --connect-timeout 20 -o "$3" "$1" || fail "download of $1 failed"
 	got=$(sha256 "$3")
 	[ "$got" = "$2" ] || fail "$1: sha256 $got, expected $2"
 }

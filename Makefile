@@ -63,14 +63,16 @@ compat-image-ts:
 
 # The Go image (Dockerfile target go), tagged mcp-registry:compat-go: cgo, build tag onnx, ONNX
 # Runtime and the model inside. It is built natively for the host architecture; PLATFORM builds
-# another one (emulated where needed): make compat-image-go PLATFORM=linux/amd64. The version comes
+# another one (emulated where needed): make compat-image-go PLATFORM=linux/amd64, tagged
+# mcp-registry:compat-go-linux-amd64 so that the host image is not overwritten. The version comes
 # from the same place as for go-build. The default target (runtime, the TypeScript image) is
 # untouched.
 PLATFORM :=
+GO_IMAGE := mcp-registry:compat-go$(if $(PLATFORM),-$(subst /,-,$(PLATFORM)))
 compat-image-go:
 	@test -n "$(VERSION)" || { echo "compat-image-go: the version read from apps/server/package.json is empty (is node on PATH?)"; exit 1; }
-	docker build $(if $(PLATFORM),--platform $(PLATFORM)) --target go --build-arg VERSION=$(VERSION) -t mcp-registry:compat-go .
-	@got="$$(docker run --rm $(if $(PLATFORM),--platform $(PLATFORM)) mcp-registry:compat-go mcp-registry --version)"; \
+	docker build $(if $(PLATFORM),--platform $(PLATFORM)) --target go --build-arg VERSION=$(VERSION) -t $(GO_IMAGE) .
+	@got="$$(docker run --rm $(if $(PLATFORM),--platform $(PLATFORM)) $(GO_IMAGE) mcp-registry --version)"; \
 	if [ "$$got" != "$(VERSION)" ]; then echo "compat-image-go: the image reports version '$$got', the package says '$(VERSION)'"; exit 1; fi
 
 # The scenarios the Go server passes so far (the milestone list); it grows with every milestone.
