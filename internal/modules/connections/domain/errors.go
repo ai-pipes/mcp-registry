@@ -1,8 +1,6 @@
 package domain
 
 import (
-	"fmt"
-
 	"github.com/ai-pipes/mcp-registry/internal/kernel"
 )
 
@@ -28,12 +26,12 @@ const (
 
 // ErrNotFound is `server "<slug>" not found`.
 func ErrNotFound(slug string) error {
-	return kernel.NewDomainError(CodeNotFound, fmt.Sprintf("server %q not found", slug))
+	return kernel.NewDomainError(CodeNotFound, `server "`+slug+`" not found`)
 }
 
 // ErrInvalidAuthKind is `server "<slug>" does not use <what>` (WhatOAuth or WhatPAT).
 func ErrInvalidAuthKind(slug, what string) error {
-	return kernel.NewDomainError(CodeInvalidAuthKind, fmt.Sprintf("server %q does not use %s", slug, what))
+	return kernel.NewDomainError(CodeInvalidAuthKind, `server "`+slug+`" does not use `+what)
 }
 
 // ErrInvalidState is the refusal of an unknown, used, expired or foreign connect attempt.

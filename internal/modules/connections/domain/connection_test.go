@@ -2,6 +2,9 @@ package domain_test
 
 import (
 	"bytes"
+	"encoding"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -314,27 +317,92 @@ func TestRestoreRoundTripAndCopies(t *testing.T) {
 	}
 }
 
-func TestSealedNeverPrints(t *testing.T) {
-	s := sealed("TOPSECRET")
-	c := issued(nil)
-	c.Refreshed(domain.SealedTokens{Access: sealed("TOPSECRET"), Refresh: sealed("TOPSECRET")}, now)
-	pending := domain.NewPendingConnect("TOPSECRETSTATE", "u1", "gitea", "TOPSECRETVERIFIER", fp, now)
-	var logbuf bytes.Buffer
-	logger := slog.New(slog.NewJSONHandler(&logbuf, nil))
-	logger.Info("x", "sealed", s, "conn", c, "snap", c.Snapshot(), "pending", pending)
-	jb, err := json.Marshal(map[string]any{"s": s, "c": c, "snap": c.Snapshot(), "p": pending})
-	if err != nil {
-		t.Fatal(err)
+type holder struct {
+	Name string
+	domain.Connection
+}
+
+type fieldHolder struct {
+	C domain.Connection
+	P *domain.Connection
+	S domain.Snapshot
+	Q domain.PendingSnapshot
+	D domain.Sealed
+}
+
+func secretForms(secrets ...string) []string {
+	var forms []string
+	for _, s := range secrets {
+		forms = append(forms, s, hex.EncodeToString([]byte(s)), strings.ToUpper(hex.EncodeToString([]byte(s))),
+			base64.StdEncoding.EncodeToString([]byte(s)), base64.URLEncoding.EncodeToString([]byte(s)),
+			base64.RawStdEncoding.EncodeToString([]byte(s)), base64.RawURLEncoding.EncodeToString([]byte(s)),
+			fmt.Sprintf("%v", []byte(s)))
 	}
-	for _, out := range []string{
-		fmt.Sprint(s), fmt.Sprintf("%v %+v %#v %s %q %x %d", s, s, s, s, s, s, s),
-		fmt.Sprintf("%v %+v %#v %s", c, c, c, c), fmt.Sprintf("%v %+v %#v", c.Snapshot(), c.Snapshot(), c.Snapshot()),
-		fmt.Sprintf("%v %+v %#v %s", pending, pending, pending, &pending),
-		logbuf.String(), string(jb),
-	} {
-		if strings.Contains(out, "TOPSECRET") {
-			t.Errorf("leak: %s", out)
+	return forms
+}
+
+func TestSecretsNeverPrint(t *testing.T) {
+	const access, refresh, state, verifier = "ACCESSsecret", "REFRESHsecret", "STATEsecret", "VERIFIERsecret"
+	forms := secretForms(access, refresh, state, verifier)
+	c := domain.ConnectOAuth(domain.OAuthConnect{
+		UserID: "u1", Server: "gitea", IssuedFor: fp, Now: now,
+		Tokens: domain.SealedTokens{Access: sealed(access), Refresh: sealed(refresh)},
+	})
+	snap := c.Snapshot()
+	pend := domain.NewPendingConnect(state, "u1", "gitea", verifier, fp, now)
+	pendSnap := domain.PendingSnapshot{State: state, UserID: "u1", Server: "gitea", CodeVerifier: verifier, IssuedFor: fp, ExpiresAt: now}
+	values := map[string]any{
+		"Sealed": sealed(access), "*Sealed": func() *domain.Sealed { s := sealed(access); return &s }(),
+		"Connection value": *c, "*Connection": c, "[]Connection": []domain.Connection{*c}, "[]*Connection": []*domain.Connection{c},
+		"embedding struct": holder{Name: "n", Connection: *c}, "embedding struct ptr": &holder{Name: "n", Connection: *c},
+		"struct fields": fieldHolder{C: *c, P: c, S: snap, Q: pendSnap, D: sealed(access)},
+		"map":           map[string]domain.Connection{"k": *c},
+		"Snapshot":      snap, "*Snapshot": &snap, "[]Snapshot": []domain.Snapshot{snap},
+		"PendingConnect": pend, "*PendingConnect": &pend, "[]PendingConnect": []domain.PendingConnect{pend},
+		"PendingSnapshot": pendSnap, "*PendingSnapshot": &pendSnap, "[]PendingSnapshot": []domain.PendingSnapshot{pendSnap},
+	}
+	check := func(t *testing.T, what, out string) {
+		t.Helper()
+		for _, f := range forms {
+			if strings.Contains(out, f) {
+				t.Errorf("%s leaks %q in %s", what, f, out)
+			}
 		}
+	}
+	for name, v := range values {
+		t.Run(name, func(t *testing.T) {
+			for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%q", "%x", "%X", "%d", "%T"} {
+				check(t, verb, fmt.Sprintf(verb, v))
+			}
+			check(t, "Sprint", fmt.Sprint(v))
+			check(t, "Sprintln", fmt.Sprintln(v))
+			jb, err := json.Marshal(v)
+			if err != nil {
+				t.Fatal(err)
+			}
+			check(t, "json", string(jb))
+			ji, err := json.MarshalIndent(map[string]any{"v": v}, "", " ")
+			if err != nil {
+				t.Fatal(err)
+			}
+			check(t, "json indent", string(ji))
+			for hn, mk := range map[string]func(*bytes.Buffer) slog.Handler{
+				"json": func(b *bytes.Buffer) slog.Handler { return slog.NewJSONHandler(b, nil) },
+				"text": func(b *bytes.Buffer) slog.Handler { return slog.NewTextHandler(b, nil) },
+			} {
+				var buf bytes.Buffer
+				slog.New(mk(&buf)).Info("x", "v", v, slog.Any("any", v), slog.Group("g", "v", v))
+				check(t, "slog "+hn, buf.String())
+			}
+		})
+	}
+	// MarshalText on its own, for encoders that use it (map keys, text marshalers)
+	for _, v := range []encoding.TextMarshaler{sealed(access), pend, pendSnap} {
+		tb, err := v.MarshalText()
+		if err != nil {
+			t.Fatal(err)
+		}
+		check(t, "MarshalText", string(tb))
 	}
 }
 
@@ -410,5 +478,31 @@ func TestErrors(t *testing.T) {
 	}
 	if domain.CodeNotFound != "not_found" || domain.CodeInvalidAuthKind != "invalid_auth_kind" || domain.CodeInvalidState != "invalid_state" || domain.CodeExchangeFailed != "exchange_failed" || domain.CodeInvalidPAT != "invalid_pat" {
 		t.Error("codes")
+	}
+}
+
+func TestExpireSetsUpdatedAt(t *testing.T) {
+	c := oauthDefault()
+	c.Expire(at(1234))
+	if !c.UpdatedAt().Equal(at(1234)) || c.Status() != domain.StatusExpired {
+		t.Fatalf("got %v %v", c.UpdatedAt(), c.Status())
+	}
+}
+
+func TestMayRevokeAtIsCaseSensitive(t *testing.T) {
+	c := issued(sp("https://git.example.com/revoke"))
+	if c.MayRevokeAt(sp("https://git.example.com/Revoke")) || c.MayRevokeAt(sp("HTTPS://git.example.com/revoke")) {
+		t.Fatal("a URL differing only in case must be refused")
+	}
+}
+
+func TestErrorsKeepTheSlugAsWritten(t *testing.T) {
+	for _, slug := range []string{`a"b`, "a\nb", "a\u2028b", `a\b`, "é", "a\x00b"} {
+		if got, want := domain.ErrNotFound(slug).Error(), `server "`+slug+`" not found`; got != want {
+			t.Errorf("not_found: got %q want %q", got, want)
+		}
+		if got, want := domain.ErrInvalidAuthKind(slug, domain.WhatOAuth).Error(), `server "`+slug+`" does not use OAuth`; got != want {
+			t.Errorf("invalid_auth_kind: got %q want %q", got, want)
+		}
 	}
 }

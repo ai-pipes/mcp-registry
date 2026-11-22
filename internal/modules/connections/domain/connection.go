@@ -1,9 +1,11 @@
 package domain
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"time"
 )
 
@@ -221,15 +223,36 @@ func (c *Connection) RevokeURL() *string { return cloneStr(c.s.RevokeURL) }
 // Snapshot is the stored form, a deep copy.
 func (c *Connection) Snapshot() Snapshot { return copySnapshot(c.s) }
 
-// Format prints identifiers and state only, never token material.
-func (c *Connection) Format(f fmt.State, _ rune) {
-	_, _ = io.WriteString(f, fmt.Sprintf("Connection{user:%s server:%s kind:%s status:%s}", c.s.UserID, c.s.Server, c.s.Kind, c.s.Status))
+func (c Connection) safe() string { return c.s.safe() }
+
+func (s Snapshot) safe() string {
+	return fmt.Sprintf("Snapshot{user:%s server:%s kind:%s status:%s}", s.UserID, s.Server, s.Kind, s.Status)
 }
 
+// Format prints identifiers and state only, never token material. The value receiver covers a
+// Connection value, a pointer, slice elements and embedding structs alike.
+func (c Connection) Format(f fmt.State, _ rune) { _, _ = io.WriteString(f, c.safe()) }
+
+// LogValue is the slog form: identifiers and state only.
+func (c Connection) LogValue() slog.Value { return slog.StringValue(c.safe()) }
+
+// MarshalJSON writes identifiers and state only.
+func (c Connection) MarshalJSON() ([]byte, error) { return json.Marshal(c.safe()) }
+
+// MarshalText writes identifiers and state only.
+func (c Connection) MarshalText() ([]byte, error) { return []byte(c.safe()), nil }
+
 // Format prints identifiers and state only, never token material.
-func (s Snapshot) Format(f fmt.State, _ rune) {
-	_, _ = io.WriteString(f, fmt.Sprintf("Snapshot{user:%s server:%s kind:%s status:%s}", s.UserID, s.Server, s.Kind, s.Status))
-}
+func (s Snapshot) Format(f fmt.State, _ rune) { _, _ = io.WriteString(f, s.safe()) }
+
+// LogValue is the slog form: identifiers and state only.
+func (s Snapshot) LogValue() slog.Value { return slog.StringValue(s.safe()) }
+
+// MarshalJSON writes identifiers and state only.
+func (s Snapshot) MarshalJSON() ([]byte, error) { return json.Marshal(s.safe()) }
+
+// MarshalText writes identifiers and state only.
+func (s Snapshot) MarshalText() ([]byte, error) { return []byte(s.safe()), nil }
 
 // CredentialPlan decides what to do when the secret is needed. An expired connection stays expired
 // until the person connects again; a credential issued for another server configuration never

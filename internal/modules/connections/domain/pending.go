@@ -1,7 +1,9 @@
 package domain
 
 import (
+	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
 )
 
@@ -80,7 +82,34 @@ func (p PendingConnect) CanComplete(userID string, now time.Time) bool {
 // started with: when an admin changed the provider meanwhile, the code is not sent to the new one.
 func (p PendingConnect) StartedWithConfig(config string) bool { return p.issuedFor == config }
 
-// Format prints the server and expiry only, for every verb and for both the value and a pointer.
-func (p PendingConnect) Format(f fmt.State, _ rune) {
-	_, _ = fmt.Fprintf(f, "PendingConnect{server:%s expiresAt:%s}", p.server, p.expiresAt.Format(time.RFC3339))
+func (p PendingConnect) safe() string {
+	return fmt.Sprintf("PendingConnect{server:%s expiresAt:%s}", p.server, p.expiresAt.Format(time.RFC3339))
 }
+
+// Format prints the server and expiry only, for every verb, for the value and a pointer.
+func (p PendingConnect) Format(f fmt.State, _ rune) { _, _ = fmt.Fprint(f, p.safe()) }
+
+// LogValue is the slog form: server and expiry only.
+func (p PendingConnect) LogValue() slog.Value { return slog.StringValue(p.safe()) }
+
+// MarshalJSON writes server and expiry only.
+func (p PendingConnect) MarshalJSON() ([]byte, error) { return json.Marshal(p.safe()) }
+
+// MarshalText writes server and expiry only.
+func (p PendingConnect) MarshalText() ([]byte, error) { return []byte(p.safe()), nil }
+
+func (s PendingSnapshot) safe() string {
+	return fmt.Sprintf("PendingSnapshot{server:%s expiresAt:%s}", s.Server, s.ExpiresAt.Format(time.RFC3339))
+}
+
+// Format prints the server and expiry only: State and CodeVerifier are secrets.
+func (s PendingSnapshot) Format(f fmt.State, _ rune) { _, _ = fmt.Fprint(f, s.safe()) }
+
+// LogValue is the slog form: server and expiry only.
+func (s PendingSnapshot) LogValue() slog.Value { return slog.StringValue(s.safe()) }
+
+// MarshalJSON writes server and expiry only.
+func (s PendingSnapshot) MarshalJSON() ([]byte, error) { return json.Marshal(s.safe()) }
+
+// MarshalText writes server and expiry only.
+func (s PendingSnapshot) MarshalText() ([]byte, error) { return []byte(s.safe()), nil }
