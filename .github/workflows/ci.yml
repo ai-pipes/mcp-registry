@@ -112,9 +112,10 @@ jobs:
 
   # The code behind the build tag onnx (the local embedder: cgo and the pinned ONNX Runtime library)
   # is not part of make go-verify, which needs no native library. It is vetted, linted and tested
-  # here on both architectures: the unit tests compare token ids and vectors with files recorded
-  # from the reference, so they run on each CPU. make native-libs downloads the pinned libraries and
-  # checks their SHA-256 (make go-verify-onnx needs them too; a separate step shows a failed download on its own).
+  # here on both architectures: the unit tests compare token ids with files recorded from the
+  # reference and check the arithmetic; no vector is recorded (vectors depend on the CPU), vector
+  # parity is judged by the compat-go job (make go-test-onnx-parity and TestSearchStoredVectors).
+  # make native-libs downloads the pinned libraries and checks their SHA-256 (make go-verify-onnx needs them too; a separate step shows a failed download on its own).
   go-onnx:
     name: go-onnx (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}

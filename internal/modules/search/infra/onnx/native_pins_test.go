@@ -94,3 +94,27 @@ func TestNoPinIsRepeatedOutsidePinsEnv(t *testing.T) {
 		t.Error("the Dockerfile does not use fetch.sh")
 	}
 }
+
+// The parity target runs the Go tests in the same golang image the Dockerfile builds with: the
+// Makefile names it by digest, and the digest must be the Dockerfile's.
+func TestParityTargetUsesTheDockerfilesGolangDigest(t *testing.T) {
+	re := regexp.MustCompile(`golang:[0-9.]+-bookworm@sha256:[0-9a-f]{64}`)
+	docker := re.FindAllString(repoFile(t, "Dockerfile"), -1)
+	if len(docker) == 0 {
+		t.Fatal("the Dockerfile names no pinned golang image")
+	}
+	for _, d := range docker {
+		if d != docker[0] {
+			t.Fatalf("the Dockerfile pins two golang images: %s and %s", docker[0], d)
+		}
+	}
+	mk := re.FindAllString(repoFile(t, "Makefile"), -1)
+	if len(mk) == 0 {
+		t.Fatal("the Makefile does not pin the golang image of the parity target by digest")
+	}
+	for _, m := range mk {
+		if m != docker[0] {
+			t.Errorf("the Makefile pins %s, the Dockerfile %s", m, docker[0])
+		}
+	}
+}

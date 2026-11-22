@@ -327,17 +327,30 @@ PARITY_DIR := $(abspath $(NATIVE_ROOT))/parity
 PARITY_LINUX := linux-$(shell go env GOARCH)
 ONNX_GEN := /repo/internal/modules/search/infra/onnx/testdata
 
+# The parity run is only worth something when the two tests really ran: ONNX_TEST_PARITY_REQUIRED=1
+# makes them fail instead of skip when an input is missing, and the recipe fails unless the log
+# reports both as passed. The first container runs as the caller's user (on a GitHub-hosted runner
+# that is not uid 1000, `node` of the image, and could not write into the output directory; HOME is
+# a writable /tmp for node). The second one runs as root on purpose: it only reads its bind mounts
+# (all :ro) and writes only to its own /tmp (GOCACHE), so no user id can make it fail. The golang
+# image is the Dockerfile's, by digest (a test in infra/onnx keeps the two equal).
+PARITY_GO_IMAGE := golang:1.27-bookworm@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea
+
 go-test-onnx-parity:
 	@docker image inspect mcp-registry:compat-ts >/dev/null 2>&1 || { echo "go-test-onnx-parity: the reference image mcp-registry:compat-ts is missing; build it with: make compat-image-ts"; exit 1; }
 	$(MAKE) native-libs NATIVE_PLATFORM=$(PARITY_LINUX)
 	$(MAKE) native-model
 	mkdir -p $(PARITY_DIR)
-	docker run --rm --network none -v "$(CURDIR)":/repo:ro -v "$(PARITY_DIR)":/out mcp-registry:compat-ts \
+	rm -f $(PARITY_DIR)/node-vectors.json $(PARITY_DIR)/go-test.log
+	docker run --rm --network none --user "$$(id -u):$$(id -g)" -e HOME=/tmp -v "$(CURDIR)":/repo:ro -v "$(PARITY_DIR)":/out mcp-registry:compat-ts \
 		node $(ONNX_GEN)/gen/vectors.mjs /app/apps/server/node_modules/@huggingface/transformers/dist/transformers.node.mjs \
 		/app/models $(ONNX_GEN)/reference.json /out/node-vectors.json
 	docker run --rm --network none -v "$(CURDIR)":/src:ro -v "$$(go env GOMODCACHE)":/gomod:ro -v "$(PARITY_DIR)":/out:ro \
 		-e GOMODCACHE=/gomod -e GOPROXY=off -e GOTOOLCHAIN=local -e GOCACHE=/tmp/gocache -e GOFLAGS=-buildvcs=false \
 		-e CGO_ENABLED=1 -e CGO_LDFLAGS=-L/src/$(NATIVE_ROOT)/$(PARITY_LINUX) \
 		-e ONNX_TEST_LIB=/src/$(NATIVE_ROOT)/$(PARITY_LINUX)/libonnxruntime.so.1 -e ONNX_TEST_MODEL_DIR=/src/$(NATIVE_ROOT)/models \
-		-e ONNX_TEST_REFERENCE_VECTORS=/out/node-vectors.json -w /src golang:1.27-bookworm \
-		go test -tags onnx -count=1 -v -run 'TestTokenIDsMatchTheReference|TestVectorsMatchTheReferenceBitForBit' ./internal/modules/search/infra/onnx/
+		-e ONNX_TEST_REFERENCE_VECTORS=/out/node-vectors.json -e ONNX_TEST_PARITY_REQUIRED=1 -w /src $(PARITY_GO_IMAGE) \
+		go test -tags onnx -count=1 -v -run 'TestTokenIDsMatchTheReference|TestVectorsMatchTheReferenceBitForBit' ./internal/modules/search/infra/onnx/ \
+		> $(PARITY_DIR)/go-test.log 2>&1; rc=$$?; cat $(PARITY_DIR)/go-test.log; [ $$rc -eq 0 ] || exit $$rc
+	@for t in TestTokenIDsMatchTheReference TestVectorsMatchTheReferenceBitForBit; do \
+		grep -q -- "--- PASS: $$t " $(PARITY_DIR)/go-test.log || { echo "go-test-onnx-parity: $$t did not report PASS"; exit 1; }; done

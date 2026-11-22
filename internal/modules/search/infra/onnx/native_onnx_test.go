@@ -24,7 +24,8 @@ func nativeOptions(t testing.TB) Options {
 	t.Helper()
 	lib, dir := os.Getenv("ONNX_TEST_LIB"), os.Getenv("ONNX_TEST_MODEL_DIR")
 	if lib == "" || dir == "" {
-		t.Skip("set ONNX_TEST_LIB and ONNX_TEST_MODEL_DIR (make go-test-onnx does)")
+		missingInput(t, "set ONNX_TEST_LIB and ONNX_TEST_MODEL_DIR (make go-test-onnx does)", os.Getenv)
+		return Options{}
 	}
 	return Options{ModelDir: dir, LibraryPath: lib}
 }
@@ -89,7 +90,8 @@ func head(ids []int64) []int64 {
 func TestVectorsMatchTheReferenceBitForBit(t *testing.T) {
 	path := os.Getenv("ONNX_TEST_REFERENCE_VECTORS")
 	if path == "" {
-		t.Skip("set ONNX_TEST_REFERENCE_VECTORS to a file made by testdata/gen/vectors.mjs on this machine")
+		missingInput(t, "set ONNX_TEST_REFERENCE_VECTORS to a file made by testdata/gen/vectors.mjs on this machine", os.Getenv)
+		return
 	}
 	e := newLocal(t)
 	ref := loadReference(t)
