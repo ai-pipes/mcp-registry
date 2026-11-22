@@ -270,8 +270,9 @@ func TestTheServerModuleListHasTheCatalog(t *testing.T) {
 	if !slices.Contains(names, "catalog-sync") || !slices.Contains(names, "session-retention") {
 		t.Errorf("jobs: %v", names)
 	}
-	if len(asm.handlers) != 0 {
-		t.Errorf("handlers %v: the outbox worker must stay off until milestone 4", sortedKeys(asm.handlers))
+	// Since milestone 4 the search module handles every catalog event, so the worker starts.
+	if got := sortedKeys(asm.handlers); !slices.Equal(got, sortedCopy(catalog.EventTypes())) {
+		t.Errorf("handlers %v, want one for each of %v", got, catalog.EventTypes())
 	}
 }
 
@@ -283,4 +284,10 @@ func TestCatalogWiringRefusesToBeBuiltWithoutCredentials(t *testing.T) {
 		}
 	}()
 	catalogWiringOver(e.c.rt, identityWiring{}, catinfraRepos(memServers{}), noUpstream{})
+}
+
+func sortedCopy(in []string) []string {
+	out := slices.Clone(in)
+	slices.Sort(out)
+	return out
 }

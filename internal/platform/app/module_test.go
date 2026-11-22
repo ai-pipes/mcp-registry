@@ -2,12 +2,14 @@ package app
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -23,9 +25,9 @@ func say(s string) http.Handler {
 
 // Building the modules makes no request (the CLI builds them for every command): a Runtime
 // without a pool is enough.
-func TestTheDefaultModuleListIsIdentityThenThePlatformRoutesThenTheCatalog(t *testing.T) {
+func TestTheDefaultModuleListIsIdentityThenThePlatformRoutesThenTheCatalogThenSearch(t *testing.T) {
 	got := modules(Runtime{Clock: kernel.SystemClock{}, Logger: discardLogger(), Version: "1.2.3"})
-	if len(got) != 3 {
+	if len(got) != 4 {
 		t.Fatalf("modules() = %d entries", len(got))
 	}
 	paths := func(m Module) (out []string) {
@@ -45,6 +47,11 @@ func TestTheDefaultModuleListIsIdentityThenThePlatformRoutesThenTheCatalog(t *te
 	}
 	if len(got[2].Jobs) != 1 || got[2].Jobs[0].Name != "catalog-sync" {
 		t.Errorf("catalog job: %+v", got[2].Jobs)
+	}
+	if s := got[3]; len(s.Routes) != 0 || len(s.Handlers) != len(catalog.EventTypes()) || len(s.Sweeps) != 1 ||
+		s.Sweeps[0].Every != 5*time.Minute || len(s.Commands) != 1 || s.Commands[0].Name != "reindex" ||
+		s.BeforeServing == nil || len(s.Closers) != 1 {
+		t.Errorf("search module: %+v", s)
 	}
 	if len(got[0].Jobs) != 1 || got[0].Jobs[0].Every != 24*time.Hour || got[0].FirstStart == nil {
 		t.Errorf("identity job or first start: %+v", got[0])
@@ -227,5 +234,99 @@ func TestTheDefaultModulesAnnounceTheCatalogEventTypes(t *testing.T) {
 	got := modules(Runtime{Clock: kernel.SystemClock{}, Logger: discardLogger(), Version: "1.2.3"})
 	if !slices.Equal(got[2].Emits, catalog.EventTypes()) {
 		t.Fatalf("catalog Emits = %v, want %v", got[2].Emits, catalog.EventTypes())
+	}
+}
+
+func TestAssembleCollectsTheHooksBeforeServingAndTheClosers(t *testing.T) {
+	var order []string
+	mark := func(s string) func(context.Context) { return func(context.Context) { order = append(order, s) } }
+	closer := func(string) func(context.Context) error { return func(context.Context) error { return nil } }
+	a, err := assemble([]Module{
+		{BeforeServing: mark("one"), Closers: []func(context.Context) error{closer("a")}},
+		{},
+		{BeforeServing: mark("two"), Closers: []func(context.Context) error{closer("b"), closer("c")}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range a.beforeServing {
+		f(context.Background())
+	}
+	if !slices.Equal(order, []string{"one", "two"}) || len(a.closers) != 3 {
+		t.Fatalf("order %v, %d closers", order, len(a.closers))
+	}
+}
+
+// The embedder (a closer) must outlive the outbox worker: a worker still indexing when the embedder
+// closes would get ErrClosed with a live context and clear existing vectors.
+func TestClosersRunOnlyAfterEveryStopHasReturned(t *testing.T) {
+	var mu sync.Mutex
+	var events []string
+	note := func(s string) {
+		mu.Lock()
+		defer mu.Unlock()
+		events = append(events, s)
+	}
+	closerRan := make(chan struct{})
+	// A stop that takes its time: it gives a closer started too early the chance to run first.
+	slowWorker := func(context.Context) error {
+		select {
+		case <-closerRan:
+		case <-time.After(200 * time.Millisecond):
+		}
+		note("worker stopped")
+		return nil
+	}
+	server := func(context.Context) error { note("server stopped"); return nil }
+	closer := func(context.Context) error { note("embedder closed"); close(closerRan); return nil }
+	if err := stopAllThenClose(context.Background(), []func(context.Context) error{slowWorker, server}, []func(context.Context) error{closer}); err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 3 || events[2] != "embedder closed" {
+		t.Fatalf("events %v: the closer ran before a stop returned", events)
+	}
+}
+
+func TestClosersDoNotRunWhenAStopFailed(t *testing.T) {
+	failed := errors.New("did not stop in time")
+	closed := false
+	err := stopAllThenClose(context.Background(),
+		[]func(context.Context) error{func(context.Context) error { return failed }},
+		[]func(context.Context) error{func(context.Context) error { closed = true; return nil }})
+	if !errors.Is(err, failed) || closed {
+		t.Fatalf("err %v, closed %v: something may still use what the closer releases", err, closed)
+	}
+}
+
+func TestACloserErrorIsReportedAndTheOthersStillRun(t *testing.T) {
+	bad := errors.New("close failed")
+	ran := false
+	err := stopAllThenClose(context.Background(), nil, []func(context.Context) error{
+		func(context.Context) error { return bad },
+		func(context.Context) error { ran = true; return nil },
+	})
+	if !errors.Is(err, bad) || !ran {
+		t.Fatalf("err %v, second closer ran %v", err, ran)
+	}
+}
+
+// The default list must assemble: the search module's handlers cover every event type the catalog
+// emits (an incomplete table is a start-up error), and the sweep and the command are registered.
+func TestTheDefaultModuleListAssembles(t *testing.T) {
+	a, err := assemble(modules(Runtime{Clock: kernel.SystemClock{}, Logger: discardLogger(), Version: "1.2.3"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := sortedKeys(a.handlers); !slices.Equal(got, sortedCopy(catalog.EventTypes())) {
+		t.Errorf("handlers %v", got)
+	}
+	if a.sweep == nil || a.sweep.Every != 5*time.Minute {
+		t.Errorf("sweep %+v", a.sweep)
+	}
+	if _, ok := a.commands["reindex"]; !ok {
+		t.Error("reindex is not registered")
+	}
+	if len(a.beforeServing) != 1 || len(a.closers) != 1 {
+		t.Errorf("beforeServing %d, closers %d", len(a.beforeServing), len(a.closers))
 	}
 }

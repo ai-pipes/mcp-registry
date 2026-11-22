@@ -42,6 +42,13 @@ type realServer struct {
 
 func startReal(t *testing.T, url string, key []byte, edit func(*config.Config)) *realServer {
 	t.Helper()
+	return startRealWith(t, url, key, edit, modules)
+}
+
+// startRealWith is startReal over the module list that build returns for the runtime (a test
+// that runs without a module, or with another embedder, starts from modules(rt)).
+func startRealWith(t *testing.T, url string, key []byte, edit func(*config.Config), build func(Runtime) []Module) *realServer {
+	t.Helper()
 	cfg := baseConfig(url, key)
 	cfg.OIDCLoginGroup, cfg.OIDCAdminGroup = "mcp-users", "mcp-admins" // the defaults of config.Load
 	if edit != nil {
@@ -51,7 +58,7 @@ func startReal(t *testing.T, url string, key []byte, edit func(*config.Config)) 
 	rs.instance = startInstance(t, cfg, func(o *Options) {
 		o.modules = func(rt Runtime) []Module {
 			rs.rt = rt
-			return modules(rt)
+			return build(rt)
 		}
 	})
 	rs.deps = newIdentityWiring(rs.rt).deps

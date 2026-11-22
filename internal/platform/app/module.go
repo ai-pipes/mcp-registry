@@ -88,7 +88,20 @@ type Module struct {
 	// composition only recovers a panic (an error record with the call frames, never the value) and
 	// the start goes on.
 	FirstStart func(ctx context.Context)
-	Commands   []CLICommand
+	// BeforeServing runs after FirstStart and before the outbox worker starts and the listener
+	// accepts connections: slow preparation a module wants finished before the first request (the
+	// search module loads its embedding model here, so the first search equals the settled one and
+	// /healthz never waits for it). It has no error: a failure must not stop the start, so the
+	// module logs its own record. A panic is recovered like FirstStart's. The server only; the CLI
+	// never runs it.
+	BeforeServing func(ctx context.Context)
+	// Closers release what the module holds (the embedder's native session). The server runs them
+	// at the very end of the shutdown, one after another, only after the HTTP server, the outbox
+	// worker and the scheduler have stopped (all of them may still use what a closer releases),
+	// and only when those stopped within the limit; the CLI runs them when the command returned.
+	// They must be safe to call on something that never loaded.
+	Closers  []func(ctx context.Context) error
+	Commands []CLICommand
 }
 
 // Runtime is what the per-module wiring inside internal/platform/app reads plain values from
@@ -126,11 +139,14 @@ func newRuntime(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, vers
 
 // modules is the list of modules, in the order their routes, prefixes and jobs are merged. The
 // server and the CLI build it from the same Runtime. Identity is first; the platform's own routes
-// (audit, version) follow, since they use identity's session guards; then the catalog. The other
-// modules join in later milestones.
+// (audit, version) follow, since they use identity's session guards; then the catalog, then search
+// (it reads the catalog through the catalog's public API). The other modules join in later
+// milestones. Tests pick modules by name or position from the end of the list: append, never
+// insert.
 func modules(rt Runtime) []Module {
 	id := newIdentityWiring(rt)
-	return []Module{id.module(), platformModule(rt, id), newCatalogWiring(rt, id).module()}
+	cat := newCatalogWiring(rt, id)
+	return []Module{id.module(), platformModule(rt, id), cat.module(), newSearchWiring(rt, cat).module()}
 }
 
 // platformModule is the platform's own REST routes, guarded with identity's session checks:
@@ -167,7 +183,10 @@ type assembled struct {
 	handlers   map[string]outbox.Handler
 	sweep      *outbox.Sweep
 	firstStart []func(ctx context.Context)
-	commands   map[string]CLICommand
+	// beforeServing and closers: see Module.
+	beforeServing []func(ctx context.Context)
+	closers       []func(ctx context.Context) error
+	commands      map[string]CLICommand
 }
 
 // assemble merges the modules in order. A second registration of an outbox event type or of a
@@ -191,6 +210,10 @@ func assemble(mods []Module) (assembled, error) {
 		if m.FirstStart != nil {
 			a.firstStart = append(a.firstStart, m.FirstStart)
 		}
+		if m.BeforeServing != nil {
+			a.beforeServing = append(a.beforeServing, m.BeforeServing)
+		}
+		a.closers = append(a.closers, m.Closers...)
 		for _, c := range m.Commands {
 			if _, dup := a.commands[c.Name]; dup {
 				return assembled{}, fmt.Errorf("command %q is registered by two modules", c.Name)
