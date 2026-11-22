@@ -124,6 +124,10 @@ func New(d Deps) (*Service, error) {
 	return &Service{d: d}, nil
 }
 
+// Deps are the service's dependencies, completed by New (the one single flight is set). The REST
+// routes are built from them, so that every path of the process shares that one flight.
+func (s *Service) Deps() Deps { return s.d }
+
 // ResolveCredential is the person's upstream secret for a server: the OAuth access token or the
 // PAT, raw, refreshed ahead of expiry or when ForceRefresh is set (the gateway sets it after an
 // upstream 401). A secret issued for another configuration of the server is never handed out: the

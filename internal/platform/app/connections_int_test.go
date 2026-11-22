@@ -837,3 +837,19 @@ func TestAResolvedCredentialIsBoundToTheConfigurationTheSyncWillUse(t *testing.T
 		t.Fatalf("B saw %q", h)
 	}
 }
+
+// A NUL in the state reaches no query: Postgres would refuse such a text, so the callback answers
+// invalid_state itself (the fakes cannot show the difference, only the real store can).
+func TestACallbackStateWithANULIsInvalidStateAgainstTheRealStore(t *testing.T) {
+	url := pgtest.StartURL(t)
+	rs := startReal(t, url, newKey(t), catalogConfig)
+	e := &conEnv{t: t, rs: rs, url: url}
+	alice := e.member("alice")
+	status, loc := e.noRedirect("/api/connections/callback?code=x&state=%00", alice.cookie)
+	if status != http.StatusFound || loc != "/connections?error=invalid_state" {
+		t.Fatalf("%d %q", status, loc)
+	}
+	if n := len(rs.logs.find(t, "connections: connect callback failed")); n != 0 {
+		t.Fatalf("%d unexpected-error records", n)
+	}
+}

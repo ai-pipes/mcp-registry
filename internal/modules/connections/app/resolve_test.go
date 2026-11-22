@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -237,8 +238,7 @@ func TestResolveTwoProcessesTheRowLockLetsOneRefresh(t *testing.T) {
 	gate := make(chan struct{})
 	h.oauth.gate = gate
 	h.oauth.entered = make(chan string, 4)
-	configs := make(chan struct{}, 2)
-	h.dir.onConfig = func() { configs <- struct{}{} }
+	h.j.reset()
 	replica := h.replica()
 
 	var wg sync.WaitGroup
@@ -251,9 +251,15 @@ func TestResolveTwoProcessesTheRowLockLetsOneRefresh(t *testing.T) {
 			results[i], errs[i] = app.ResolveCredential(ctx, d, app.ResolveQuery{UserID: "alice", Server: "gitea"})
 		}()
 	}
-	<-configs
-	<-configs
+	// Both read the stored row before the first one (held in the provider call) writes. A caller
+	// may read the configuration more than once, so wait on the row reads, not on those.
 	<-h.oauth.entered
+	for deadline := time.Now().Add(10 * time.Second); countOf(h.j.all(), "store.get") < 2; {
+		if time.Now().After(deadline) {
+			t.Fatal("the second caller never read the row")
+		}
+		runtime.Gosched()
+	}
 	close(gate)
 	wg.Wait()
 	wantOK(t, results[0], errs[0], "A2")

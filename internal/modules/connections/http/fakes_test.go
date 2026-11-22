@@ -239,9 +239,12 @@ func (*oauth) AuthorizeURL(_ catalog.OAuthClientConfig, in app.AuthorizeInput) (
 	return "https://idp.example.com/authorize?state=" + in.State + "&code_challenge=" + in.CodeChallenge, nil
 }
 
-func (o *oauth) ExchangeCode(_ context.Context, _ catalog.OAuthClientConfig, _ app.ClientSecret, in app.ExchangeInput) (app.TokenSet, error) {
+func (o *oauth) ExchangeCode(ctx context.Context, _ catalog.OAuthClientConfig, _ app.ClientSecret, in app.ExchangeInput) (app.TokenSet, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	if ctx.Err() != nil { // a request that ended must not stop the exchange of a consumed state
+		return app.TokenSet{}, ctx.Err()
+	}
 	o.codes = append(o.codes, in.Code)
 	if o.exchangeErr != nil {
 		return app.TokenSet{}, o.exchangeErr

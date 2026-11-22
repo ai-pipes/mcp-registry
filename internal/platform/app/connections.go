@@ -54,7 +54,8 @@ func connectionsWiringOver(rt Runtime, id identityWiring, cat catalogWiring, sto
 	}
 	// Late binding: the catalog was built first, with an adapter that had no service yet.
 	cat.creds.bind(svc)
-	return connectionsWiring{rt: rt, id: id, deps: deps, service: svc}
+	// The routes get the service's completed dependencies (the one single flight), not the raw ones.
+	return connectionsWiring{rt: rt, id: id, deps: svc.Deps(), service: svc}
 }
 
 // module is what connections adds to the server: its routes (the session guard is a prefix

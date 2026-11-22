@@ -163,6 +163,14 @@ func TestConnectionsWiringFacts(t *testing.T) {
 			t.Errorf("%s is nil", name)
 		}
 	}
+	// One service: the routes are built from its completed dependencies (the one single flight) and
+	// the catalog's credentials are bound to that same instance.
+	if d.Flights == nil || d.Flights != e.con.service.Deps().Flights {
+		t.Error("the routes' dependencies do not carry the service's single flight")
+	}
+	if e.c.creds.bound() != credentialResolver(e.con.service) {
+		t.Error("the catalog's credentials are bound to another service instance")
+	}
 	m := e.con.module()
 	if len(m.Jobs) != 0 || len(m.Sweeps) != 0 || len(m.Emits) != 0 || len(m.Handlers) != 0 || m.FirstStart != nil || len(m.Commands) != 0 {
 		t.Errorf("connections has no job, sweep, event, handler, first start or command: %+v", m)

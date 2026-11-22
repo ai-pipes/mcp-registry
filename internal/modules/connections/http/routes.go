@@ -216,10 +216,13 @@ func (h *handlers) callback(w http.ResponseWriter, r *http.Request) {
 		toPage(w, "error="+errUnauthenticated)
 		return
 	}
-	q := r.URL.Query()
+	// The query is read as the reference reads it (queryParam), not with net/url: a code with a raw
+	// ; or an invalid escape must connect as it does there.
+	rawState, _ := queryParam(r.URL.RawQuery, "state")
+	rawCode, _ := queryParam(r.URL.RawQuery, "code")
 	var f httpx.Fields
-	state := f.String("state", q.Get("state"), 1, 256)
-	code := f.String("code", q.Get("code"), 1, 4096)
+	state := f.String("state", rawState, 1, 256)
+	code := f.String("code", rawCode, 1, 4096)
 	// No code: the person declined at the provider, or the answer is broken.
 	if f.Err() != nil {
 		toPage(w, "error="+errDenied)
