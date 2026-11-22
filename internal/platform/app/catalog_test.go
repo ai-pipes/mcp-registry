@@ -177,24 +177,6 @@ func TestCatalogWiringFacts(t *testing.T) {
 	}
 }
 
-// Until milestone 5: personal servers have no connection; the admin check is the real one.
-func TestPersonalSyncCredentialsStub(t *testing.T) {
-	e := newWiringEnv(t)
-	c := e.c.deps.Credentials
-	for _, uid := range []string{"admin-1", "member-1"} {
-		got, err := c.PersonalSecret(context.Background(), catalog.ServerCallTarget{}, uid)
-		if err != nil || got.Secret != "" || got.Failure != "needs_connection" {
-			t.Errorf("PersonalSecret(%s) = %+v, %v", uid, got, err)
-		}
-	}
-	for uid, want := range map[string]bool{"admin-1": true, "member-1": false, "nobody": false} {
-		got, err := c.IsActiveAdmin(context.Background(), uid)
-		if err != nil || got != want {
-			t.Errorf("IsActiveAdmin(%s) = %v, %v; want %v", uid, got, err, want)
-		}
-	}
-}
-
 type failingServers struct{ memServers }
 
 func (failingServers) List(context.Context) ([]catapp.ServerListing, error) {

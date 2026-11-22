@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ai-pipes/mcp-registry/internal/kernel"
 	"github.com/ai-pipes/mcp-registry/internal/modules/catalog"
 	"github.com/ai-pipes/mcp-registry/internal/platform/httpx"
 	"github.com/ai-pipes/mcp-registry/internal/platform/outbox"
@@ -25,9 +24,9 @@ func say(s string) http.Handler {
 
 // Building the modules makes no request (the CLI builds them for every command): a Runtime
 // without a pool is enough.
-func TestTheDefaultModuleListIsIdentityThenThePlatformRoutesThenTheCatalogThenSearch(t *testing.T) {
-	got := modules(Runtime{Clock: kernel.SystemClock{}, Logger: discardLogger(), Version: "1.2.3"})
-	if len(got) != 4 {
+func TestTheDefaultModuleListIsIdentityThenThePlatformRoutesThenTheCatalogThenSearchThenConnections(t *testing.T) {
+	got := modules(bareRuntime(t))
+	if len(got) != 5 {
 		t.Fatalf("modules() = %d entries", len(got))
 	}
 	paths := func(m Module) (out []string) {
@@ -231,7 +230,7 @@ func TestAssembleComposesTheSweepsOfAllModules(t *testing.T) {
 }
 
 func TestTheDefaultModulesAnnounceTheCatalogEventTypes(t *testing.T) {
-	got := modules(Runtime{Clock: kernel.SystemClock{}, Logger: discardLogger(), Version: "1.2.3"})
+	got := modules(bareRuntime(t))
 	if !slices.Equal(got[2].Emits, catalog.EventTypes()) {
 		t.Fatalf("catalog Emits = %v, want %v", got[2].Emits, catalog.EventTypes())
 	}
@@ -313,7 +312,7 @@ func TestACloserErrorIsReportedAndTheOthersStillRun(t *testing.T) {
 // The default list must assemble: the search module's handlers cover every event type the catalog
 // emits (an incomplete table is a start-up error), and the sweep and the command are registered.
 func TestTheDefaultModuleListAssembles(t *testing.T) {
-	a, err := assemble(modules(Runtime{Clock: kernel.SystemClock{}, Logger: discardLogger(), Version: "1.2.3"}))
+	a, err := assemble(modules(bareRuntime(t)))
 	if err != nil {
 		t.Fatal(err)
 	}

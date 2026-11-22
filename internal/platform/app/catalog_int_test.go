@@ -291,7 +291,7 @@ func TestCatalogOnTheComposedServer(t *testing.T) {
 		t.Fatalf("sync after recovery: %d %s", status, raw)
 	}
 
-	t.Run("a personal-auth server needs a connection until milestone 5", func(t *testing.T) {
+	t.Run("a personal-auth server nobody connected needs a connection", func(t *testing.T) {
 		before := up.listed.Load()
 		status, v, raw := admin.do("POST", "/api/servers", serverBody("personal", up.url(), map[string]any{"kind": "pat_user", "header": "Authorization", "template": "Bearer {secret}"}))
 		if status != 201 || v.(map[string]any)["lastSyncError"] != "An administrator needs to connect this server" {
