@@ -40,7 +40,8 @@ type SweepResult struct {
 }
 
 // IndexMissingEmbeddings is the recovery sweep: it re-indexes up to Limit documents stored
-// without a vector (an embedder outage outlasted the outbox retries), in the index's order, one
+// without a vector, or marked after a failed re-embedding that kept their older vector (an
+// embedder outage outlasted the outbox retries), in the index's order, one
 // after the other. It does nothing until the embedder is ready, and logs nothing.
 //
 // A failure is an isolated poison document only if a later document succeeds; then it is marked
