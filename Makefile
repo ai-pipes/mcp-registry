@@ -3,7 +3,7 @@ GO_ARCH_LINT := github.com/fe3dback/go-arch-lint@v1.19.2
 GOFUMPT := mvdan.cc/gofumpt@v0.12.0
 VERSION := $(shell node -p "require('./apps/server/package.json').version")
 
-.PHONY: compat compat-selfcheck compat-schemas compat-image-ts compat-image-go compat-go e2e-flows go-lint go-lint-new go-fmt-check go-arch-lint go-verify go-test-int go-build print-go-arch-lint print-golangci-lint
+.PHONY: compat compat-selfcheck compat-schemas compat-image-ts compat-image-go compat-go e2e-flows e2e-flows-go go-lint go-lint-new go-fmt-check go-arch-lint go-verify go-test-int go-build print-go-arch-lint print-golangci-lint
 
 go-lint:
 	go run $(GOLANGCI_LINT) run
@@ -78,17 +78,14 @@ compat-image-go:
 # go test inside single quotes, so it must not contain one.
 #
 # Milestone 2 (identity) added the scenarios that need people, sign-in, sessions and tokens but no
-# /mcp and no catalog. TestCLICreateUser is in the list with three skipped steps (below), and the
-# role flags and the effects of disabling a person, which those skipped steps and the /mcp
-# subtests of TestIdentityNoOIDC also hold, are judged by TestCLICreateUserRoleFlags and
-# TestIdentityDisablingAPerson, which need identity alone. Left out because they cannot run at all yet:
-#   - TestPlatformBearerNeverOpensTheWebAPI: its loop in the test body asks /api/servers and
-#     /api/catalog (milestone 3) and /mcp (milestone 6).
+# /mcp and no catalog. Milestone 3 (catalog) added the scenarios of the catalog REST and of the
+# commands create-server and sync, and TestPlatformBearerNeverOpensTheWebAPI; the three steps of
+# TestCLICreateUser that listed /api/servers run again. Left out because they cannot run at all yet:
 #   - TestConfigNetworkAndRetention, TestConfigSecretsFromFiles: their cleanup demands that the
 #     scenario's MCP ledger saw an answer (milestone 6), whatever subtests are skipped.
 #   - TestUpgradeKeepsEverything, TestGatewayAuditAPI, TestConfigModelDirMissing and every
-#     catalog, connections, search, gateway, MCP and operator-CLI scenario: servers, /mcp, or the
-#     commands create-server, sync, reindex, rotate-secrets-key, reset-key-check (milestones 3 to 7).
+#     connections, search, gateway, MCP scenario and the operator commands reindex,
+#     rotate-secrets-key, reset-key-check (milestones 4 to 7).
 COMPAT_GO_TESTS := TestConfigRefused TestPlatformStartsOnReferenceDatabase TestPlatformReverseHandOver \
 	TestPlatformWithoutPeople TestPlatformMigrationsAndKeyCheck TestPlatformStaticFilesAndSPA \
 	TestIdentityOIDC TestIdentityOIDCFailedCallbackAudit TestIdentityOIDCProviderDownAtStart \
@@ -96,7 +93,9 @@ COMPAT_GO_TESTS := TestConfigRefused TestPlatformStartsOnReferenceDatabase TestP
 	TestCLIVersion TestCLICreateUser TestCLICreateUserRoleFlags TestCLICreateToken TestCLILoginLink TestCLILoginLinkWithOIDC \
 	TestFirstStartAnnouncement TestFirstStartAnnouncementNeedsAnEmptyDatabaseAndNoOIDC \
 	TestConfigEmptyMeansUnset TestPlatformMethodsWithoutOIDC TestPlatformCSRF TestPlatformHealthz \
-	TestPlatformAccessLog TestPlatformBodyLimit TestPlatformSecurityHeaders
+	TestPlatformAccessLog TestPlatformBodyLimit TestPlatformSecurityHeaders \
+	TestCatalogOptimisticConcurrency TestCatalogValidation TestCatalogServers TestCLIServers \
+	TestPlatformBearerNeverOpensTheWebAPI
 
 # Subtests of the scenarios above that need a later milestone, as a go test -skip expression: one
 # entry per line below, joined with `|` (slash-separated regular expressions per level; spaces of a
@@ -127,12 +126,16 @@ COMPAT_GO_TESTS := TestConfigRefused TestPlatformStartsOnReferenceDatabase TestP
 #     says; a valid token still works": failed token checks on /mcp.
 #   - TestCLICreateToken, "the token opens /mcp; a changed token does not" and "a second token for
 #     the same person is another token that works too".
-#   milestone 3 (the catalog: GET /api/servers)
-#   - TestCLICreateUser, "creates a member who can sign in; ..." and "an existing member run again
-#     with --admin is promoted, ...": both end with a request to /api/servers as a member (403) or
-#     an admin (200), and their remaining assertions (audit rows, the create-user-keeps-role
-#     branch) sit after it. "is idempotent by sub: ..." reuses the person step 1 creates, so it is
-#     skipped with it. The steps that remain judge the golden texts of the other runs.
+#   milestone 6 also (the catalog scenarios of milestone 3 reach it)
+#   - TestCatalogServers, "admin routes refuse members before the body is read": its route table
+#     includes GET /api/calls (the call log); "upstream calls": a tool call through /mcp.
+#   - TestPlatformBearerNeverOpensTheWebAPI, "the same token opens /mcp (control)" and "a bad token
+#     on /mcp is 401 with a challenge"; the loop over /api paths in its body runs.
+#   milestone 5 (connections: PUT /api/connections/<slug>/pat)
+#   - TestCLIServers, "sync of a personal-auth server uses the connection of the administrator it
+#     names".
+#   milestone 4 (search: the index and its command)
+#   - TestCLIServers, "reindex rebuilds the search index and prints the number of indexed tools".
 COMPAT_GO_SKIP_ENTRIES := \
 	^TestPlatformMigrationsAndKeyCheck$$/^the_old_key_alone:_healthy,_one_warning;_rotate-secrets-key_re-seals_the_check$$ \
 	^TestPlatformStaticFilesAndSPA$$/^$$/^api,_$$/^mcp_and_$$/^healthz_are_never_the_shell$$ \
@@ -148,9 +151,12 @@ COMPAT_GO_SKIP_ENTRIES := \
 	^TestIdentityDefaultRateLimits$$/^the_31st_failed_token_check_is_429 \
 	^TestCLICreateToken$$/^the_token_opens_ \
 	^TestCLICreateToken$$/^a_second_token_for_the_same_person_is_another_token_that_works_too$$ \
-	^TestCLICreateUser$$/^creates_a_member_who_can_sign_in \
-	^TestCLICreateUser$$/^is_idempotent_by_sub: \
-	^TestCLICreateUser$$/^an_existing_member_run_again_with_--admin_is_promoted
+	^TestCatalogServers$$/^admin_routes_refuse_members_before_the_body_is_read$$ \
+	^TestCatalogServers$$/^upstream_calls$$ \
+	^TestPlatformBearerNeverOpensTheWebAPI$$/^the_same_token_opens_ \
+	^TestPlatformBearerNeverOpensTheWebAPI$$/^a_bad_token_on_ \
+	^TestCLIServers$$/^sync_of_a_personal-auth_server_uses_ \
+	^TestCLIServers$$/^reindex_rebuilds_
 
 space := $(subst ,, )
 COMPAT_GO_SKIP := $(subst $(space),|,$(strip $(COMPAT_GO_SKIP_ENTRIES)))
@@ -159,11 +165,11 @@ COMPAT_GO_RUN := ^($(subst $(space),|,$(strip $(COMPAT_GO_TESTS))))$$
 # The suite against the Go image. The reference image (mcp-registry:compat-ts) must exist as well:
 # some scenarios compare with it on the same machine, and the new-database scenario starts from it.
 # COMPAT_FIXED: the deviations (compat/harness/deviations.go) whose decided behaviour the Go server
-# has: config-errors (milestone 1), audit-login-via and create-user-keeps-role (milestone 2).
-# Left out, each until the milestone that implements it: token-429-retry-after and
-# request-id-on-refusals (the /mcp route, milestone 6), oauth-state-kept (connections, milestone 5),
-# create-server-sync-exit and reindex-wording (the operator CLI, milestone 7), ready-before-serving
-# (search, milestone 4). Before it runs, the pattern is
+# has: config-errors (milestone 1), audit-login-via and create-user-keeps-role (milestone 2),
+# create-server-sync-exit (milestone 3). Left out, each until the milestone that implements it:
+# token-429-retry-after and request-id-on-refusals (the /mcp route, milestone 6), oauth-state-kept
+# (connections, milestone 5), reindex-wording (the reindex command, milestone 4 or 7),
+# ready-before-serving (search, milestone 4). Before it runs, the pattern is
 # listed (nothing is started): it must match exactly the scenarios named in COMPAT_GO_TESTS, so a
 # renamed or mistyped scenario fails here instead of passing by running nothing.
 compat-go:
@@ -172,7 +178,7 @@ compat-go:
 	@listed="$$(go test -tags compat -count=1 -list '$(COMPAT_GO_RUN)' ./compat/ | grep -c '^Test')"; \
 	if [ "$$listed" != "$(words $(COMPAT_GO_TESTS))" ]; then \
 		echo "compat-go: the pattern '$(COMPAT_GO_RUN)' matches $$listed scenario(s), COMPAT_GO_TESTS names $(words $(COMPAT_GO_TESTS)): $(COMPAT_GO_TESTS)"; exit 1; fi
-	COMPAT_IMAGE=mcp-registry:compat-go COMPAT_CLI=mcp-registry COMPAT_FIXED=config-errors,audit-login-via,create-user-keeps-role \
+	COMPAT_IMAGE=mcp-registry:compat-go COMPAT_CLI=mcp-registry COMPAT_FIXED=config-errors,audit-login-via,create-user-keeps-role,create-server-sync-exit \
 		go test -tags compat -count=1 -p 1 -timeout 30m -run '$(COMPAT_GO_RUN)' $(if $(COMPAT_GO_SKIP),-skip '$(COMPAT_GO_SKIP)') $(COMPAT_ARGS) ./compat/
 
 # COMPAT_ARGS adds go test arguments, e.g. make compat COMPAT_ARGS='-run ^TestPlatform' (the -run
@@ -196,6 +202,25 @@ compat:
 # --only-changed, -c and --config in any form).
 e2e-flows:
 	go test -tags "compat e2e" -count=1 -timeout 30m -v -run '^(TestBrowserFlows|TestControl)' ./compat/e2e/
+
+# The browser flows that need only identity and the catalog, against the Go image (build it with
+# compat-image-go; the reference image must exist too, as for compat-go). The flows that wait for a
+# later milestone are not selected, each named here with it:
+#   03-tokens (the token opens /mcp, 6), 09-permissions (a call through /mcp and the call log, 6),
+#   08-connect and 08b-connect-cross-site (OAuth connect, 5), 12-direct-links (the /connections page
+#   asks GET /api/connections, 5).
+# TestControlOperationsAgainstARealStack is not run for the same reason (it uses /mcp, 6); the control
+# API's other tests are image independent and run in e2e-flows. Same guard, same specs, only the
+# selection differs: the arguments go through E2E_PLAYWRIGHT_ARGS, which refuses the ways to run
+# fewer tests silently. An E2E_PLAYWRIGHT_ARGS given on the make command line replaces the list.
+E2E_GO_SPECS := 00-guard-selftest.spec.ts 01-first-start-link.spec.ts 02-oidc-login.spec.ts \
+	04-create-server.spec.ts 05-form-errors.spec.ts 06-hide-tool.spec.ts 07-edit-conflict.spec.ts \
+	10-disable-person.spec.ts 11-session-expiry.spec.ts
+e2e-flows-go:
+	@docker image inspect mcp-registry:compat-go >/dev/null 2>&1 || { echo "e2e-flows-go: the image mcp-registry:compat-go is missing: run make compat-image-go"; exit 1; }
+	COMPAT_IMAGE=mcp-registry:compat-go COMPAT_CLI=mcp-registry COMPAT_FIXED=config-errors,audit-login-via,create-user-keeps-role,create-server-sync-exit \
+		E2E_PLAYWRIGHT_ARGS='$(E2E_GO_SPECS)' \
+		go test -tags "compat e2e" -count=1 -timeout 30m -v -run '^TestBrowserFlows$$' ./compat/e2e/
 
 # Proves the suite can fail: runs named scenarios against the reference image behind a distorting
 # proxy (compat/selfcheck). Slow; CI runs it daily (compat-selfcheck.yml), not on pull requests.

@@ -4,7 +4,8 @@
 # e2e-browsers.yml), go (the Go rewrite's lint, architecture rules and unit tests) and compat (the Go
 # black-box suite against the image built from this tree, on amd64 and arm64; its self-check runs
 # daily in compat-selfcheck.yml) and
-# e2e-flows (the browser flows of the web UI, e2e/flows, against that same image, orchestrated by Go).
+# e2e-flows (the browser flows of the web UI, e2e/flows, against that same image, orchestrated by Go);
+# compat-go and e2e-flows-go run the milestone pattern of the Go server (not required checks).
 #
 # Moving to another CI inside the perimeter: the same two commands on a runner with
 # Node 22, pnpm (version from package.json) and Docker, after `pnpm install --frozen-lockfile`:
@@ -210,6 +211,40 @@ jobs:
           name: e2e-flows-results
           path: |
             ${{ runner.temp }}/e2e-flows-results
+            ${{ runner.temp }}/compat-logs
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # The browser flows that need only identity and the catalog (make e2e-flows-go lists them and names
+  # the milestone each skipped flow waits for) against the Go image. Not a required check; arm64 only.
+  e2e-flows-go:
+    needs: [go]
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: make compat-image-ts
+      - run: make compat-image-go
+      - run: make e2e-flows-go
+        env:
+          COMPAT_LOG_DIR: ${{ runner.temp }}/compat-logs
+          E2E_OUTPUT_DIR: ${{ runner.temp }}/e2e-flows-go-results
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: e2e-flows-go-results
+          path: |
+            ${{ runner.temp }}/e2e-flows-go-results
             ${{ runner.temp }}/compat-logs
           if-no-files-found: ignore
           retention-days: 7

@@ -20,6 +20,10 @@ package compat_test
 //     and an API token the admin created through the web API, are still there: both session
 //     cookies work (GET /api/auth/me names the same person), the token list shows the token with
 //     the same id and prefix, and a new sign-in by a link of the existing admin works.
+//   - hand over a CATALOG SERVER too: a shared_secret server with a secret, three tools (one
+//     hidden), created through the reference image's REST API, reads the same through the image
+//     under test, and a sync (the upstream accepts only the stored secret) works and keeps the
+//     hidden flag.
 // When the image under test IS the reference image (the default) this is a restart test.
 //
 // TestPlatformReverseHandOver is the other direction: the database is created by the image under
@@ -27,17 +31,21 @@ package compat_test
 // image wrote (the migrations, the sealed key check) must be accepted by 1.0.x as it is: healthy,
 // nothing applied, the key check untouched, the web shell served, and the people, sessions and
 // token that the image under test created are accepted the same way as in the forward direction.
-// This is the rollback an operator makes after trying the new image.
+// This is the rollback an operator makes after trying the new image. The catalog server created
+// by the image under test (its sealed secret, its tools) is read and synchronised by 1.0.x the
+// same way.
 //
 // The token's use on /mcp is not checked here: the Go server has no /mcp before milestone 6 (the
 // scenarios that use a token on /mcp are skipped for it until then), so the hand-over proves the
 // token row only (id, prefix, not revoked), not that the other image still accepts the value.
 
 import (
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/ai-pipes/mcp-registry/compat/fakes"
 	"github.com/ai-pipes/mcp-registry/compat/harness"
 )
 
@@ -151,6 +159,103 @@ func checkHandOverPeople(t *testing.T, s *harness.Stack, p *handOverPeople) {
 	}
 }
 
+// handOverServer is a catalog server one image leaves behind for the next: a shared_secret server
+// whose upstream refuses any other secret, with three tools, one of them hidden.
+type handOverServer struct {
+	slug  string
+	up    *fakes.Upstream
+	view  catalogView
+	tools []catalogAdminTool
+}
+
+const handOverHeaderValue = "key hand-over-secret"
+
+// createHandOverServer registers the server through the REST API of the image the stack runs now
+// (the first sync lists the tools with the secret), then hides one tool.
+func createHandOverServer(t *testing.T, p *handOverPeople) *handOverServer {
+	t.Helper()
+	h := &handOverServer{slug: harness.Unique("hand-srv")}
+	h.up = fakes.StartUpstream(t, fakes.UpstreamOptions{
+		Tools:         fakes.Tools("list_repos", "delete_repo", "get_issue"),
+		RequireHeader: [2]string{"X-API-Key", handOverHeaderValue},
+	})
+	v := catalogRegister(t, p.admin, fakes.ServerInput(h.up, h.slug, "shared_secret",
+		fakes.WithHeader("X-API-Key", "key {secret}"), fakes.WithSecret("hand-over-secret")))
+	if v.ToolCount != 3 || v.LastSyncError != nil || !v.SecretSet {
+		t.Fatalf("the server created for the hand-over: toolCount %d, lastSyncError %q, secretSet %v", v.ToolCount, v.syncError(), v.SecretSet)
+	}
+	catalogHide(t, p.admin, h.slug, "delete_repo", true)
+	h.view = catalogGet(t, p.admin, h.slug)
+	_, h.tools = catalogTools(t, p.admin, h.slug)
+	if h.view.ToolCount != 2 || len(h.tools) != 3 {
+		t.Fatalf("the server after hiding a tool: toolCount %d, %d tools", h.view.ToolCount, len(h.tools))
+	}
+	return h
+}
+
+// checkHandOverServer asserts, against the image the stack runs now, that the server the other
+// image created is read as it was (view, tools with their hidden flag, the catalog a member sees)
+// and that it can be synchronised: the upstream accepts only the stored secret, so a sync that
+// succeeds proves this image opens the secret the other one sealed. The hidden flag survives it.
+func checkHandOverServer(t *testing.T, p *handOverPeople, h *handOverServer) {
+	t.Helper()
+	got := catalogGet(t, p.admin, h.slug)
+	// The image that starts synchronises every server at once (the scheduler), so the time moves
+	// forward; the rest of the view is what the other image left.
+	if got.LastSyncAt == nil || got.syncedAt(t).Before(h.view.syncedAt(t)) {
+		t.Fatalf("lastSyncAt: before %v, now %v", h.view.LastSyncAt, got.LastSyncAt)
+	}
+	got.LastSyncAt, h.view.LastSyncAt = nil, nil
+	if !reflect.DeepEqual(got, h.view) {
+		t.Fatalf("the server as the other image left it: %+v, now %+v", h.view, got)
+	}
+	if _, got := catalogTools(t, p.admin, h.slug); !reflect.DeepEqual(got, h.tools) {
+		t.Fatalf("the tools as the other image left them: %+v, now %+v", h.tools, got)
+	}
+	var seen []string
+	var entries []catalogEntry
+	p.member.Do(t, "GET", "/api/catalog", nil).JSON(t, "CatalogServer[]", &entries)
+	for _, e := range entries {
+		if e.Slug != h.slug {
+			continue
+		}
+		for _, tl := range e.Tools {
+			seen = append(seen, tl.Ref)
+		}
+	}
+	slices.Sort(seen)
+	if want := []string{h.slug + ".get_issue", h.slug + ".list_repos"}; !slices.Equal(seen, want) {
+		t.Fatalf("the catalog a member sees lists %v for the server, want %v (the hidden tool stays out)", seen, want)
+	}
+
+	// The upstream changes: one tool goes, one comes. The sync reads the sealed secret.
+	h.up.SetTools(fakes.Tools("list_repos", "delete_repo", "create_issue"))
+	before := len(h.up.Requests())
+	if res := catalogSyncOK(t, p.admin, h.slug); res != (catalogSyncResult{Added: 1, Changed: 0, Removed: 1}) {
+		t.Fatalf("sync after the hand-over: %+v", res)
+	}
+	requests := h.up.Requests()[before:]
+	if len(requests) == 0 {
+		t.Fatal("the sync did not reach the upstream")
+	}
+	for _, req := range requests {
+		if got := req.Header.Get("X-API-Key"); got != handOverHeaderValue {
+			t.Fatalf("a %q request carried X-API-Key %q, want the stored secret", req.Method, got)
+		}
+	}
+	_, tools := catalogTools(t, p.admin, h.slug)
+	hidden := map[string]bool{}
+	for _, tl := range tools {
+		hidden[tl.Name] = tl.Hidden
+	}
+	if want := map[string]bool{"list_repos": false, "delete_repo": true, "create_issue": false}; !reflect.DeepEqual(hidden, want) {
+		t.Fatalf("the tools after the sync (name: hidden): %v, want %v", hidden, want)
+	}
+	if v := catalogGet(t, p.admin, h.slug); v.LastSyncError != nil || !v.SecretSet || v.ToolCount != 2 {
+		t.Fatalf("the server after the sync: lastSyncError %q, secretSet %v, toolCount %d", v.syncError(), v.SecretSet, v.ToolCount)
+	}
+}
+
 func TestPlatformStartsOnReferenceDatabase(t *testing.T) {
 	harness.RequireReferenceImage(t)
 	key := newKey(t)
@@ -167,6 +272,7 @@ func TestPlatformStartsOnReferenceDatabase(t *testing.T) {
 	}
 	check := keyCheckBytes(t, s)
 	people := createHandOverPeople(t, s)
+	server := createHandOverServer(t, people)
 
 	t.Run("the same key: healthy, nothing applied, the check untouched, the shell served, the reference image's people accepted", func(t *testing.T) {
 		s.SwapImage(t, image, cli)
@@ -195,6 +301,7 @@ func TestPlatformStartsOnReferenceDatabase(t *testing.T) {
 		// reference wrote. (The check lives in this subtest so that it cannot run against the
 		// reference image by a reordering or a -run filter.)
 		checkHandOverPeople(t, s, people)
+		checkHandOverServer(t, people, server)
 	})
 
 	t.Run("another key: exit 1, one fatal record, no key in the log, the check unchanged", func(t *testing.T) {
@@ -260,6 +367,7 @@ func TestPlatformReverseHandOver(t *testing.T) {
 	}
 	check := keyCheckBytes(t, s)
 	people := createHandOverPeople(t, s)
+	server := createHandOverServer(t, people)
 
 	s.SwapImage(t, harness.ReferenceImage(), harness.ReferenceCLI())
 
@@ -285,4 +393,5 @@ func TestPlatformReverseHandOver(t *testing.T) {
 		t.Fatalf("GET /: %d %.200s", r.Status, r.Body)
 	}
 	checkHandOverPeople(t, s, people)
+	checkHandOverServer(t, people, server)
 }
