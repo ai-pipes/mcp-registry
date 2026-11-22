@@ -401,15 +401,23 @@ func TestCLIServers(t *testing.T) {
 			return d, len(d)
 		}
 		before, total := snapshot()
-		sess := s.MCP(t, owner.Token(t, "cli-reindex"))
-		if got := catalogHitRefs(catalogSearch(t, sess, "ping", 10, []string{slug})); !slices.Contains(got, slug+".ping") {
-			t.Fatalf("search before: %v", got)
-		}
+		// The searches go through /mcp: they are nested subtests, in the order of the steps, so that
+		// the SQL and CLI steps around them can be judged without that route.
+		token := owner.Token(t, "cli-reindex")
+		t.Run("search finds the tool before the documents are deleted", func(t *testing.T) {
+			sess := s.MCP(t, token)
+			if got := catalogHitRefs(catalogSearch(t, sess, "ping", 10, []string{slug})); !slices.Contains(got, slug+".ping") {
+				t.Fatalf("search before: %v", got)
+			}
+		})
 
 		execSQL(t, s, `delete from search.documents where server = $1`, slug)
-		if got := catalogHitRefs(catalogSearch(t, sess, "ping", 10, []string{slug})); len(got) != 0 {
-			t.Fatalf("search finds %v after the documents were deleted: the control proves nothing", got)
-		}
+		t.Run("search finds nothing once the documents are deleted", func(t *testing.T) {
+			sess := s.MCP(t, token)
+			if got := catalogHitRefs(catalogSearch(t, sess, "ping", 10, []string{slug})); len(got) != 0 {
+				t.Fatalf("search finds %v after the documents were deleted: the control proves nothing", got)
+			}
+		})
 
 		r := s.CLI(t, "", "reindex")
 		// The number is the count of indexed TOOLS (rows of search.documents). 1.0.0 words it
@@ -434,9 +442,12 @@ func TestCLIServers(t *testing.T) {
 				t.Errorf("%s: the embedding after reindex differs from the one before", ref)
 			}
 		}
-		if got := catalogHitRefs(catalogSearch(t, sess, "ping", 10, []string{slug})); !slices.Contains(got, slug+".ping") {
-			t.Fatalf("search after reindex: %v", got)
-		}
+		t.Run("search finds the tool again after the reindex", func(t *testing.T) {
+			sess := s.MCP(t, token)
+			if got := catalogHitRefs(catalogSearch(t, sess, "ping", 10, []string{slug})); !slices.Contains(got, slug+".ping") {
+				t.Fatalf("search after reindex: %v", got)
+			}
+		})
 
 		extra := s.CLI(t, "", "reindex", "extra")
 		cliExpectUsage(t, "reindex with an argument", extra)
