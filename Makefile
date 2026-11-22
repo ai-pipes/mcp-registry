@@ -3,7 +3,7 @@ GO_ARCH_LINT := github.com/fe3dback/go-arch-lint@v1.19.2
 GOFUMPT := mvdan.cc/gofumpt@v0.12.0
 VERSION := $(shell node -p "require('./apps/server/package.json').version")
 
-.PHONY: compat compat-selfcheck compat-schemas compat-image-ts compat-image-go compat-go e2e-flows e2e-flows-go go-lint go-lint-new go-fmt-check go-arch-lint go-verify go-test-int go-build print-go-arch-lint print-golangci-lint
+.PHONY: native-libs native-model go-test-onnx go-vet-onnx go-lint-onnx go-verify-onnx compat compat-selfcheck compat-schemas compat-image-ts compat-image-go compat-go e2e-flows e2e-flows-go go-lint go-lint-new go-fmt-check go-arch-lint go-verify go-test-int go-build print-go-arch-lint print-golangci-lint
 
 go-lint:
 	go run $(GOLANGCI_LINT) run
@@ -232,3 +232,71 @@ compat-selfcheck: compat-image-ts
 
 go-build:
 	go build -ldflags "-X main.version=$(VERSION)" -o bin/mcp-registry ./cmd/mcp-registry
+
+# --- The local embedder (build tag onnx) ---------------------------------------------------------
+#
+# The package internal/modules/search/infra/onnx compiles its cgo files only with `-tags onnx`;
+# `make go-verify` never needs native libraries. Local builds and tests of the tagged code use the
+# libraries below, downloaded into a git-ignored cache (.cache/native/<platform>/) with every
+# SHA-256 verified and nothing downloaded ever executed (native/fetch.sh).
+#
+# Pins (provenance, measured in the embedder spike of milestone 4):
+#   ONNX Runtime 1.30.0, CPU: the libraries inside the npm package onnxruntime-node@1.30.0, the very
+#     files the TypeScript reference image loads. github.com/microsoft/onnxruntime returned 404
+#     when this was pinned. The exact 1.30.0 build is a parity condition: another version produced
+#     vectors that differ by up to 0.0166 on amd64.
+#   libtokenizers 1.27.0: the static library of github.com/daulet/tokenizers, release assets.
+NATIVE_ROOT := .cache/native
+NATIVE_PLATFORM := $(shell go env GOOS)-$(shell go env GOARCH)
+NATIVE_DIR := $(NATIVE_ROOT)/$(NATIVE_PLATFORM)
+NATIVE_ABS := $(abspath $(NATIVE_DIR))
+
+ORT_NPM_URL := https://registry.npmjs.org/onnxruntime-node/-/onnxruntime-node-1.30.0.tgz
+ORT_NPM_SHA256 := 6e3390d6b783e7be946fad629292799da28d0b42f84856e50d2c1b0383291e75
+TOK_BASE_URL := https://github.com/daulet/tokenizers/releases/download/v1.27.0
+
+ORT_MEMBER_darwin-arm64 := package/bin/napi-v6/darwin/arm64/libonnxruntime.1.30.0.dylib
+ORT_FILE_darwin-arm64 := libonnxruntime.1.30.0.dylib
+ORT_SHA_darwin-arm64 := 685d2be5dba1309c89d3a5324b7fd06a5c42f1a61bfea32d14c4cc28d072121d
+TOK_SHA_TGZ_darwin-arm64 := fb84b8b2e349a5952767ffe80ccd862fc44084de47f3b0cc3f0b7c9d4e649cf7
+TOK_SHA_darwin-arm64 := c91ae814afb8fe4f000099972208f60c3aa2d13899a7cd5a31fee2e9e2efbac7
+
+ORT_MEMBER_linux-arm64 := package/bin/napi-v6/linux/arm64/libonnxruntime.so.1
+ORT_FILE_linux-arm64 := libonnxruntime.so.1
+ORT_SHA_linux-arm64 := 1f549d46250b005580b597f4164984aaf75b3bcb9f3aeb07c7f8a8fe60b23c76
+TOK_SHA_TGZ_linux-arm64 := e96545ad05930c26f51f63d932ee6d3bbd32bbed149e102c5290d587a2293067
+TOK_SHA_linux-arm64 := aa4d3a7d28023e439fa7a645fb606195acafb5c33c8cd01928ed1aacfc4c074e
+
+ORT_MEMBER_linux-amd64 := package/bin/napi-v6/linux/x64/libonnxruntime.so.1
+ORT_FILE_linux-amd64 := libonnxruntime.so.1
+ORT_SHA_linux-amd64 := ffb75a925ba05e47b235bb66e3e3911714a80b328a9c9425539feb204aa32a23
+TOK_SHA_TGZ_linux-amd64 := 72556cdca798dd4ea7cdaba308e5f0d68a8cb93b67c96edf485b7a0edd7b07f4
+TOK_SHA_linux-amd64 := e6862b31745bb7d07980fcee70e49cd3b4318097609180f5d2d3fb394f305d50
+
+ONNX_PKG := ./internal/modules/search/infra/onnx/...
+# Variables the tagged tests read (names are for local development only, not operator settings).
+ONNX_TEST_ENV = CGO_ENABLED=1 CGO_LDFLAGS="-L$(NATIVE_ABS)" ONNX_TEST_LIB="$(NATIVE_ABS)/$(ORT_FILE_$(NATIVE_PLATFORM))" ONNX_TEST_MODEL_DIR="$(abspath $(NATIVE_ROOT))/models"
+
+native-libs:
+	@test -n "$(ORT_FILE_$(NATIVE_PLATFORM))" || { echo "native-libs: no pinned libraries for $(NATIVE_PLATFORM)"; exit 1; }
+	ORT_URL="$(ORT_NPM_URL)" ORT_TGZ_SHA256="$(ORT_NPM_SHA256)" ORT_MEMBER="$(ORT_MEMBER_$(NATIVE_PLATFORM))" \
+	ORT_FILE="$(ORT_FILE_$(NATIVE_PLATFORM))" ORT_FILE_SHA256="$(ORT_SHA_$(NATIVE_PLATFORM))" \
+	TOK_URL="$(TOK_BASE_URL)/libtokenizers.$(NATIVE_PLATFORM).tar.gz" TOK_TGZ_SHA256="$(TOK_SHA_TGZ_$(NATIVE_PLATFORM))" \
+	TOK_FILE_SHA256="$(TOK_SHA_$(NATIVE_PLATFORM))" \
+	sh internal/modules/search/infra/onnx/native/fetch.sh $(NATIVE_PLATFORM) $(NATIVE_DIR)
+
+# The model and tokenizer the TypeScript server uses (revision and SHA-256 pinned in the script),
+# in the layout <root>/Xenova/multilingual-e5-small/. Needs node, like VERSION above.
+native-model:
+	node scripts/download-model.mjs $(NATIVE_ROOT)/models
+
+go-vet-onnx: native-libs
+	$(ONNX_TEST_ENV) go vet -tags onnx $(ONNX_PKG)
+
+go-lint-onnx: native-libs
+	$(ONNX_TEST_ENV) go run $(GOLANGCI_LINT) run --build-tags onnx $(ONNX_PKG)
+
+go-test-onnx: native-libs native-model
+	$(ONNX_TEST_ENV) go test -tags onnx -count=1 $(ONNX_PKG)
+
+go-verify-onnx: go-vet-onnx go-lint-onnx go-test-onnx
