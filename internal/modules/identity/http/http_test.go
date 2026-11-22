@@ -524,7 +524,7 @@ func TestCallback(t *testing.T) {
 			t.Error("session does not work")
 		}
 	})
-	t.Run("a missing or wrong binding, or a bad query, is invalid_state and does not consume the state", func(t *testing.T) {
+	t.Run("a missing or wrong binding, or a bad query, is invalid_state, does not consume the state and leaves the binding cookie alone", func(t *testing.T) {
 		e := newEnv(t, true, true)
 		e.f.OIDC.Next = member
 		state, bind := e.startLogin("/")
@@ -549,8 +549,8 @@ func TestCallback(t *testing.T) {
 			if r.StatusCode != 302 || r.Header.Get("Location") != "/?loginError=invalid_state" || cookieNamed(r, "mcp_session") != nil {
 				t.Errorf("%s: %d %q", c.name, r.StatusCode, r.Header.Get("Location"))
 			}
-			if cl := cookieNamed(r, "mcp_login"); cl == nil || cl.MaxAge >= 0 {
-				t.Errorf("%s: binding not cleared", c.name)
+			if cl := cookieNamed(r, "mcp_login"); cl != nil {
+				t.Errorf("%s: the binding cookie was touched: %+v", c.name, cl)
 			}
 		}
 		if e.f.OIDC.LastExchange != nil {
@@ -559,6 +559,44 @@ func TestCallback(t *testing.T) {
 		if r := e.do("GET", "/api/auth/callback?code=c1&state="+state, "", withCookie(bind)); r.Header.Get("Location") != "/" || cookieNamed(r, "mcp_session") == nil {
 			t.Errorf("the genuine callback: %d %q", r.StatusCode, r.Header.Get("Location"))
 		}
+	})
+	t.Run("the binding cookie is cleared on every outcome of its own attempt", func(t *testing.T) {
+		cleared := func(t *testing.T, r *http.Response) {
+			t.Helper()
+			if cl := cookieNamed(r, "mcp_login"); cl == nil || cl.MaxAge >= 0 || cl.Path != "/api/auth" {
+				t.Errorf("binding cookie after the callback: %+v", cl)
+			}
+		}
+		t.Run("success", func(t *testing.T) {
+			e := newEnv(t, true, true)
+			e.f.OIDC.Next = member
+			state, bind := e.startLogin("/")
+			r := e.do("GET", "/api/auth/callback?code=c1&state="+state, "", withCookie(bind))
+			if cookieNamed(r, "mcp_session") == nil {
+				t.Fatalf("no session: %q", r.Header.Get("Location"))
+			}
+			cleared(t, r)
+		})
+		t.Run("domain error", func(t *testing.T) {
+			e := newEnv(t, true, true)
+			e.f.OIDC.Next = &domain.OIDCClaims{Sub: "s2", Name: "Out", Groups: []string{"nobody"}}
+			state, bind := e.startLogin("/")
+			r := e.do("GET", "/api/auth/callback?code=c1&state="+state, "", withCookie(bind))
+			if r.Header.Get("Location") != "/?loginError=not_allowed" {
+				t.Fatalf("Location %q", r.Header.Get("Location"))
+			}
+			cleared(t, r)
+		})
+		t.Run("unexpected error", func(t *testing.T) {
+			e := newEnv(t, true, true)
+			e.f.Deps.PendingLogins = failingPending{fakePending{e.f.Store}}
+			e.rebuild(true, true)
+			r := e.do("GET", "/api/auth/callback?code=c1&state=s", "", withCookie(reqCookie("mcp_login", "s")))
+			if r.Header.Get("Location") != "/?loginError=internal" {
+				t.Fatalf("Location %q", r.Header.Get("Location"))
+			}
+			cleared(t, r)
+		})
 	})
 	t.Run("the iss parameter reaches the exchange", func(t *testing.T) {
 		e := newEnv(t, true, true)

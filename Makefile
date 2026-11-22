@@ -93,7 +93,7 @@ COMPAT_GO_TESTS := TestConfigRefused TestPlatformStartsOnReferenceDatabase TestP
 	TestCLIVersion TestCLICreateUser TestCLICreateUserRoleFlags TestCLICreateToken TestCLILoginLink TestCLILoginLinkWithOIDC \
 	TestFirstStartAnnouncement TestFirstStartAnnouncementNeedsAnEmptyDatabaseAndNoOIDC \
 	TestConfigEmptyMeansUnset TestPlatformMethodsWithoutOIDC TestPlatformCSRF TestPlatformHealthz \
-	TestPlatformAccessLog TestPlatformBodyLimit TestPlatformSecurityHeaders \
+	TestPlatformAccessLog TestPlatformBodyLimit TestPlatformSecurityHeaders TestIdentityOIDCBindingKept \
 	TestCatalogOptimisticConcurrency TestCatalogValidation TestCatalogServers TestCLIServers \
 	TestPlatformBearerNeverOpensTheWebAPI
 
@@ -168,7 +168,7 @@ COMPAT_GO_RUN := ^($(subst $(space),|,$(strip $(COMPAT_GO_TESTS))))$$
 # The suite against the Go image. The reference image (mcp-registry:compat-ts) must exist as well:
 # some scenarios compare with it on the same machine, and the new-database scenario starts from it.
 # COMPAT_FIXED: the deviations (compat/harness/deviations.go) whose decided behaviour the Go server
-# has: config-errors (milestone 1), audit-login-via and create-user-keeps-role (milestone 2),
+# has: config-errors (milestone 1), audit-login-via, create-user-keeps-role and oidc-binding-kept (milestone 2),
 # create-server-sync-exit (milestone 3). Left out, each until the milestone that implements it:
 # token-429-retry-after and request-id-on-refusals (the /mcp route, milestone 6), oauth-state-kept
 # (connections, milestone 5), reindex-wording (the reindex command, milestone 4 or 7),
@@ -181,7 +181,7 @@ compat-go:
 	@listed="$$(go test -tags compat -count=1 -list '$(COMPAT_GO_RUN)' ./compat/ | grep -c '^Test')"; \
 	if [ "$$listed" != "$(words $(COMPAT_GO_TESTS))" ]; then \
 		echo "compat-go: the pattern '$(COMPAT_GO_RUN)' matches $$listed scenario(s), COMPAT_GO_TESTS names $(words $(COMPAT_GO_TESTS)): $(COMPAT_GO_TESTS)"; exit 1; fi
-	COMPAT_IMAGE=mcp-registry:compat-go COMPAT_CLI=mcp-registry COMPAT_FIXED=config-errors,audit-login-via,create-user-keeps-role,create-server-sync-exit \
+	COMPAT_IMAGE=mcp-registry:compat-go COMPAT_CLI=mcp-registry COMPAT_FIXED=config-errors,audit-login-via,create-user-keeps-role,oidc-binding-kept,create-server-sync-exit \
 		go test -tags compat -count=1 -p 1 -timeout 30m -run '$(COMPAT_GO_RUN)' $(if $(COMPAT_GO_SKIP),-skip '$(COMPAT_GO_SKIP)') $(COMPAT_ARGS) ./compat/
 
 # COMPAT_ARGS adds go test arguments, e.g. make compat COMPAT_ARGS='-run ^TestPlatform' (the -run
@@ -221,7 +221,7 @@ E2E_GO_SPECS := 00-guard-selftest.spec.ts 01-first-start-link.spec.ts 02-oidc-lo
 	10-disable-person.spec.ts 11-session-expiry.spec.ts
 e2e-flows-go:
 	@docker image inspect mcp-registry:compat-go >/dev/null 2>&1 || { echo "e2e-flows-go: the image mcp-registry:compat-go is missing: run make compat-image-go"; exit 1; }
-	COMPAT_IMAGE=mcp-registry:compat-go COMPAT_CLI=mcp-registry COMPAT_FIXED=config-errors,audit-login-via,create-user-keeps-role,create-server-sync-exit \
+	COMPAT_IMAGE=mcp-registry:compat-go COMPAT_CLI=mcp-registry COMPAT_FIXED=config-errors,audit-login-via,create-user-keeps-role,oidc-binding-kept,create-server-sync-exit \
 		E2E_PLAYWRIGHT_ARGS='$(E2E_GO_SPECS)' \
 		go test -tags "compat e2e" -count=1 -timeout 30m -v -run '^TestBrowserFlows$$' ./compat/e2e/
 
