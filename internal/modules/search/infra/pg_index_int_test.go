@@ -146,11 +146,13 @@ func TestUpsertReplacesEveryColumnByRef(t *testing.T) {
 	}
 }
 
-func TestAFailedReembedNullsAnExistingVectorAndKeepsTheFailedMark(t *testing.T) {
+// Upsert is the "set this vector" path: a nil Embedding stores NULL and keeps the mark. The
+// application no longer takes it for a failed re-embedding (decided deviation
+// vector-kept-on-failed-reembedding, see UpsertEmbedFailed below).
+func TestUpsertWithoutAVectorStoresNullAndKeepsTheMarkAVectorClearsIt(t *testing.T) {
 	pool, idx := setupIndex(t)
 	put(t, idx, "a.x", "a", unit(0))
 	mustOK(t, idx.MarkEmbedFailed(t.Context(), "a.x"))
-	// TypeScript trap 8, reproduced on purpose: the vector is gone, the mark stays.
 	put(t, idx, "a.x", "a", nil)
 	var hasVec, marked bool
 	mustOK(t, pool.QueryRow(t.Context(), `select embedding is not null, embed_failed_at is not null from search.documents where ref = 'a.x'`).Scan(&hasVec, &marked))
@@ -162,6 +164,90 @@ func TestAFailedReembedNullsAnExistingVectorAndKeepsTheFailedMark(t *testing.T) 
 	mustOK(t, pool.QueryRow(t.Context(), `select embedding is not null, embed_failed_at is not null from search.documents where ref = 'a.x'`).Scan(&hasVec, &marked))
 	if !hasVec || marked {
 		t.Fatalf("vector %v, marked %v; want a vector and no mark", hasVec, marked)
+	}
+}
+
+func rowState(t *testing.T, pool *pgxpool.Pool, ref string) (vec *string, desc string, marked bool) {
+	t.Helper()
+	mustOK(t, pool.QueryRow(t.Context(), `select embedding::text, description, embed_failed_at is not null from search.documents where ref = $1`, ref).Scan(&vec, &desc, &marked))
+	return vec, desc, marked
+}
+
+func TestUpsertEmbedFailedKeepsTheStoredVectorByteForByteUpdatesTextAndMarksTheRow(t *testing.T) {
+	pool, idx := setupIndex(t)
+	put(t, idx, "a.x", "a", atCosine(0.6))
+	before, _, marked := rowState(t, pool, "a.x")
+	if before == nil || marked {
+		t.Fatalf("setup: vector %v, marked %v", before, marked)
+	}
+	mustOK(t, idx.UpsertEmbedFailed(t.Context(), app.Document{Ref: "a.x", Server: "z", Title: str("T"), Description: "new text", Body: "newbody"}))
+	after, desc, marked := rowState(t, pool, "a.x")
+	if after == nil || *after != *before {
+		t.Fatalf("vector %v, want %v", after, before)
+	}
+	if desc != "new text" || !marked {
+		t.Fatalf("description %q, marked %v", desc, marked)
+	}
+	var server string
+	mustOK(t, pool.QueryRow(t.Context(), `select server from search.documents where ref = 'a.x'`).Scan(&server))
+	if server != "z" {
+		t.Fatalf("server %q", server)
+	}
+	if got := fts(t, idx, "newbody", "z"); !reflect.DeepEqual(got, []string{"a.x"}) {
+		t.Fatalf("tsv not updated: %v", got)
+	}
+}
+
+func TestUpsertEmbedFailedKeepsAnOlderMarkAndLeavesRowsWithoutAVectorAlone(t *testing.T) {
+	pool, idx := setupIndex(t)
+	put(t, idx, "a.x", "a", unit(0))
+	mustOK(t, idx.UpsertEmbedFailed(t.Context(), app.Document{Ref: "a.x", Server: "a", Description: "one"}))
+	_, err := pool.Exec(t.Context(), `update search.documents set embed_failed_at = now() - interval '3 hours' where ref = 'a.x'`)
+	mustOK(t, err)
+	mustOK(t, idx.UpsertEmbedFailed(t.Context(), app.Document{Ref: "a.x", Server: "a", Description: "two"}))
+	var old bool
+	mustOK(t, pool.QueryRow(t.Context(), `select embed_failed_at < now() - interval '2 hours' from search.documents where ref = 'a.x'`).Scan(&old))
+	if !old {
+		t.Fatal("a second failure moved the mark forward: an outage would back the row off for an hour at every attempt")
+	}
+	// A row without a vector (new, or already NULL) stays as the reference leaves it: no mark added.
+	mustOK(t, idx.UpsertEmbedFailed(t.Context(), app.Document{Ref: "n.x", Server: "n", Description: "new"}))
+	vec, _, marked := rowState(t, pool, "n.x")
+	if vec != nil || marked {
+		t.Fatalf("a new row: vector %v, marked %v", vec, marked)
+	}
+	mustOK(t, idx.UpsertEmbedFailed(t.Context(), app.Document{Ref: "n.x", Server: "n", Description: "again"}))
+	if vec, desc, marked := rowState(t, pool, "n.x"); vec != nil || marked || desc != "again" {
+		t.Fatalf("an existing NULL-vector row: %v %q %v", vec, desc, marked)
+	}
+}
+
+func TestTheSweepOffersMarkedRowsThatKeptAVectorAfterTheBackoffAndASuccessfulUpsertClearsTheMark(t *testing.T) {
+	pool, idx := setupIndex(t)
+	put(t, idx, "s.keep", "s", unit(0))
+	put(t, idx, "s.plain", "s", unit(1))
+	mustOK(t, idx.UpsertEmbedFailed(t.Context(), app.Document{Ref: "s.keep", Server: "s", Description: "x"}))
+	// Marked just now: backed off like any other failed row.
+	if got := must(idx.WithoutEmbedding(t.Context(), 10)); len(got) != 0 {
+		t.Fatalf("offered inside the back-off: %v", refsOf(got))
+	}
+	_, err := pool.Exec(t.Context(), `update search.documents set embed_failed_at = now() - interval '2 hours' where ref = 's.keep'`)
+	mustOK(t, err)
+	got := must(idx.WithoutEmbedding(t.Context(), 10))
+	if !reflect.DeepEqual(refsOf(got), []string{"s.keep"}) || got[0].Server != "s" {
+		t.Fatalf("got %v; want only the marked row, not the plain vector row", got)
+	}
+	// Order: never attempted (NULL vector) first, then the marked one.
+	put(t, idx, "s.null", "s", nil)
+	if got := must(idx.WithoutEmbedding(t.Context(), 10)); !reflect.DeepEqual(refsOf(got), []string{"s.null", "s.keep"}) {
+		t.Fatalf("order %v", refsOf(got))
+	}
+	put(t, idx, "s.keep", "s", unit(5))
+	if _, _, marked := rowState(t, pool, "s.keep"); marked {
+		t.Fatal("a vector did not clear the mark")
+	}
+	if got := must(idx.WithoutEmbedding(t.Context(), 10)); !reflect.DeepEqual(refsOf(got), []string{"s.null"}) {
+		t.Fatalf("after the refresh: %v", refsOf(got))
 	}
 }
 

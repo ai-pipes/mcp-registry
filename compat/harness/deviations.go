@@ -29,6 +29,9 @@ const (
 	DevAuditLoginVia        Deviation = "audit-login-via"
 	DevRetryAfter429        Deviation = "token-429-retry-after"
 	DevOIDCBindingKept      Deviation = "oidc-binding-kept"
+
+	DevVectorKeptOnFailedReembedding Deviation = "vector-kept-on-failed-reembedding"
+	DevStaleRemovalRechecksCatalog   Deviation = "stale-removal-rechecks-catalog"
 )
 
 // DeviationInfo is one registry entry.
@@ -50,6 +53,8 @@ var AllDeviations = []DeviationInfo{
 	{DevAuditLoginVia, "an OIDC sign-in writes auth.login with empty meta -> meta.via is \"oidc\""},
 	{DevRetryAfter429, "the 429 for failed token checks on /mcp has no Retry-After -> it carries Retry-After with a positive integer"},
 	{DevOIDCBindingKept, "any OIDC callback (a forged one included) clears the browser's mcp_login binding cookie before checking it, so a foreign callback breaks the sign-in in progress with invalid_state -> the cookie is cleared only when the callback's state matches it; a callback that does not match leaves it alone and the genuine sign-in completes"},
+	{DevVectorKeptOnFailedReembedding, "when the embedder fails while a document that has a vector is re-indexed, the upsert writes embedding = NULL and the document loses vector search until a later sweep -> the text is updated, the stored vector stays and the row is marked (embed_failed_at) so the sweep re-embeds it after the one-hour back-off"},
+	{DevStaleRemovalRechecksCatalog, "a catalog.tools_removed event deletes its listed refs without asking the catalog, so a late or replayed one deletes the live row of a tool that came back -> the handler removes only listed refs the catalog does not currently offer for indexing"},
 }
 
 // FixedEnv is the environment variable that selects the decided behaviours.

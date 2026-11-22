@@ -11,15 +11,17 @@ import (
 )
 
 // ErrBadDimensions is an embedder answer that is not Dimensions numbers long; it is treated like
-// any other embedder failure (the document is stored without a vector).
+// any other embedder failure (UpsertEmbedFailed).
 var ErrBadDimensions = errors.New("embedder returned a vector of the wrong length")
 
 // IndexTools brings the documents of the whole server in line with the catalog: every offered
 // tool (visible, server active) is (re)indexed and documents of tools it no longer offers are
 // removed. An unknown or disabled server offers nothing, so its documents disappear.
-// If the embedder fails, every document is still written (text search works, no vector) and the
-// first embedder error is returned afterwards, so the outbox retries and the sweep fills the
-// vectors in later.
+// If the embedder fails, every document is still written (text search works) and the first
+// embedder error is returned afterwards, so the outbox retries and the sweep fills the vectors in
+// later. Decided deviation vector-kept-on-failed-reembedding: a document that already has a vector
+// keeps it (stale beats none) and is marked for the sweep; a document that has none stays without
+// (the TypeScript server nulls the existing vector).
 func IndexTools(ctx context.Context, d Deps, server string) error {
 	return indexTools(ctx, d, server, nil, false)
 }
@@ -76,7 +78,7 @@ func indexTools(ctx context.Context, d Deps, server string, refs []string, only 
 
 	// One passage per embedder call, sequentially (the q8 model's activation scale is per run, so
 	// a vector would shift with its batch mates). After the first failure the remaining tools are
-	// written without a vector and the embedder is not called again.
+	// written through UpsertEmbedFailed and the embedder is not called again.
 	var failure error
 	docs := make([]Document, 0, len(wanted))
 	for _, t := range wanted {
@@ -95,7 +97,7 @@ func indexTools(ctx context.Context, d Deps, server string, refs []string, only 
 				err = ErrBadDimensions
 			}
 			if err != nil {
-				// A cancelled run must not null vectors on its way out: stop, nothing is written.
+				// A cancelled run writes nothing: stop.
 				if ctx.Err() != nil {
 					return ctx.Err()
 				}
@@ -108,7 +110,13 @@ func indexTools(ctx context.Context, d Deps, server string, refs []string, only 
 	}
 	// Nothing is written while embedding: every upsert follows the last embedder call.
 	for _, doc := range docs {
-		if err := d.Index.Upsert(ctx, doc); err != nil {
+		var err error
+		if doc.Embedding == nil {
+			err = d.Index.UpsertEmbedFailed(ctx, doc)
+		} else {
+			err = d.Index.Upsert(ctx, doc)
+		}
+		if err != nil {
 			return err
 		}
 	}
@@ -122,13 +130,31 @@ func deref(s *string) string {
 	return *s
 }
 
-// RemoveTools deletes the documents of the refs without asking the catalog. Reproduced from
-// TypeScript on purpose (owner decision pending): a removal event delivered late, after the tool
-// was offered again, deletes a live document, and neither the sweep (it only fills missing
-// vectors of existing rows) nor anything but the next event for that tool or `reindex` restores it.
-func RemoveTools(ctx context.Context, d Deps, refs []string) error {
+// RemoveTools deletes the documents of the listed refs of a server that the catalog does not
+// currently offer for indexing. Decided deviation stale-removal-rechecks-catalog (the TypeScript
+// server deletes the listed refs without asking): a removal event delivered late or twice, after
+// the tool was offered again, leaves the live document alone. An unknown or disabled server offers
+// nothing, so all listed refs go. It is idempotent; a catalog error is returned (the event is
+// retried) and nothing is removed.
+func RemoveTools(ctx context.Context, d Deps, server string, refs []string) error {
 	if len(refs) == 0 {
 		return nil
 	}
-	return d.Index.Remove(ctx, refs)
+	source, err := d.Tools.ListToolsForIndex(ctx, server)
+	if err != nil {
+		return err
+	}
+	offered := map[string]bool{}
+	if source != nil {
+		for _, t := range source.Tools {
+			offered[t.Ref] = true
+		}
+	}
+	var gone []string
+	for _, ref := range refs {
+		if !offered[ref] {
+			gone = append(gone, ref)
+		}
+	}
+	return d.Index.Remove(ctx, gone)
 }

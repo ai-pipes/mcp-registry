@@ -20,10 +20,10 @@ var ErrBadPayload = errors.New("event payload is malformed")
 //
 //   - tools_changed {server, refs}: IndexToolRefs, so a tool the admin hid, or that is gone, is
 //     removed.
-//   - tools_removed {server, refs}: removes the documents by ref without asking the catalog.
-//     Reproduced from TypeScript on purpose (owner decision pending): a removal delivered late,
-//     after the tool came back, deletes a live document, and nothing but the next event for that
-//     tool or `reindex` restores the row (the sweep only fills missing vectors of existing rows).
+//   - tools_removed {server, refs}: RemoveTools, which removes the listed documents the catalog
+//     does not offer now. Decided deviation stale-removal-rechecks-catalog: the TypeScript server
+//     deletes them without asking, so a removal delivered late, after the tool came back, deletes
+//     a live document that nothing but the next event for that tool or `reindex` restores.
 //   - server_changed {server}: IndexTools for the whole server (name, description and status are
 //     part of every passage); a disabled server loses all its documents.
 //
@@ -45,7 +45,7 @@ func EventHandlers(d Deps) map[string]EventHandler {
 			if !ok {
 				return ErrBadPayload
 			}
-			return RemoveTools(ctx, d, ev.Refs)
+			return RemoveTools(ctx, d, ev.Server, ev.Refs)
 		},
 		catalog.EventServerChanged: func(ctx context.Context, p map[string]any) error {
 			server, ok := catalog.ParseServerEvent(p)

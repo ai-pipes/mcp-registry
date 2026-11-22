@@ -49,10 +49,18 @@ type Document struct {
 
 // SearchIndex is the store of documents (schema search.*).
 type SearchIndex interface {
-	// Upsert writes the document by ref: the stored row takes every column from doc, so a nil
-	// Embedding clears an existing vector (the TypeScript behaviour, kept on purpose). A non-nil
-	// Embedding also clears the embed-failed mark.
+	// Upsert writes the document by ref: the stored row takes every column from doc ("set this
+	// vector"). A non-nil Embedding also clears the embed-failed mark; a nil one stores NULL (the
+	// use cases call it with a vector only; a failed embedding goes through UpsertEmbedFailed).
 	Upsert(ctx context.Context, doc Document) error
+	// UpsertEmbedFailed writes the document by ref when embedding its passage failed (doc.Embedding
+	// is ignored). Decided deviation vector-kept-on-failed-reembedding (the TypeScript server nulls
+	// the vector instead): the text columns and the full-text vector are written as by Upsert, a
+	// vector the row already has is kept as it is, and such a row is marked as needing a new one
+	// (embed_failed_at is set when it is not yet; an older mark is left, so an outage does not push
+	// the retry back at every attempt). A row without a vector, new or not, stays without one and
+	// keeps its mark as it is.
+	UpsertEmbedFailed(ctx context.Context, doc Document) error
 	// Remove deletes the documents of the refs; unknown refs are ignored, an empty list is a no-op.
 	Remove(ctx context.Context, refs []string) error
 	// RefsOfServer is the refs indexed for a server, ordered by ref.
@@ -62,8 +70,10 @@ type SearchIndex interface {
 	Servers(ctx context.Context) ([]string, error)
 	// Count is the number of rows of the whole table.
 	Count(ctx context.Context) (int, error)
-	// WithoutEmbedding is up to limit documents stored without a vector, in the sweep's order
-	// (never attempted first, then by ref), skipping those marked failed within the last hour.
+	// WithoutEmbedding is up to limit documents that need a vector, in the sweep's order (never
+	// attempted first, then the oldest mark, then by ref), skipping those marked failed within the
+	// last hour: the rows stored without a vector and the rows that kept a stale one after a failed
+	// re-embedding (UpsertEmbedFailed; their mark is set, their vector is not NULL).
 	WithoutEmbedding(ctx context.Context, limit int) ([]domain.Candidate, error)
 	// MarkEmbedFailed records that embedding ref failed, so the sweep skips it for a while.
 	MarkEmbedFailed(ctx context.Context, ref string) error

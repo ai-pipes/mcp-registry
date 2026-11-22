@@ -74,7 +74,8 @@ func (s *Service) SearchTools(ctx context.Context, query string, limit int, serv
 // every tool still gets its text row, then the first error is returned.
 func (s *Service) ReindexAll(ctx context.Context) (int, error) { return app.ReindexAll(ctx, s.d) }
 
-// IndexMissingEmbeddings is the recovery sweep for documents stored without a vector.
+// IndexMissingEmbeddings is the recovery sweep for documents stored without a vector and for
+// documents marked after a failed re-embedding that kept their older vector.
 func (s *Service) IndexMissingEmbeddings(ctx context.Context, opts SweepOptions) (SweepResult, error) {
 	return app.IndexMissingEmbeddings(ctx, s.d, opts)
 }
