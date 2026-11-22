@@ -3,6 +3,8 @@ package onnx
 import (
 	"strings"
 	"testing"
+
+	"golang.org/x/text/unicode/norm"
 )
 
 // TestJSNormalizeMatchesTheReference compares the port with Precompiled.normalize of
@@ -71,5 +73,19 @@ func TestPrepareTextReplacesNULByAPrivateUseCharacter(t *testing.T) {
 	}
 	if got := PrepareText("plain ascii"); got != "plain ascii" {
 		t.Fatalf("PrepareText changed plain text: %q", got)
+	}
+}
+
+// TestNormalisationTablesAreTheReferencesUnicodeVersion pins the Unicode version of golang.org/x/text
+// (NFKC) to the one of the Node that made testdata/reference.json: a newer or older table could
+// change the normalised text, and so the token ids and vectors, without any test noticing.
+func TestNormalisationTablesAreTheReferencesUnicodeVersion(t *testing.T) {
+	ref := loadReference(t)
+	got := strings.TrimSuffix(norm.Version, ".0")
+	if got != ref.Unicode {
+		t.Fatalf("golang.org/x/text normalises with Unicode %s, the reference (Node %s) with Unicode %s. "+
+			"If x/text was upgraded, regenerate testdata/reference.json and pooling.json with the scripts under "+
+			"testdata/gen/ (see testdata/README.md) on a Node of Unicode %s, and review any difference in the normaliser pairs; "+
+			"if the reference changed, pin x/text to a release with matching tables", norm.Version, ref.Node, ref.Unicode, got)
 	}
 }

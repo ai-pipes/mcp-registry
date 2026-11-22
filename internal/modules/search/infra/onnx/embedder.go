@@ -20,10 +20,14 @@ const (
 	// QueryPrefix is the same for a search query.
 	QueryPrefix = "query: "
 
-	// loadRetryAfter is how long a failed load is remembered. Inside it Ready and the Embed calls
-	// answer with the old error without touching the files again; after it the next call tries
-	// again (the TypeScript embedder retries on every call; this bounds the cost of a storm).
+	// loadRetryAfter is how long the first failed load is remembered. Inside it Ready and the
+	// Embed calls answer with the old error without touching the files again; after it the next
+	// call tries again (the TypeScript embedder retries on every call; this bounds the cost of a
+	// storm). Every further failure doubles the pause up to loadRetryMax; a success resets it. A
+	// corrupt model loaded over and over inflated the resident memory (glibc arenas: 20 failed
+	// loads took 1.8 GB), so a persistent failure must back off.
 	loadRetryAfter = 5 * time.Second
+	loadRetryMax   = 5 * time.Minute
 )
 
 var (
@@ -67,7 +71,7 @@ type Loader func(ctx context.Context) (Backend, error)
 type Embedder struct {
 	loader     Loader
 	now        func() time.Time
-	retryAfter time.Duration
+	retryAfter time.Duration // the pause after the latest failure; 0 when the last load succeeded
 
 	runSem   chan struct{} // capacity 1: one run at a time
 	closedCh chan struct{} // closed by Close
@@ -87,17 +91,16 @@ type loadCall struct {
 
 func newEmbedder(loader Loader) *Embedder {
 	return &Embedder{
-		loader:     loader,
-		now:        time.Now,
-		retryAfter: loadRetryAfter,
-		runSem:     make(chan struct{}, 1),
-		closedCh:   make(chan struct{}),
+		loader:   loader,
+		now:      time.Now,
+		runSem:   make(chan struct{}, 1),
+		closedCh: make(chan struct{}),
 	}
 }
 
 // ensure makes the model loaded. With wait false it never blocks: it starts a load when none runs
 // and the last failure is old enough, and answers errLoading while one is in flight.
-func (e *Embedder) ensure(ctx context.Context, wait bool) error {
+func (e *Embedder) ensure(ctx context.Context, wait, force bool) error {
 	e.mu.Lock()
 	switch {
 	case e.closed:
@@ -109,7 +112,7 @@ func (e *Embedder) ensure(ctx context.Context, wait bool) error {
 	}
 	call := e.call
 	if call == nil {
-		if e.lastErr != nil && (errors.Is(e.lastErr, ErrNotBuilt) || e.now().Sub(e.failedAt) < e.retryAfter) {
+		if e.lastErr != nil && (errors.Is(e.lastErr, ErrNotBuilt) || (!force && e.now().Sub(e.failedAt) < e.retryAfter)) {
 			err := e.lastErr
 			e.mu.Unlock()
 			return err
@@ -142,9 +145,11 @@ func (e *Embedder) runLoad(ctx context.Context, call *loadCall) {
 	case err == nil:
 		e.backend = &backend
 		e.lastErr = nil
+		e.retryAfter = 0
 	case !errors.Is(err, ErrClosed):
 		e.lastErr = err
 		e.failedAt = e.now()
+		e.retryAfter = min(max(2*e.retryAfter, loadRetryAfter), loadRetryMax)
 	}
 	call.err = err
 	e.mu.Unlock()
@@ -165,13 +170,14 @@ func (e *Embedder) safeLoad(ctx context.Context) (b Backend, err error) {
 // is running (and retries a failed one after a short pause). A load failure is not reported here:
 // Ready keeps answering false and Embed and Load return the error.
 func (e *Embedder) Ready(ctx context.Context) bool {
-	return e.ensure(ctx, false) == nil
+	return e.ensure(ctx, false, false) == nil
 }
 
 // Load blocks until the model is loaded and returns the load error, if any. The composition calls
-// it before serving. After a failure it does not retry inside the pause (see loadRetryAfter).
+// it before serving. Unlike Ready and Embed it tries at once even inside the back-off pause (an
+// explicit request); its own failures still lengthen the pause.
 func (e *Embedder) Load(ctx context.Context) error {
-	return e.ensure(ctx, true)
+	return e.ensure(ctx, true, true)
 }
 
 // EmbedPassage embeds "passage: <text>". It waits for the model to load and returns Dimensions
@@ -199,7 +205,7 @@ type Result struct {
 
 // EmbedDetailed is Embed that also returns the (truncated) token ids.
 func (e *Embedder) EmbedDetailed(ctx context.Context, text string) (Result, error) {
-	if err := e.ensure(ctx, true); err != nil {
+	if err := e.ensure(ctx, true, false); err != nil {
 		return Result{}, err
 	}
 	select {

@@ -504,3 +504,73 @@ func TestCloseWithoutALoadIsFine(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestTheRetryPauseDoublesUpToACapAndResetsOnSuccess(t *testing.T) {
+	var calls atomic.Int32
+	var fail atomic.Bool
+	fail.Store(true)
+	tk, sess := &fakeTokenizer{n: 3}, &fakeSession{}
+	e := newEmbedder(func(context.Context) (Backend, error) {
+		calls.Add(1)
+		if fail.Load() {
+			return Backend{}, errors.New("corrupt model")
+		}
+		return Backend{Tokenizer: tk, Session: sess}, nil
+	})
+	defer func() { _ = e.Close() }()
+	var mu sync.Mutex
+	now := time.Unix(1000, 0)
+	e.now = func() time.Time { mu.Lock(); defer mu.Unlock(); return now }
+	advance := func(d time.Duration) { mu.Lock(); now = now.Add(d); mu.Unlock() }
+	// attempt runs one Embed (which starts a load only when the pause is over) and reports whether
+	// the loader ran.
+	attempt := func() bool {
+		before := calls.Load()
+		_, _ = e.Embed(t.Context(), "x")
+		return calls.Load() != before
+	}
+
+	if !attempt() {
+		t.Fatal("the first call must load")
+	}
+	pause := loadRetryAfter
+	for range 12 {
+		advance(pause - time.Second)
+		if attempt() {
+			t.Fatalf("retried before the pause of %v was over", pause)
+		}
+		advance(time.Second)
+		if !attempt() {
+			t.Fatalf("did not retry after the pause of %v", pause)
+		}
+		pause = min(2*pause, loadRetryMax)
+	}
+	if pause != loadRetryMax {
+		t.Fatalf("the pause never reached the cap: %v", pause)
+	}
+	// An explicit Load tries at once, inside the pause.
+	before := calls.Load()
+	if err := e.Load(t.Context()); err == nil || calls.Load() != before+1 {
+		t.Fatalf("Load inside the pause: err %v, loader runs %d", err, calls.Load()-before)
+	}
+	// Success resets the pause: after a later failure it starts at the first value again.
+	fail.Store(false)
+	advance(loadRetryMax)
+	if err := e.Load(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if e.retryAfter != 0 {
+		t.Fatalf("the pause is %v after a success, want 0", e.retryAfter)
+	}
+}
+
+func TestTheFirstPauseIsFiveSeconds(t *testing.T) {
+	e := newEmbedder(func(context.Context) (Backend, error) { return Backend{}, errors.New("no") })
+	defer func() { _ = e.Close() }()
+	if err := e.Load(t.Context()); err == nil {
+		t.Fatal("expected a failure")
+	}
+	if e.retryAfter != 5*time.Second {
+		t.Fatalf("first pause %v, want 5s", e.retryAfter)
+	}
+}
