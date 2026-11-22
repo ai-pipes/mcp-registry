@@ -275,3 +275,13 @@ func TestSchemaTextRejectsMalformedJSON(t *testing.T) {
 		}
 	}
 }
+
+func TestSchemaTextReadsNumbersOfAnySize(t *testing.T) {
+	big := strings.Repeat("9", 400)
+	for _, num := range []string{"1e400", "-1e400", big, "-" + big, "1e-400", "0.5"} {
+		raw := `{"properties":{"a":{"maximum":` + num + `,"description":"d"},"b":{}}}`
+		if got := schema(t, raw); got != "a d b" {
+			t.Errorf("number %.12s: got %q", num, got)
+		}
+	}
+}

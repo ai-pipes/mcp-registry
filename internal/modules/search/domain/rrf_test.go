@@ -184,3 +184,15 @@ func TestFuseOfNothingIsEmpty(t *testing.T) {
 		t.Fatalf("%v", got)
 	}
 }
+
+func TestRRFTiesStayStableBeyondTwelveElements(t *testing.T) {
+	var fts, vec, want []string
+	for i := 0; i < 20; i++ {
+		f, v := "f"+itoa(i), "v"+itoa(i)
+		fts, vec = append(fts, f), append(vec, v)
+		want = append(want, f, v) // equal scores at each rank: text list first (JavaScript order)
+	}
+	if got := ids(domain.RRF([][]string{fts, vec}, 60)); !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v\nwant %v", got, want)
+	}
+}

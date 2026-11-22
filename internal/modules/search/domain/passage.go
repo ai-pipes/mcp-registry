@@ -18,6 +18,8 @@ const MaxPassageChars = 2000
 // a lone surrogate. The tokenizer reads the lone surrogate as <unk>, and measured against
 // transformers.js the code point U+F0000 (private use, not in the vocabulary) gives exactly the
 // same token ids, whereas U+FFFD would become a space.
+// The local embedder treats it as ordinary text; the OpenAI-compatible adapter sends U+FFFD in its
+// place (an accepted difference from TypeScript's lone-surrogate JSON escape).
 const SplitPairStandIn = "\U000F0000"
 
 const replacement = "�"
@@ -180,6 +182,7 @@ var errMalformed = errors.New("malformed JSON")
 // scalar as nil/float64/bool.
 func parseJSON(raw []byte) (any, error) {
 	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber() // values are never read numerically: a number of any size is just a scalar
 	v, err := parseValue(dec)
 	if err != nil {
 		return nil, err
