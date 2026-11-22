@@ -113,7 +113,10 @@ func (r *fakeServers) List(context.Context) ([]app.ServerListing, error) {
 	return out, nil
 }
 
-func (r *fakeServers) Create(_ context.Context, s *domain.Server, events []kernel.Event) error {
+func (r *fakeServers) Create(ctx context.Context, s *domain.Server, events []kernel.Event) error {
+	if err := ctx.Err(); err != nil { // as Postgres would: a done context writes nothing
+		return err
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, taken := r.rows[s.Slug()]; taken {

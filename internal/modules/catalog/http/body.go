@@ -191,7 +191,8 @@ func (s *shape) text(n *node, path string) (string, bool) {
 }
 
 // anyText is a string that may hold a NUL: for the fields whose domain pattern refuses it with
-// its own answer (slug, header name, header template), as TypeScript does.
+// its own answer (slug, header name, header template), as TypeScript does, and for `secret`, which
+// is sealed as bytes (the reference accepts a NUL there).
 func (s *shape) anyText(n *node, path string) (string, bool) {
 	switch {
 	case n == nil:

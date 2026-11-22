@@ -4,24 +4,13 @@ import (
 	"math"
 	"net/url"
 	"strconv"
-	"unicode/utf16"
 	"unicode/utf8"
 
 	"github.com/ai-pipes/mcp-registry/internal/kernel"
 )
 
-// UTF16Len is the length of s in UTF-16 code units, which is what JavaScript's String length
-// (and so zod's min and max) counts: an emoji outside the Basic Multilingual Plane is 2.
-func UTF16Len(s string) int {
-	n := 0
-	for _, r := range s {
-		n += utf16.RuneLen(r)
-	}
-	return n
-}
-
 // RuneLen is the length of s in code points, which is what zod 4 counts for a string's min and
-// max (Fields uses it); a hand-written JavaScript .length is UTF16Len.
+// max (Fields uses it). A rule the TypeScript domain writes with .length counts UTF-16 units instead.
 func RuneLen(s string) int { return utf8.RuneCountInString(s) }
 
 // Fields collects input problems in call order. The TypeScript server reports the first zod

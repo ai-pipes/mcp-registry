@@ -20,16 +20,7 @@ func code(t *testing.T, err error) (string, string) {
 	return de.Code, de.Message
 }
 
-func TestUTF16LenCountsCodeUnits(t *testing.T) {
-	for in, want := range map[string]int{"": 0, "abc": 3, "é": 1, "😀": 2, "a😀b": 4, "\u2028": 1} {
-		if got := httpx.UTF16Len(in); got != want {
-			t.Errorf("UTF16Len(%q) = %d, want %d", in, got, want)
-		}
-	}
-}
-
-// zod 4 counts string min and max in code points, so Fields (which mirrors zod) does too; UTF16Len
-// stays for rules the TypeScript server writes by hand with .length.
+// zod 4 counts string min and max in code points, so Fields (which mirrors zod) does too.
 func TestFieldsStringCountsCodePoints(t *testing.T) {
 	var f httpx.Fields
 	if got := f.String("name", strings.Repeat("😀", 100), 1, 100); got == "" {
