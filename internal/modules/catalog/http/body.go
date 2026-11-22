@@ -523,7 +523,7 @@ func parseServer(root *node, create, withSlug bool) (app.ServerInput, *string, [
 	}
 	if create {
 		if n := root.member("secret"); n != nil && n.kind != kindNull {
-			if v, ok := s.text(n, "secret"); ok {
+			if v, ok := s.anyText(n, "secret"); ok { // sealed as bytes: a NUL is fine
 				secret = &v
 			}
 		}
@@ -604,7 +604,7 @@ func secretRequest(r *http.Request) (*string, error) {
 		return nil, nil
 	}
 	var s shape
-	v, ok := s.text(n, "secret")
+	v, ok := s.anyText(n, "secret") // sealed as bytes: a NUL is fine
 	if !ok {
 		return nil, s.issues[0].err()
 	}

@@ -6,7 +6,8 @@ import (
 	"github.com/ai-pipes/mcp-registry/internal/kernel"
 )
 
-// utf16Len is JavaScript's String.length: zod and the TypeScript domain count UTF-16 code units.
+// utf16Len is JavaScript's String.length. Only the TypeScript DOMAIN counts UTF-16 code units (name,
+// description, secret); zod, which sets the limits of the request fields, counts code points.
 func utf16Len(s string) int {
 	n := 0
 	for _, r := range s {

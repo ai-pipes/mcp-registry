@@ -90,6 +90,8 @@ func TestOnlyAWholeBlankBodyIsEmpty(t *testing.T) {
 	wantReply(t, e.admin("POST", "/api/servers", "\u00a0{}"), 422, errBody("invalid_request", "body is not valid JSON"))
 	wantReply(t, e.admin("POST", "/api/servers", "{}\u00a0"), 422, errBody("invalid_request", "body is not valid JSON"))
 	// The body is decoded as UTF-8 first, which drops a leading byte order mark.
+	// Only that one: a second mark is part of the text, which is then not JSON.
+	wantReply(t, e.admin("POST", "/api/servers", "\ufeff\ufeff{}"), 422, errBody("invalid_request", "body is not valid JSON"))
 	if r := e.admin("POST", "/api/servers", "\ufeff"+`{"slug":"bom","name":"G","description":"","url":"https://x.example/m","auth":{"kind":"none"},"access":{"kind":"all"}}`); r.Status != 201 {
 		t.Fatalf("%d %s", r.Status, r.Body)
 	}

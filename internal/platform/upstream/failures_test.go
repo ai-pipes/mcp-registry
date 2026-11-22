@@ -712,3 +712,22 @@ func TestNoMarkerReachesAnErrorText(t *testing.T) {
 		t.Errorf("the redirect target got %d requests", n)
 	}
 }
+
+// A header value the HTTP layer refuses (a NUL in a stored secret) fails the operation as a
+// transport failure, like the reference's fetch does, and the value is not quoted.
+func TestAHeaderValueWithANULIsTransportAndNotQuoted(t *testing.T) {
+	f := newFake(t)
+	f.set(func(c *cfg) { c.tools = rawTools(1) })
+	nul := func(tg *kernel.UpstreamTarget) {
+		tg.Headers = map[string]string{"Authorization": "Bearer sek\x00ret-value"}
+	}
+	for name, err := range operations(t, f, nul) {
+		ue := wantKind(t, err, kernel.UpstreamTransport)
+		if strings.Contains(ue.Error(), "sek") {
+			t.Errorf("%s: the value is in the error: %v", name, ue)
+		}
+	}
+	if n := len(f.requests()); n != 0 {
+		t.Errorf("%d requests reached the upstream", n)
+	}
+}

@@ -57,6 +57,13 @@ func TestContractLimits(t *testing.T) {
 		{"url ftp", func(f *app.ServerFields) { f.URL = "ftp://x.example.com/" }, "url"},
 		{"url with one slash parses but is not http(s)://", func(f *app.ServerFields) { f.URL = "http:/x.example.com" }, "url"},
 		{"url 2048", func(f *app.ServerFields) { f.URL = "https://x.example.com/" + long(2048-len("https://x.example.com/")) }, ""},
+		// 2048 code points are 4096 UTF-16 units: counting units would refuse the first.
+		{"url 2048 code points with astral characters", func(f *app.ServerFields) {
+			f.URL = "https://x.example.com/" + strings.Repeat("\U0001F600", 2048-len("https://x.example.com/"))
+		}, ""},
+		{"url 2049 code points with astral characters", func(f *app.ServerFields) {
+			f.URL = "https://x.example.com/" + strings.Repeat("\U0001F600", 2049-len("https://x.example.com/"))
+		}, "url"},
 		{"url 2049", func(f *app.ServerFields) { f.URL = "https://x.example.com/" + long(2049-len("https://x.example.com/")) }, "url"},
 		{"timeout 999", func(f *app.ServerFields) { f.TimeoutMs = ptr(999) }, "timeoutMs"},
 		{"timeout 1000", func(f *app.ServerFields) { f.TimeoutMs = ptr(1000) }, ""},
@@ -113,6 +120,16 @@ func TestContractLimits(t *testing.T) {
 				o.ExtraAuthorizeParams = []domain.AuthorizeParam{{Key: long(101), Value: "x"}}
 			})
 		}, "auth.oauth.extraAuthorizeParams." + long(101)},
+		{"oauth extra param key 100 astral characters", func(f *app.ServerFields) {
+			f.Auth = oauthWith(func(o *domain.OAuthClientConfig) {
+				o.ExtraAuthorizeParams = []domain.AuthorizeParam{{Key: strings.Repeat("\U0001F600", 100), Value: "x"}}
+			})
+		}, ""},
+		{"oauth extra param key 101 astral characters", func(f *app.ServerFields) {
+			f.Auth = oauthWith(func(o *domain.OAuthClientConfig) {
+				o.ExtraAuthorizeParams = []domain.AuthorizeParam{{Key: strings.Repeat("\U0001F600", 101), Value: "x"}}
+			})
+		}, "auth.oauth.extraAuthorizeParams." + strings.Repeat("\U0001F600", 101)},
 		{"oauth extra param value 1001", func(f *app.ServerFields) {
 			f.Auth = oauthWith(func(o *domain.OAuthClientConfig) {
 				o.ExtraAuthorizeParams = []domain.AuthorizeParam{{Key: "prompt", Value: long(1001)}}

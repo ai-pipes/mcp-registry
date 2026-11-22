@@ -75,6 +75,23 @@ func TestBodyIssuesComeInSchemaOrder(t *testing.T) {
 	}
 }
 
+// The reference seals a secret as bytes, so a NUL in it is accepted (in the create body and in
+// PUT .../secret) and comes back out of the box unchanged.
+func TestASecretMayHoldANUL(t *testing.T) {
+	e := newEnv(t)
+	body := `{"slug":"nulsecret","secret":"a\u0000b","name":"G","description":"","url":"https://x.example/m","auth":{"kind":"shared_secret","header":"X-Key","template":"{secret}"},"access":{"kind":"all"}}`
+	if r := e.admin("POST", "/api/servers", body); r.Status != 201 || !strings.Contains(r.Body, `"secretSet":true`) {
+		t.Fatalf("create: %d %s", r.Status, r.Body)
+	}
+	if plain, err := (fakeBox{}).Open(e.servers.rows["nulsecret"].SealedSecret); err != nil || plain != "a\x00b" {
+		t.Fatalf("stored %q, %v", plain, err)
+	}
+	wantReply(t, e.admin("PUT", "/api/servers/nulsecret/secret", `{"secret":"c\u0000d"}`), 204, "")
+	if plain, _ := (fakeBox{}).Open(e.servers.rows["nulsecret"].SealedSecret); plain != "c\x00d" {
+		t.Fatalf("stored %q", plain)
+	}
+}
+
 func TestSmallBodiesAndOddRoots(t *testing.T) {
 	e := newEnv(t)
 	e.addServer("gitea", nil, "a")
@@ -83,7 +100,6 @@ func TestSmallBodiesAndOddRoots(t *testing.T) {
 	}{
 		{"secret a number", "PUT", "/api/servers/gitea/secret", `{"secret":5}`, "secret: expected a string"},
 		{"secret too long", "PUT", "/api/servers/gitea/secret", `{"secret":"` + long(4097) + `"}`, "secret: must be 1-4096 characters"},
-		{"secret NUL", "PUT", "/api/servers/gitea/secret", `{"secret":"a\u0000b"}`, "secret: must not contain a NUL character"},
 		{"secret an array body", "PUT", "/api/servers/gitea/secret", `[]`, "expected an object"},
 		{"status a number", "POST", "/api/servers/gitea/status", `{"status":1}`, "status: must be active or disabled"},
 		{"status missing", "POST", "/api/servers/gitea/status", `{}`, "status: must be active or disabled"},
