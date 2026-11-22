@@ -24,6 +24,12 @@ package compat_test
 //     hidden), created through the reference image's REST API, reads the same through the image
 //     under test, and a sync (the upstream accepts only the stored secret) works and keeps the
 //     hidden flag.
+//   - hand over CONNECTIONS too: an oauth_user server whose administrator and member connected
+//     through the fake provider and a pat_user server with a personal token of each (no /mcp
+//     needed): the connections are still ready (the stored configuration fingerprint compares
+//     equal), their rows are untouched, a sync sends the stored tokens, an access token about to
+//     expire is refreshed once with the STORED refresh token, and a disconnect revokes at the
+//     revoke URL stored at issue time.
 // When the image under test IS the reference image (the default) this is a restart test.
 //
 // TestPlatformReverseHandOver is the other direction: the database is created by the image under
@@ -256,6 +262,122 @@ func checkHandOverServer(t *testing.T, p *handOverPeople, h *handOverServer) {
 	}
 }
 
+// handOverConnections are the connections one image leaves behind for the next: an oauth_user
+// server (the administrator and the member are connected through the fake provider, the tools were
+// synced with the administrator's token) and a pat_user server (both have a personal token). They
+// need no /mcp: REST, SQL and the fake provider judge them. The check below is the cross-image
+// proof that a token is never asked for again: the stored configuration fingerprint (issued_for)
+// of one image compares equal in the other, the sealed tokens open, an expiring access token is
+// refreshed with the STORED refresh token, and the revoke URL stored at issue time is used.
+type handOverConnections struct {
+	oauth                  *connEnv
+	patSlug                string
+	patUp                  *fakes.Upstream
+	adminTokens, memberTok fakes.IssuedTokens
+	rows                   map[string]connRow // "who/slug"
+}
+
+const (
+	handOverAdminPAT  = "hand-over-admin-pat"
+	handOverMemberPAT = "hand-over-member-pat"
+)
+
+func createHandOverConnections(t *testing.T, s *harness.Stack, p *handOverPeople) *handOverConnections {
+	t.Helper()
+	h := &handOverConnections{rows: map[string]connRow{}}
+	up := fakes.StartUpstream(t, fakes.UpstreamOptions{Tools: fakes.Tools("echo")})
+	provider := fakes.StartOAuthProvider(t)
+	slug := harness.Unique("hand-oauth")
+	catalogRegister(t, p.admin, fakes.ServerInput(up, slug, "oauth_user",
+		fakes.WithOAuth(provider, "repo"),
+		fakes.WithExtraAuthorizeParams(map[string]string{"access_type": "offline"}),
+		fakes.WithTimeoutMs(5000)))
+	h.oauth = &connEnv{s: s, admin: p.admin, slug: slug, ref: slug + ".echo", up: up, provider: provider}
+	h.adminTokens = connConnect(t, h.oauth, p.admin)
+	h.memberTok = connConnect(t, h.oauth, p.member)
+	if r := catalogSyncOK(t, p.admin, slug); r.Added != 1 {
+		t.Fatalf("sync with the administrator's token: %+v", r)
+	}
+
+	h.patUp = fakes.StartUpstream(t, fakes.UpstreamOptions{Tools: fakes.Tools("echo")})
+	h.patSlug = harness.Unique("hand-pat")
+	catalogRegister(t, p.admin, fakes.ServerInput(h.patUp, h.patSlug, "pat_user",
+		fakes.WithHeader("X-Token", "pat {secret}"), fakes.WithTimeoutMs(5000)))
+	for _, c := range []struct {
+		who    *harness.Client
+		secret string
+	}{{p.admin, handOverAdminPAT}, {p.member, handOverMemberPAT}} {
+		if r := c.who.Do(t, "PUT", "/api/connections/"+h.patSlug+"/pat", map[string]string{"token": c.secret}); r.Status != 204 {
+			t.Fatalf("PUT pat: %d %s", r.Status, r.Body)
+		}
+	}
+	if r := catalogSyncOK(t, p.admin, h.patSlug); r.Added != 1 {
+		t.Fatalf("sync with the administrator's personal token: %+v", r)
+	}
+	for who, id := range map[string]string{"admin": p.adminID, "member": p.memberID} {
+		for _, sl := range []string{slug, h.patSlug} {
+			h.rows[who+"/"+sl] = connRowOf(t, s, id, sl)
+		}
+	}
+	return h
+}
+
+// checkHandOverConnections asserts, against the image the stack runs now, that the connections
+// the other image stored are usable without a reconnect.
+func checkHandOverConnections(t *testing.T, s *harness.Stack, p *handOverPeople, h *handOverConnections) {
+	t.Helper()
+	slug, provider, up := h.oauth.slug, h.oauth.provider, h.oauth.up
+	for _, who := range []struct {
+		name string
+		c    *harness.Client
+		id   string
+	}{{"admin", p.admin, p.adminID}, {"member", p.member, p.memberID}} {
+		for _, sl := range []string{slug, h.patSlug} {
+			if got := connStatus(t, who.c, sl); got != "ready" {
+				t.Fatalf("%s's connection to %s is %q after the hand-over, want ready (the configuration fingerprint must compare equal)", who.name, sl, got)
+			}
+			// Nothing in the connection row changes by changing the image: tokens, expiry,
+			// fingerprint, revoke URL and updated_at are the bytes the other image wrote.
+			connExpectSameRow(t, who.name+"'s connection to "+sl, h.rows[who.name+"/"+sl], connRowOf(t, s, who.id, sl))
+		}
+	}
+
+	// A sync reads the administrator's sealed access token and sends it.
+	up.Reset()
+	if r := catalogSyncOK(t, p.admin, slug); r.Added+r.Changed+r.Removed != 0 {
+		t.Fatalf("sync with the stored access token: %+v", r)
+	}
+	connExpectEveryRequestWith(t, "sync with the stored access token", up, "Authorization", "Bearer "+h.adminTokens.AccessToken)
+	h.patUp.Reset()
+	catalogSyncOK(t, p.admin, h.patSlug)
+	connExpectEveryRequestWith(t, "sync with the stored personal token", h.patUp, "X-Token", "pat "+handOverAdminPAT)
+
+	// The access token is about to expire: one refresh, with the stored refresh token and the
+	// client's credentials, and the new token goes to the upstream.
+	connExpireIn(t, s, p.adminID, slug, 10)
+	before := len(provider.Requests())
+	up.Reset()
+	catalogSyncOK(t, p.admin, slug)
+	reqs := provider.Requests()[before:]
+	if len(reqs) != 1 || reqs[0].GrantType != "refresh_token" || reqs[0].Form.Get("refresh_token") != h.adminTokens.RefreshToken || reqs[0].Authorization != connBasic(provider) {
+		t.Fatalf("token requests after the expiry: %d, want exactly one refresh_token grant with the stored refresh token and the client's Basic header", len(reqs))
+	}
+	if reqs[0].AccessToken == "" || reqs[0].AccessToken == h.adminTokens.AccessToken {
+		t.Fatalf("the refresh did not hand out a new access token")
+	}
+	connExpectEveryRequestWith(t, "sync after the refresh", up, "Authorization", "Bearer "+reqs[0].AccessToken)
+	connExpectFreshExpiry(t, s, p.adminID, slug)
+
+	// Disconnect revokes at the revoke URL stored when the token was issued.
+	if r := p.member.Do(t, "DELETE", "/api/connections/"+slug, nil); r.Status != 204 {
+		t.Fatalf("DELETE member's connection: %d %s", r.Status, r.Body)
+	}
+	connEqual(t, "revoked at the stored revoke URL", provider.Revoked(), []string{h.memberTok.RefreshToken})
+	if _, ok := connGetRow(t, s, p.memberID, slug); ok {
+		t.Fatal("the member's connection row survived the disconnect")
+	}
+}
+
 func TestPlatformStartsOnReferenceDatabase(t *testing.T) {
 	harness.RequireReferenceImage(t)
 	key := newKey(t)
@@ -273,6 +395,7 @@ func TestPlatformStartsOnReferenceDatabase(t *testing.T) {
 	check := keyCheckBytes(t, s)
 	people := createHandOverPeople(t, s)
 	server := createHandOverServer(t, people)
+	conns := createHandOverConnections(t, s, people)
 
 	t.Run("the same key: healthy, nothing applied, the check untouched, the shell served, the reference image's people accepted", func(t *testing.T) {
 		s.SwapImage(t, image, cli)
@@ -302,6 +425,7 @@ func TestPlatformStartsOnReferenceDatabase(t *testing.T) {
 		// reference image by a reordering or a -run filter.)
 		checkHandOverPeople(t, s, people)
 		checkHandOverServer(t, people, server)
+		checkHandOverConnections(t, s, people, conns)
 	})
 
 	t.Run("another key: exit 1, one fatal record, no key in the log, the check unchanged", func(t *testing.T) {
@@ -368,6 +492,7 @@ func TestPlatformReverseHandOver(t *testing.T) {
 	check := keyCheckBytes(t, s)
 	people := createHandOverPeople(t, s)
 	server := createHandOverServer(t, people)
+	conns := createHandOverConnections(t, s, people)
 
 	s.SwapImage(t, harness.ReferenceImage(), harness.ReferenceCLI())
 
@@ -394,4 +519,5 @@ func TestPlatformReverseHandOver(t *testing.T) {
 	}
 	checkHandOverPeople(t, s, people)
 	checkHandOverServer(t, people, server)
+	checkHandOverConnections(t, s, people, conns)
 }

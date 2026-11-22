@@ -177,6 +177,9 @@ func TestConnectionsConnectFlow(t *testing.T) {
 		if got := connAudit(t, s, "connection.disconnect", p.id, env.slug); len(got) != 1 {
 			t.Fatalf("a second disconnect wrote %d audit records in all", len(got))
 		}
+	})
+
+	t.Run("a disconnected person no longer gets calls through", func(t *testing.T) {
 		// The deleted connection no longer serves calls.
 		connExpectText(t, "call after disconnect", p.call(t, env), connTextNotConnected(s, env.slug))
 	})
@@ -454,6 +457,9 @@ func TestConnectionsPAT(t *testing.T) {
 		if len(got) != 1 || len(got[0].Meta) != 0 {
 			t.Fatalf("connection.pat_saved records: %+v", got)
 		}
+	})
+
+	t.Run("a stored token reaches the upstream in the configured header and template", func(t *testing.T) {
 		res := p.callRef(t, env.ref)
 		connExpectOK(t, "call with the pat", res)
 		calls := env.up.Calls()
@@ -662,25 +668,29 @@ func TestConnectionsArePersonal(t *testing.T) {
 		t.Fatalf("B sees A's connection as %q, want missing", got)
 	}
 	// B cannot use A's connection: B is told to connect, and the upstream is not called.
-	env.up.Reset()
-	connExpectText(t, "B before connecting", b.call(t, env), connTextNotConnected(s, env.slug))
-	if n := len(env.up.Requests()); n != 0 {
-		t.Fatalf("the upstream saw %d request(s) from B, who has no connection", n)
-	}
+	t.Run("a person without a connection is told to connect and reaches no upstream", func(t *testing.T) {
+		env.up.Reset()
+		connExpectText(t, "B before connecting", b.call(t, env), connTextNotConnected(s, env.slug))
+		if n := len(env.up.Requests()); n != 0 {
+			t.Fatalf("the upstream saw %d request(s) from B, who has no connection", n)
+		}
+	})
 	tokenB := connConnect(t, env, b.c)
 	if tokenA.AccessToken == tokenB.AccessToken {
 		t.Fatal("the provider issued the same token twice")
 	}
-	env.up.Reset()
-	for _, who := range []struct {
-		name string
-		p    connPerson
-		want string
-	}{{"A", a, tokenA.AccessToken}, {"B", b, tokenB.AccessToken}, {"A", a, tokenA.AccessToken}, {"B", b, tokenB.AccessToken}} {
+	t.Run("each call carries the caller's own token", func(t *testing.T) {
 		env.up.Reset()
-		connExpectOK(t, who.name+" call", who.p.call(t, env))
-		connEqual(t, who.name+"'s credential at the upstream", connAuths(env.up, "Authorization"), connBearer(who.want))
-	}
+		for _, who := range []struct {
+			name string
+			p    connPerson
+			want string
+		}{{"A", a, tokenA.AccessToken}, {"B", b, tokenB.AccessToken}, {"A", a, tokenA.AccessToken}, {"B", b, tokenB.AccessToken}} {
+			env.up.Reset()
+			connExpectOK(t, who.name+" call", who.p.call(t, env))
+			connEqual(t, who.name+"'s credential at the upstream", connAuths(env.up, "Authorization"), connBearer(who.want))
+		}
+	})
 
 	t.Run("one person's expiry, refresh and disconnect do not touch the other", func(t *testing.T) {
 		before := len(env.provider.Requests())

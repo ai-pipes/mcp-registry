@@ -249,3 +249,145 @@ func TestConnectionsDisconnectIgnoresRevokeFailures(t *testing.T) {
 		}
 	})
 }
+
+// ---- the server config changes after connecting, judged through the administrator's sync ----
+
+// TestConnectionsConfigChangeBySync judges the rule behind TestConnectionsConfigChange with no
+// /mcp: the administrator's own connection is the credential of a sync, so a changed server
+// configuration must expire it and the token must go nowhere (the same fingerprint rule as for a
+// call, resolveCredential being the one entry for both). The call-driven scenario stays: it also
+// judges the answer to an agent and the call log.
+func TestConnectionsConfigChangeBySync(t *testing.T) {
+	s := harness.Shared(t)
+	admin := s.Admin(t)
+	connLeakCheck(t, s, admin)
+	me := whoami(t, admin).UserID
+
+	// Where a token must never be sent after the change.
+	other := fakes.StartUpstream(t, fakes.UpstreamOptions{Tools: fakes.Tools("echo")})
+	otherProvider := connWatch(fakes.StartOAuthProvider(t))
+
+	expiring := []struct {
+		name   string
+		change func(b map[string]any)
+	}{
+		{"the upstream URL", func(b map[string]any) { b["url"] = other.URL }},
+		{"the authorize URL", func(b map[string]any) { connOAuthOf(b)["authorizeUrl"] = otherProvider.AuthorizeURL }},
+		{"the token URL", func(b map[string]any) { connOAuthOf(b)["tokenUrl"] = otherProvider.TokenURL }},
+		{"the client id", func(b map[string]any) { connOAuthOf(b)["clientId"] = "another-client" }},
+	}
+	for _, c := range expiring {
+		t.Run("a changed "+c.name+" expires the administrator's connection and the sync sends the token nowhere", func(t *testing.T) {
+			env := connNewOAuth(t, s, admin, connOpts{})
+			issued := env.provider.Issued()[0]
+			other.Reset()
+			// Control: before the change the sync works with the issued token.
+			env.up.Reset()
+			catalogSyncOK(t, admin, env.slug)
+			connExpectEveryRequestWith(t, "sync before the change", env.up, "Authorization", "Bearer "+issued.AccessToken)
+			env.up.Reset()
+
+			// An expiring token: were the fingerprint ignored, a refresh would go to the (new) token endpoint.
+			connExpireIn(t, s, me, env.slug, 59)
+			provRequests, otherRequests := len(env.provider.Requests()), len(otherProvider.Requests())
+			connChangeServer(t, admin, env.slug, c.change)
+			if got := connStatus(t, admin, env.slug); got != "expired" {
+				t.Fatalf("status right after the change: %q, want expired", got)
+			}
+			catalogExpectError(t, "sync after the change", admin.Do(t, "POST", "/api/servers/"+env.slug+"/sync", nil), 400, "needs_connection|"+catalogMsgNeedsConnection)
+			if row := connRowOf(t, s, me, env.slug); row.Status != "expired" {
+				t.Fatalf("row status %q", row.Status)
+			}
+			connExpectExpiredAudit(t, s, me, env.slug, "config_changed", 1)
+			// No token request anywhere, no request at either upstream carrying a credential.
+			if n := len(env.provider.Requests()) - provRequests; n != 0 {
+				t.Fatalf("the old provider got %d token request(s) after the change", n)
+			}
+			if n := len(otherProvider.Requests()) - otherRequests; n != 0 {
+				t.Fatalf("the new provider got %d token request(s) after the change", n)
+			}
+			if n := len(env.up.Requests()); n != 0 {
+				t.Fatalf("the old upstream got %d request(s)", n)
+			}
+			for _, r := range other.Requests() {
+				if r.Header.Get("Authorization") != "" {
+					t.Fatalf("the new upstream received a credential: %q", harness.Redact(r.Header.Get("Authorization")))
+				}
+			}
+			// Disconnect deletes without revoking, anywhere.
+			if r := admin.Do(t, "DELETE", "/api/connections/"+env.slug, nil); r.Status != 204 {
+				t.Fatalf("DELETE: %d", r.Status)
+			}
+			if n := len(env.provider.RevokeAttempts()) + len(otherProvider.RevokeAttempts()); n != 0 {
+				t.Fatalf("%d revoke attempt(s) after the config changed", n)
+			}
+			if _, ok := connGetRow(t, s, me, env.slug); ok {
+				t.Fatal("the row survived the disconnect")
+			}
+		})
+	}
+
+	t.Run("after a changed upstream URL a reconnect works and the sync sends the new token to the new place", func(t *testing.T) {
+		env := connNewOAuth(t, s, admin, connOpts{})
+		issued := env.provider.Issued()[0]
+		other.Reset()
+		connChangeServer(t, admin, env.slug, func(b map[string]any) { b["url"] = other.URL })
+		catalogExpectError(t, "sync after the change", admin.Do(t, "POST", "/api/servers/"+env.slug+"/sync", nil), 400, "needs_connection|"+catalogMsgNeedsConnection)
+		fresh := connConnect(t, env, admin)
+		if fresh.AccessToken == issued.AccessToken {
+			t.Fatal("reconnecting did not issue a new token")
+		}
+		other.Reset()
+		catalogSyncOK(t, admin, env.slug)
+		connExpectEveryRequestWith(t, "sync after reconnecting", other, "Authorization", "Bearer "+fresh.AccessToken)
+		if n := len(env.up.Requests()); n != 0 {
+			t.Fatalf("the old upstream got %d request(s)", n)
+		}
+	})
+
+	t.Run("other scopes or a changed or removed revoke URL expire nobody; a changed revoke URL is never used", func(t *testing.T) {
+		changes := []struct {
+			name         string
+			revokeAtOnce bool // the revoke URL is unchanged, so disconnect still revokes at it
+			change       func(env *connEnv, b map[string]any)
+		}{
+			{"scopes", true, func(_ *connEnv, b map[string]any) { connOAuthOf(b)["scopes"] = []string{"repo", "user"} }},
+			{"revoke URL to another provider", false, func(_ *connEnv, b map[string]any) { connOAuthOf(b)["revokeUrl"] = otherProvider.RevokeURL }},
+			{"revoke URL to the same endpoint with a query", false, func(env *connEnv, b map[string]any) { connOAuthOf(b)["revokeUrl"] = env.provider.RevokeURL + "?v=2" }},
+			{"revoke URL removed", false, func(_ *connEnv, b map[string]any) { delete(connOAuthOf(b), "revokeUrl") }},
+		}
+		for _, c := range changes {
+			env := connNewOAuth(t, s, admin, connOpts{})
+			issued := env.provider.Issued()[0]
+			connExpireIn(t, s, me, env.slug, 59)
+			connChangeServer(t, admin, env.slug, func(b map[string]any) { c.change(env, b) })
+			if got := connStatus(t, admin, env.slug); got != "ready" {
+				t.Fatalf("%s: status %q, want ready", c.name, got)
+			}
+			// The expiring token refreshes at the (unchanged) token endpoint: the connection is alive.
+			catalogSyncOK(t, admin, env.slug)
+			if got := connRefreshTokens(env.provider); len(got) == 0 || got[len(got)-1] != issued.RefreshToken {
+				t.Fatalf("%s: the refresh did not happen at the token endpoint", c.name)
+			}
+			if n := len(connAudit(t, s, "connection.expired", me, env.slug)); n != 0 {
+				t.Fatalf("%s: connection.expired recorded", c.name)
+			}
+			otherBefore := len(otherProvider.RevokeAttempts())
+			if r := admin.Do(t, "DELETE", "/api/connections/"+env.slug, nil); r.Status != 204 {
+				t.Fatalf("%s: DELETE %d", c.name, r.Status)
+			}
+			if c.revokeAtOnce {
+				// Control for the cases below: an unchanged revoke URL is used.
+				connEqual(t, c.name+": revoked", env.provider.Revoked(), []string{issued.RefreshToken})
+			} else if n := len(env.provider.RevokeAttempts()); n != 0 {
+				t.Fatalf("%s: %d revoke attempt(s) at the old revoke URL, want none (the URL changed)", c.name, n)
+			}
+			if n := len(otherProvider.RevokeAttempts()) - otherBefore; n != 0 {
+				t.Fatalf("%s: %d revoke attempt(s) at the new revoke URL, a token goes only where it was issued", c.name, n)
+			}
+			if _, ok := connGetRow(t, s, me, env.slug); ok {
+				t.Fatalf("%s: the row survived", c.name)
+			}
+		}
+	})
+}
