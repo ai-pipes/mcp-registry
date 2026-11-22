@@ -110,7 +110,7 @@ COMPAT_GO_TESTS := TestConfigRefused TestPlatformStartsOnReferenceDatabase TestP
 	TestCatalogOptimisticConcurrency TestCatalogValidation TestCatalogServers TestCLIServers \
 	TestPlatformBearerNeverOpensTheWebAPI \
 	TestCatalogSearch TestSearchStoredVectors TestCLIReindexEmpty TestConfigOpenAICompatibleEmbedder \
-	TestConfigModelDirMissing
+	TestConfigModelDirMissing TestSearchFailedReembedding TestSearchStaleRemoval
 
 # Subtests of the scenarios above that need a later milestone, as a go test -skip expression: one
 # entry per line below, joined with `|` (slash-separated regular expressions per level; spaces of a
@@ -208,11 +208,13 @@ COMPAT_GO_RUN := ^($(subst $(space),|,$(strip $(COMPAT_GO_TESTS))))$$
 # The deviations (compat/harness/deviations.go) whose decided behaviour the Go server has, for
 # compat-go and e2e-flows-go: config-errors (milestone 1), audit-login-via, create-user-keeps-role
 # and oidc-binding-kept (milestone 2), create-server-sync-exit (milestone 3), reindex-wording
-# (milestone 4). Left out, each until the milestone that implements it: token-429-retry-after and
-# request-id-on-refusals (the /mcp route, milestone 6), oauth-state-kept (connections, milestone 5),
+# and vector-kept-on-failed-reembedding and stale-removal-rechecks-catalog (milestone 4; their
+# scenarios, TestSearchFailedReembedding and TestSearchStaleRemoval, need no /mcp). Left out, each
+# until the milestone that implements it: token-429-retry-after and request-id-on-refusals (the
+# /mcp route, milestone 6), oauth-state-kept (connections, milestone 5),
 # ready-before-serving (its scenario compares a search made at once with a settled one, so it needs
 # /mcp, milestone 6; the Go server already loads the model before it listens).
-COMPAT_GO_FIXED := config-errors,audit-login-via,create-user-keeps-role,oidc-binding-kept,create-server-sync-exit,reindex-wording
+COMPAT_GO_FIXED := config-errors,audit-login-via,create-user-keeps-role,oidc-binding-kept,create-server-sync-exit,reindex-wording,vector-kept-on-failed-reembedding,stale-removal-rechecks-catalog
 
 # The suite against the Go image. The reference image (mcp-registry:compat-ts) must exist as well:
 # some scenarios compare with it on the same machine, and the new-database scenario starts from it.
