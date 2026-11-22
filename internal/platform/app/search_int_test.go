@@ -219,6 +219,58 @@ func TestAnEmbedderOutageLeavesTextRowsAndTheSweepFillsTheVectors(t *testing.T) 
 	}
 }
 
+// Decided deviation vector-kept-on-failed-reembedding. A server change while the embedder is down
+// rewrites the text of every document but keeps the vectors that exist and marks the rows; once
+// the embedder is back the sweep of the next worker pass refreshes them, with no reindex. The
+// outbox retries are taken out of the picture (the events are marked processed, as when the ten
+// attempts were exhausted) and the mark is aged past the sweep's one-hour back-off.
+func TestAFailedReembeddingKeepsTheVectorsAndTheSweepRefreshesThem(t *testing.T) {
+	url := pgtest.StartURL(t)
+	key := newKey(t)
+	emb := newFakeEmbeddingServer(t)
+	rs := startReal(t, url, key, remoteEmbedder(emb))
+	admin := person{rs, rs.person("alice", idapp.RoleAdmin)}
+	up := newMCPFake(t, "alpha", "beta")
+	registerFiles(t, admin, up)
+	waitCount(t, url, 2, vectorsOf, "files")
+	waitCount(t, url, 0, unprocessed)
+	before := queryText(t, url, embeddingsOf, "files")
+
+	emb.setDown(true)
+	body := serverBody("files", up.url(), map[string]any{"kind": "none"})
+	body["description"] = "changed while the embedder is down"
+	if status, _, raw := admin.do("PUT", "/api/servers/files", body); status != 200 {
+		t.Fatalf("PUT: %d %s", status, raw)
+	}
+	const marked = `select count(*)::int from search.documents where server = $1 and embed_failed_at is not null`
+	waitCount(t, url, 2, marked, "files")
+	if n := queryInt(t, url, vectorsOf, "files"); n != 2 {
+		t.Fatalf("%d vectors left after the failed re-embedding, want 2", n)
+	}
+	if after := queryText(t, url, embeddingsOf, "files"); after != before {
+		t.Fatal("the failed re-embedding changed the stored vectors")
+	}
+	if code := rs.stop("SIGTERM"); code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+
+	if _, err := execSQL(url, `update platform.outbox set processed_at = now() where processed_at is null`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := execSQL(url, `update search.documents set embed_failed_at = now() - interval '2 hours' where server = 'files'`); err != nil {
+		t.Fatal(err)
+	}
+	emb.setDown(false)
+	again := startReal(t, url, key, remoteEmbedder(emb))
+	waitCount(t, url, 0, marked, "files")
+	if after := queryText(t, url, embeddingsOf, "files"); after == before || queryInt(t, url, vectorsOf, "files") != 2 {
+		t.Error("the sweep did not refresh the vectors")
+	}
+	if code := again.stop("SIGTERM"); code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+}
+
 // Hiding a tool, unhiding it, disabling a server and enabling it again reach the index.
 func TestHidingAndDisablingReachTheIndex(t *testing.T) {
 	url := pgtest.StartURL(t)

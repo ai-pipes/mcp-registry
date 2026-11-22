@@ -32,7 +32,7 @@ func wrap(op string, err error) error { return fmt.Errorf("search index: %s: %w"
 // type never depends on which use the server sees first. Tool names carry dots, dashes and
 // underscores ("gitea.issues_create"): translate turns them into spaces so every part is a word of
 // its own. Weights: A = ref and title (simple), B = description, C = body (russian and english).
-const upsertSQL = `
+const upsertHead = `
 insert into search.documents
   (ref, server, title, description, body, tsv, embedding, updated_at)
 values (
@@ -52,14 +52,24 @@ on conflict (ref) do update set
   description = excluded.description,
   body = excluded.body,
   tsv = excluded.tsv,
+  updated_at = excluded.updated_at,`
+
+// upsertSQL sets the vector as given (NULL included) and clears the mark when it is a vector.
+const upsertSQL = upsertHead + `
   embedding = excluded.embedding,
   embed_failed_at = case when excluded.embedding is null
-    then search.documents.embed_failed_at else null end,
-  updated_at = excluded.updated_at`
+    then search.documents.embed_failed_at else null end`
+
+// upsertEmbedFailedSQL is the same statement with $6 NULL (a new row has no vector) and an
+// existing vector kept. Decided deviation vector-kept-on-failed-reembedding. A row that has a
+// vector gets the mark (an older one stays); a row without one keeps its mark as it is.
+const upsertEmbedFailedSQL = upsertHead + `
+  embedding = search.documents.embedding,
+  embed_failed_at = case when search.documents.embedding is not null
+    then coalesce(search.documents.embed_failed_at, now()) else search.documents.embed_failed_at end`
 
 // Upsert writes the document by ref. The stored row takes every column from doc: a nil Embedding
-// overwrites an existing vector with NULL (the TypeScript behaviour, kept on purpose) and keeps the
-// embed-failed mark; a vector clears the mark.
+// stores NULL and keeps the embed-failed mark; a vector clears the mark.
 func (p *PgIndex) Upsert(ctx context.Context, doc app.Document) error {
 	var embedding *string
 	if doc.Embedding != nil {
@@ -71,6 +81,16 @@ func (p *PgIndex) Upsert(ctx context.Context, doc app.Document) error {
 	}
 	if _, err := p.pool.Exec(ctx, upsertSQL, doc.Ref, doc.Server, doc.Title, doc.Description, doc.Body, embedding); err != nil {
 		return wrap("upsert", err)
+	}
+	return nil
+}
+
+// UpsertEmbedFailed writes the document when embedding it failed: text and tsv are replaced, an
+// existing vector is kept byte for byte and marked for the sweep (decided deviation
+// vector-kept-on-failed-reembedding), a new row is stored without a vector. doc.Embedding is ignored.
+func (p *PgIndex) UpsertEmbedFailed(ctx context.Context, doc app.Document) error {
+	if _, err := p.pool.Exec(ctx, upsertEmbedFailedSQL, doc.Ref, doc.Server, doc.Title, doc.Description, doc.Body, (*string)(nil)); err != nil {
+		return wrap("upsert embed failed", err)
 	}
 	return nil
 }
@@ -135,12 +155,14 @@ func candidates(rows pgx.Rows) ([]domain.Candidate, error) {
 	return out, nil
 }
 
-// WithoutEmbedding is up to limit documents stored without a vector, never-attempted ones first,
-// then by ref; a document marked failed within the last hour is skipped.
+// WithoutEmbedding is up to limit documents that need a vector: those stored without one and those
+// that kept a stale one after a failed re-embedding (marked, vector not NULL; decided deviation
+// vector-kept-on-failed-reembedding). Never-attempted ones first, then the oldest mark, then by
+// ref; a document marked failed within the last hour is skipped.
 func (p *PgIndex) WithoutEmbedding(ctx context.Context, limit int) ([]domain.Candidate, error) {
 	rows, err := p.pool.Query(ctx, `
 select ref, server from search.documents
-where embedding is null
+where (embedding is null or embed_failed_at is not null)
   and (embed_failed_at is null or embed_failed_at < now() - interval '1 hour')
 order by embed_failed_at nulls first, ref limit $1`, limit)
 	if err != nil {

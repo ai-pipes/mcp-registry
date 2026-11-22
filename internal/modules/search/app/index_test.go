@@ -179,21 +179,44 @@ func TestIndexToolsStopsCallingTheEmbedderAfterTheFirstFailure(t *testing.T) {
 	}
 }
 
-func TestIndexToolsAFailedRecomputeNullsAnExistingVector(t *testing.T) {
+// Decided deviation vector-kept-on-failed-reembedding: the TypeScript server nulls the vector.
+func TestIndexToolsAFailedRecomputeKeepsAnExistingVectorAndMarksTheRow(t *testing.T) {
 	w := newWorld(t)
-	w.cat.put("s", map[string]string{"a": "1"})
+	w.cat.put("s", map[string]string{"a": "1", "b": "2"})
 	if err := app.IndexTools(ctx, w.d, "s"); err != nil {
 		t.Fatal(err)
 	}
-	if w.doc("s.a").Embedding == nil {
+	before := w.doc("s.a").Embedding
+	if before == nil {
 		t.Fatal("no vector to begin with")
 	}
+	w.cat.tool("s", "a").Description = "changed text"
 	w.failAll()
 	if err := app.IndexTools(ctx, w.d, "s"); !errors.Is(err, errEmbedder) {
 		t.Fatalf("err = %v", err)
 	}
-	if w.doc("s.a").Embedding != nil {
-		t.Fatal("the TypeScript behaviour: the old vector becomes NULL")
+	d := w.doc("s.a")
+	if !slices.Equal(d.Embedding, before) {
+		t.Fatal("the old vector was not kept")
+	}
+	if d.Description != "changed text" {
+		t.Fatalf("the text columns are not updated: %+v", d)
+	}
+	if !w.isStale("s.a") || !w.isStale("s.b") {
+		t.Fatal("the rows are not marked as needing a vector")
+	}
+}
+
+func TestIndexToolsAFailedFirstEmbeddingStoresTheRowWithoutAVectorAndWithoutTheKeepPath(t *testing.T) {
+	w := newWorld(t)
+	w.cat.put("s", map[string]string{"a": "1"})
+	w.failAll()
+	_ = app.IndexTools(ctx, w.d, "s")
+	if d := w.doc("s.a"); d.Ref == "" || d.Embedding != nil {
+		t.Fatalf("document = %+v", d)
+	}
+	if w.isStale("s.a") {
+		t.Fatal("a row that never had a vector is not stale")
 	}
 }
 
