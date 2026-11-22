@@ -12,17 +12,18 @@ import (
 // so they are idempotent. A handler that returns an error is retried by the outbox.
 type EventHandler = func(ctx context.Context, payload map[string]any) error
 
-var (
-	errNoServer = errors.New("event payload has no server")
-	errNoRefs   = errors.New("event payload has no refs")
-)
+// ErrBadPayload is a catalog event whose payload is not the shape the catalog writes.
+var ErrBadPayload = errors.New("event payload is malformed")
 
 // EventHandlers is the table of outbox handlers for the catalog events that change what is
 // searchable, keyed by event type (exactly catalog.EventTypes()):
 //
 //   - tools_changed {server, refs}: IndexToolRefs, so a tool the admin hid, or that is gone, is
 //     removed.
-//   - tools_removed {refs}: removes the documents by ref without asking the catalog.
+//   - tools_removed {server, refs}: removes the documents by ref without asking the catalog.
+//     Reproduced from TypeScript on purpose (owner decision pending): a removal delivered late,
+//     after the tool came back, deletes a live document, and nothing but the next event for that
+//     tool or `reindex` restores the row (the sweep only fills missing vectors of existing rows).
 //   - server_changed {server}: IndexTools for the whole server (name, description and status are
 //     part of every passage); a disabled server loses all its documents.
 //
@@ -33,57 +34,25 @@ var (
 func EventHandlers(d Deps) map[string]EventHandler {
 	return map[string]EventHandler{
 		catalog.EventToolsChanged: func(ctx context.Context, p map[string]any) error {
-			server, err := serverOf(p)
-			if err != nil {
-				return err
+			ev, ok := catalog.ParseToolsEvent(p)
+			if !ok {
+				return ErrBadPayload
 			}
-			refs, err := refsOf(p)
-			if err != nil {
-				return err
-			}
-			return IndexToolRefs(ctx, d, server, refs)
+			return IndexToolRefs(ctx, d, ev.Server, ev.Refs)
 		},
 		catalog.EventToolsRemoved: func(ctx context.Context, p map[string]any) error {
-			refs, err := refsOf(p)
-			if err != nil {
-				return err
+			ev, ok := catalog.ParseToolsEvent(p)
+			if !ok {
+				return ErrBadPayload
 			}
-			return RemoveTools(ctx, d, refs)
+			return RemoveTools(ctx, d, ev.Refs)
 		},
 		catalog.EventServerChanged: func(ctx context.Context, p map[string]any) error {
-			server, err := serverOf(p)
-			if err != nil {
-				return err
+			server, ok := catalog.ParseServerEvent(p)
+			if !ok {
+				return ErrBadPayload
 			}
 			return IndexTools(ctx, d, server)
 		},
 	}
-}
-
-func serverOf(p map[string]any) (string, error) {
-	server, ok := p["server"].(string)
-	if !ok {
-		return "", errNoServer
-	}
-	return server, nil
-}
-
-// refsOf reads the refs of a payload as the outbox decodes it ([]any) or as a producer builds it
-// ([]string); an empty list is fine.
-func refsOf(p map[string]any) ([]string, error) {
-	switch refs := p["refs"].(type) {
-	case []string:
-		return refs, nil
-	case []any:
-		out := make([]string, 0, len(refs))
-		for _, r := range refs {
-			s, ok := r.(string)
-			if !ok {
-				return nil, errNoRefs
-			}
-			out = append(out, s)
-		}
-		return out, nil
-	}
-	return nil, errNoRefs
 }

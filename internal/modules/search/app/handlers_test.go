@@ -2,6 +2,7 @@ package app_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"slices"
 	"sort"
@@ -86,7 +87,7 @@ func TestToolsRemovedDeletesByRefWithoutConsultingTheCatalog(t *testing.T) {
 	}
 	// the stale-event peculiarity: a live document of a revived tool is deleted all the same
 	w.cat.put("gitea", map[string]string{"b": "back again"})
-	if err := h(ctx, map[string]any{"refs": []any{"gitea.b"}}); err != nil {
+	if err := h(ctx, map[string]any{"server": "gitea", "refs": []any{"gitea.b"}}); err != nil {
 		t.Fatal(err)
 	}
 	if len(w.refs()) != 0 {
@@ -164,28 +165,86 @@ func TestHandlerFailureRule(t *testing.T) {
 	})
 }
 
+func TestToolsChangedWithNoRefsIndexesNothingNotTheWholeServer(t *testing.T) {
+	w := newWorld(t)
+	w.cat.put("g", map[string]string{"a": "1", "b": "2"})
+	w.seed("g.stale", true)
+	h := app.EventHandlers(w.d)[catalog.EventToolsChanged]
+	for _, refs := range []any{[]any{}, []string{}} {
+		if err := h(ctx, map[string]any{"server": "g", "refs": refs}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(w.emb.passages) != 0 || w.j.count("upsert") != 0 || w.j.count("remove") != 0 {
+		t.Fatalf("calls = %v", w.j.all())
+	}
+	if got := w.refs(); !slices.Equal(got, []string{"g.stale"}) {
+		t.Fatalf("refs = %v", got)
+	}
+}
+
+// The payloads below are the documented shapes of what the catalog writes ({server, refs} and
+// {server}), sent through encoding/json as the outbox stores and returns them. The catalog's own
+// constructors are not reachable from search/app (modules talk through the root package only),
+// and its parsers are what the handlers use, so a key rename that breaks the parsers fails here.
+func TestHandlersAcceptThePayloadsAsTheOutboxReturnsThem(t *testing.T) {
+	w := newWorld(t)
+	w.cat.put("gitea", map[string]string{"issue": "create issue"})
+	h := app.EventHandlers(w.d)
+	roundTrip := func(p map[string]any) map[string]any {
+		raw, err := json.Marshal(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out map[string]any
+		if err := json.Unmarshal(raw, &out); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	changed := roundTrip(map[string]any{"server": "gitea", "refs": []string{"gitea.issue"}})
+	if ev, ok := catalog.ParseToolsEvent(changed); !ok || ev.Server != "gitea" || !slices.Equal(ev.Refs, []string{"gitea.issue"}) {
+		t.Fatalf("the catalog's own parser refuses the payload: %v", changed)
+	}
+	if err := h[catalog.EventToolsChanged](ctx, changed); err != nil {
+		t.Fatal(err)
+	}
+	if got := w.refs(); !slices.Equal(got, []string{"gitea.issue"}) {
+		t.Fatalf("refs = %v", got)
+	}
+	if err := h[catalog.EventServerChanged](ctx, roundTrip(map[string]any{"server": "gitea"})); err != nil {
+		t.Fatal(err)
+	}
+	if err := h[catalog.EventToolsRemoved](ctx, roundTrip(map[string]any{"server": "gitea", "refs": []string{"gitea.issue"}})); err != nil {
+		t.Fatal(err)
+	}
+	if len(w.refs()) != 0 {
+		t.Fatalf("refs = %v", w.refs())
+	}
+}
+
 func TestMalformedPayloadsFail(t *testing.T) {
 	h := app.EventHandlers(newWorld(t).d)
 	cases := []struct {
 		name    string
 		handler func(context.Context, map[string]any) error
 		payload map[string]any
-		want    string
 	}{
-		{"changed, no server", h[catalog.EventToolsChanged], map[string]any{"refs": []any{}}, "event payload has no server"},
-		{"changed, server not a string", h[catalog.EventToolsChanged], map[string]any{"server": 1, "refs": []any{}}, "event payload has no server"},
-		{"changed, no refs", h[catalog.EventToolsChanged], map[string]any{"server": "g"}, "event payload has no refs"},
-		{"changed, refs a string", h[catalog.EventToolsChanged], map[string]any{"server": "g", "refs": "x"}, "event payload has no refs"},
-		{"changed, a ref is a number", h[catalog.EventToolsChanged], map[string]any{"server": "g", "refs": []any{1}}, "event payload has no refs"},
-		{"removed, refs missing", h[catalog.EventToolsRemoved], map[string]any{"server": "g"}, "event payload has no refs"},
-		{"removed, a ref is a number", h[catalog.EventToolsRemoved], map[string]any{"server": "g", "refs": []any{1}}, "event payload has no refs"},
-		{"server changed, empty", h[catalog.EventServerChanged], map[string]any{}, "event payload has no server"},
+		{"changed, no server", h[catalog.EventToolsChanged], map[string]any{"refs": []any{}}},
+		{"changed, server not a string", h[catalog.EventToolsChanged], map[string]any{"server": 1, "refs": []any{}}},
+		{"changed, no refs", h[catalog.EventToolsChanged], map[string]any{"server": "g"}},
+		{"changed, refs a string", h[catalog.EventToolsChanged], map[string]any{"server": "g", "refs": "x"}},
+		{"changed, a ref is a number", h[catalog.EventToolsChanged], map[string]any{"server": "g", "refs": []any{1}}},
+		{"removed, no server (the catalog never writes that)", h[catalog.EventToolsRemoved], map[string]any{"refs": []any{"g.a"}}},
+		{"removed, refs missing", h[catalog.EventToolsRemoved], map[string]any{"server": "g"}},
+		{"removed, a ref is a number", h[catalog.EventToolsRemoved], map[string]any{"server": "g", "refs": []any{1}}},
+		{"server changed, empty", h[catalog.EventServerChanged], map[string]any{}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			err := c.handler(ctx, c.payload)
-			if err == nil || err.Error() != c.want {
-				t.Fatalf("err = %v, want %q", err, c.want)
+			if !errors.Is(err, app.ErrBadPayload) {
+				t.Fatalf("err = %v", err)
 			}
 		})
 	}

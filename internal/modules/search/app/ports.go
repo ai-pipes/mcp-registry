@@ -57,7 +57,8 @@ type SearchIndex interface {
 	Remove(ctx context.Context, refs []string) error
 	// RefsOfServer is the refs indexed for a server, ordered by ref.
 	RefsOfServer(ctx context.Context, server string) ([]string, error)
-	// Servers is the servers that have at least one document.
+	// Servers is the servers that have at least one document, ordered by server (that order
+	// decides which error ReindexAll reports first).
 	Servers(ctx context.Context) ([]string, error)
 	// Count is the number of rows of the whole table.
 	Count(ctx context.Context) (int, error)

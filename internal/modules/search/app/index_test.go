@@ -348,3 +348,40 @@ func TestRemoveTools(t *testing.T) {
 
 // keep the catalog import used even if the types above change
 var _ = catalog.IndexedTool{}
+
+func TestIndexToolsATitleIsStoredAsGivenNilStaysNilAndEmptyStaysEmpty(t *testing.T) {
+	w := newWorld(t)
+	w.cat.put("s", map[string]string{"none": "x", "empty": "y", "some": "z"})
+	empty, some := "", "T"
+	w.cat.tool("s", "empty").Title = &empty
+	w.cat.tool("s", "some").Title = &some
+	if err := app.IndexTools(ctx, w.d, "s"); err != nil {
+		t.Fatal(err)
+	}
+	if d := w.doc("s.none"); d.Title != nil {
+		t.Fatalf("nil title stored as %q", *d.Title)
+	}
+	if d := w.doc("s.empty"); d.Title == nil || *d.Title != "" {
+		t.Fatalf("an empty title (TypeScript keeps it as it is) = %v", d.Title)
+	}
+	if d := w.doc("s.some"); d.Title == nil || *d.Title != "T" {
+		t.Fatalf("title = %v", d.Title)
+	}
+	// and the passage treats nil and "" alike
+	if w.emb.passages[0] != "s. s server\nempty\ny" || w.emb.passages[1] != "s. s server\nnone\nx" {
+		t.Fatalf("passages = %q", w.emb.passages)
+	}
+}
+
+func TestIndexToolsASchemaErrorUpsertsNothingOfThatServerAndIsReturned(t *testing.T) {
+	w := newWorld(t)
+	w.cat.put("s", map[string]string{"a": "1", "b": "2", "c": "3"})
+	w.cat.tool("s", "b").InputSchema = json.RawMessage(`{"properties":`)
+	err := app.IndexTools(ctx, w.d, "s")
+	if err == nil || errors.Is(err, errEmbedder) {
+		t.Fatalf("err = %v", err)
+	}
+	if w.j.count("upsert") != 0 || len(w.refs()) != 0 {
+		t.Fatalf("calls = %v", w.j.all())
+	}
+}

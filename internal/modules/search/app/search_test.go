@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/ai-pipes/mcp-registry/internal/kernel"
 	"github.com/ai-pipes/mcp-registry/internal/modules/search/app"
@@ -51,8 +53,8 @@ func TestSearchToolsNothingToSearchTouchesNothing(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			hits, err := app.SearchTools(ctx, w.d, c.query, c.limit, c.servers)
-			if err != nil || len(hits) != 0 {
-				t.Fatalf("hits = %v, err = %v", hits, err)
+			if err != nil || len(hits) != 0 || hits == nil {
+				t.Fatalf("hits = %#v (want an empty non-nil slice), err = %v", hits, err)
 			}
 		})
 	}
@@ -240,5 +242,74 @@ func TestSearchToolsBothHalvesAreStartedBeforeEitherIsAwaited(t *testing.T) {
 	// Both ran; their relative order is not part of the contract.
 	if w.j.count("fts") != 1 || w.j.count("ready") != 1 || w.j.count("embedq") != 1 || w.j.count("vector") != 1 {
 		t.Fatalf("calls = %v", w.j.all())
+	}
+}
+
+func TestSearchToolsAPanicInTheFullTextQueryBecomesAnError(t *testing.T) {
+	w := searchWorld(t)
+	w.idx.panicFTS = true
+	hits, err := app.SearchTools(ctx, w.d, "merge", 10, []string{"gitea"})
+	if !errors.Is(err, app.ErrPanicked) || hits != nil {
+		t.Fatalf("hits = %v, err = %v", hits, err)
+	}
+	if strings.Contains(err.Error(), "merge") || strings.Contains(fmt.Sprint(w.log.logs), "merge") {
+		t.Fatal("the panic value leaked")
+	}
+}
+
+func TestSearchToolsAPanicInTheVectorHalfIsTheTextOnlyFallbackWithTheUsualWarning(t *testing.T) {
+	w := searchWorld(t)
+	w.emb.panicQuery = true
+	hits, err := app.SearchTools(ctx, w.d, "merge", 10, []string{"gitea"})
+	if err != nil || len(hits) != 1 || hits[0].Score != 0.5 {
+		t.Fatalf("hits = %v, err = %v", hits, err)
+	}
+	if len(w.log.logs) != 1 || w.log.logs[0].msg != app.MsgVectorFallback ||
+		!slices.Equal(w.log.logs[0].args, []any{"err", kernel.ErrorLabel(app.ErrPanicked)}) {
+		t.Fatalf("logs = %v", w.log.logs)
+	}
+	if strings.Contains(fmt.Sprint(w.log.logs), "merge") {
+		t.Fatal("the panic value leaked")
+	}
+}
+
+func TestSearchToolsAPanicInTheVectorHalfStillWaitsForTheFullTextHalf(t *testing.T) {
+	w := searchWorld(t)
+	w.emb.panicQuery = true
+	w.idx.panicFTS = true
+	if _, err := app.SearchTools(ctx, w.d, "merge", 10, []string{"gitea"}); !errors.Is(err, app.ErrPanicked) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestSearchToolsTheHalvesReallyRunAtTheSameTime(t *testing.T) {
+	w := searchWorld(t)
+	ftsIn, vecIn := make(chan struct{}), make(chan struct{})
+	timeout := func() <-chan time.Time { return time.After(10 * time.Second) }
+	var failures []string
+	var mu sync.Mutex
+	fail := func(s string) { mu.Lock(); failures = append(failures, s); mu.Unlock() }
+	// each half is in flight and waits until the other one has started
+	w.idx.onFTS = func() {
+		close(ftsIn)
+		select {
+		case <-vecIn:
+		case <-timeout():
+			fail("the vector half never started while the full-text query was in flight")
+		}
+	}
+	w.emb.onQuery = func() {
+		close(vecIn)
+		select {
+		case <-ftsIn:
+		case <-timeout():
+			fail("the full-text query never started while the vector half was in flight")
+		}
+	}
+	if _, err := app.SearchTools(ctx, w.d, "merge", 10, []string{"gitea"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(failures) != 0 {
+		t.Fatal(failures)
 	}
 }

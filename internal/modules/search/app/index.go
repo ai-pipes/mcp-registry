@@ -122,8 +122,10 @@ func deref(s *string) string {
 	return *s
 }
 
-// RemoveTools deletes the documents of the refs without asking the catalog (a late removal event
-// can delete a document the catalog has offered again since; the next event or reindex restores it).
+// RemoveTools deletes the documents of the refs without asking the catalog. Reproduced from
+// TypeScript on purpose (owner decision pending): a removal event delivered late, after the tool
+// was offered again, deletes a live document, and neither the sweep (it only fills missing
+// vectors of existing rows) nor anything but the next event for that tool or `reindex` restores it.
 func RemoveTools(ctx context.Context, d Deps, refs []string) error {
 	if len(refs) == 0 {
 		return nil

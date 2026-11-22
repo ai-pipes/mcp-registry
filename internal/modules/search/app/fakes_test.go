@@ -62,6 +62,10 @@ type memIndex struct {
 	lastFloor float64
 	lastLimit int
 
+	// onFTS runs at the start of FTSCandidates; panicFTS makes it panic.
+	onFTS    func()
+	panicFTS bool
+
 	errUpsert, errRemove, errRefs, errServers, errCount, errWithout, errMark, errFTS, errVec error
 }
 
@@ -168,6 +172,12 @@ func (m *memIndex) MarkEmbedFailed(_ context.Context, ref string) error {
 
 func (m *memIndex) FTSCandidates(_ context.Context, query string, limit int, servers []string) ([]domain.Candidate, error) {
 	m.j.add("fts")
+	if m.onFTS != nil {
+		m.onFTS()
+	}
+	if m.panicFTS {
+		panic("fts exploded on: " + query)
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.ftsServers = append(m.ftsServers, servers)
@@ -251,6 +261,9 @@ type fakeEmbedder struct {
 	fail      func(n int, text string) error
 	failQuery error
 	short     bool // answer vectors of the wrong length
+	// onQuery runs at the start of EmbedQuery; panicQuery makes it panic.
+	onQuery    func()
+	panicQuery bool
 
 	passages []string
 	queries  []string
@@ -291,6 +304,12 @@ func (e *fakeEmbedder) EmbedQuery(_ context.Context, text string) ([]float32, er
 	err := e.failQuery
 	e.mu.Unlock()
 	e.j.add("embedq")
+	if e.onQuery != nil {
+		e.onQuery()
+	}
+	if e.panicQuery {
+		panic("embedder exploded on: " + text)
+	}
 	if err != nil {
 		return nil, err
 	}
