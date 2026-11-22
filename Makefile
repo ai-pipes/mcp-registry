@@ -127,8 +127,10 @@ COMPAT_GO_TESTS := TestConfigRefused TestPlatformStartsOnReferenceDatabase TestP
 #   - TestCLICreateToken, "the token opens /mcp; a changed token does not" and "a second token for
 #     the same person is another token that works too".
 #   milestone 6 also (the catalog scenarios of milestone 3 reach it)
-#   - TestCatalogServers, "admin routes refuse members before the body is read": its route table
-#     includes GET /api/calls (the call log); "upstream calls": a tool call through /mcp.
+#   - TestCatalogServers, "admin routes refuse members before the body is read", its subtest
+#     "GET calls" and "anonymous GET calls" (GET /api/calls, the call log; every other route is
+#     judged);
+#     "upstream calls": a tool call through /mcp.
 #   - TestPlatformBearerNeverOpensTheWebAPI, "the same token opens /mcp (control)" and "a bad token
 #     on /mcp is 401 with a challenge"; the loop over /api paths in its body runs.
 #   milestone 5 (connections: PUT /api/connections/<slug>/pat)
@@ -151,7 +153,8 @@ COMPAT_GO_SKIP_ENTRIES := \
 	^TestIdentityDefaultRateLimits$$/^the_31st_failed_token_check_is_429 \
 	^TestCLICreateToken$$/^the_token_opens_ \
 	^TestCLICreateToken$$/^a_second_token_for_the_same_person_is_another_token_that_works_too$$ \
-	^TestCatalogServers$$/^admin_routes_refuse_members_before_the_body_is_read$$ \
+	^TestCatalogServers$$/^admin_routes_refuse_members_before_the_body_is_read$$/^GET_calls$$ \
+	^TestCatalogServers$$/^admin_routes_refuse_members_before_the_body_is_read$$/^anonymous_GET_calls$$ \
 	^TestCatalogServers$$/^upstream_calls$$ \
 	^TestPlatformBearerNeverOpensTheWebAPI$$/^the_same_token_opens_ \
 	^TestPlatformBearerNeverOpensTheWebAPI$$/^a_bad_token_on_ \
