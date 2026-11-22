@@ -97,7 +97,7 @@ func Run(ctx context.Context, o Options) int {
 		// A signal arrived while FirstStart ran: do not start the worker or open the port.
 		return stopBeforeServing(ctx, logger, pool)
 	}
-	stopWorker := startOutbox(logger, pool, asm.handlers)
+	stopWorker := startOutbox(logger, pool, asm.handlers, asm.sweep)
 	stopScheduler := scheduler.Start(logger, asm.jobs)
 
 	ln := o.listener
@@ -172,8 +172,10 @@ func runFirstStart(ctx context.Context, logger *slog.Logger, funcs []func(contex
 // startOutbox starts the delivery worker, but only when there is a handler. The worker marks an
 // event of a type without a handler as processed (the TypeScript server registers every handler,
 // so there it never happens); a Go image pointed at a 1.0.x database must therefore not run one
-// before the handlers exist, or it would consume the pending catalog events for good.
-func startOutbox(logger *slog.Logger, pool *pgxpool.Pool, handlers map[string]outbox.Handler) func(context.Context) error {
+// before the handlers exist, or it would consume the pending catalog events for good. The merged
+// sweep (nil when no module has one) runs from the worker's loop, so without handlers it does not
+// run either. assemble has already checked that the table covers every emitted event type.
+func startOutbox(logger *slog.Logger, pool *pgxpool.Pool, handlers map[string]outbox.Handler, sweep *outbox.Sweep) func(context.Context) error {
 	if len(handlers) == 0 {
 		logger.Info(msgNoOutboxWorker)
 		return func(context.Context) error { return nil }
@@ -183,6 +185,7 @@ func startOutbox(logger *slog.Logger, pool *pgxpool.Pool, handlers map[string]ou
 		Handlers: handlers,
 		Interval: outboxInterval,
 		Logger:   logger,
+		Sweep:    sweep,
 	})
 }
 

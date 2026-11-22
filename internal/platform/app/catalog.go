@@ -80,6 +80,7 @@ func (w catalogWiring) module() Module {
 		Routes:   routes,
 		Prefixes: prefixes,
 		Jobs:     []scheduler.Job{{Name: "catalog-sync", Every: w.interval, Run: w.syncAll}},
+		Emits:    catalog.EventTypes(),
 		Commands: w.commands(),
 	}
 }

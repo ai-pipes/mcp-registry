@@ -253,3 +253,52 @@ func (w *worker) runSweep(ctx context.Context, s *Sweep) (err error) {
 	}()
 	return s.Run(ctx)
 }
+
+// ComposeSweeps merges the sweeps of several modules into the one the worker takes. Each member
+// keeps its own Every (the first run is on the first pass); the composite wakes at the shortest
+// period and runs the members that are due, one after another, so two sweeps never overlap each
+// other or a delivery. A member that returns an error or panics does not stop the others; their
+// errors are joined (a panic stays recognisable for the worker's log). Members without Run are
+// ignored; no members give nil.
+func ComposeSweeps(sweeps ...Sweep) *Sweep { return composeSweeps(time.Now, sweeps) }
+
+func composeSweeps(now func() time.Time, sweeps []Sweep) *Sweep {
+	members := make([]Sweep, 0, len(sweeps))
+	for _, s := range sweeps {
+		if s.Run != nil {
+			members = append(members, s)
+		}
+	}
+	if len(members) == 0 {
+		return nil
+	}
+	every := members[0].Every
+	for _, s := range members[1:] {
+		every = min(every, s.Every)
+	}
+	last := make([]time.Time, len(members))
+	ran := make([]bool, len(members))
+	return &Sweep{Every: every, Run: func(ctx context.Context) error {
+		var errs []error
+		for i, s := range members {
+			t := now()
+			if ran[i] && t.Sub(last[i]) < s.Every {
+				continue
+			}
+			ran[i], last[i] = true, t
+			if err := runMember(ctx, s); err != nil {
+				errs = append(errs, err)
+			}
+		}
+		return errors.Join(errs...)
+	}}
+}
+
+func runMember(ctx context.Context, s Sweep) (err error) {
+	defer func() {
+		if recover() != nil {
+			err = handlerPanic{frames: logging.PanicFrames()}
+		}
+	}()
+	return s.Run(ctx)
+}

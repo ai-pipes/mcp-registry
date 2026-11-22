@@ -2,7 +2,16 @@ package catalog_test
 
 import (
 	"context"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"io/fs"
+	"maps"
+	"path/filepath"
 	"reflect"
+	"slices"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -206,5 +215,103 @@ func TestServiceCommandsReachTheUseCases(t *testing.T) {
 		t.Fatal("a member cannot register a server")
 	} else if de, _ := kernel.AsDomainError(err); de == nil || de.Code != catalog.CodeForbidden {
 		t.Fatalf("RegisterServer: %v", err)
+	}
+}
+
+// EventTypes must list every event type the module emits. The source of truth is the code, read
+// with go/parser (not text search): every string constant named Event* in the domain, and every
+// `kernel.Event{Type: ...}` literal in the module's non-test sources, must resolve to a listed
+// type. A new event constant or constructor added without extending EventTypes fails here.
+func TestEventTypesListsEveryEventTheCatalogEmits(t *testing.T) {
+	listed := map[string]bool{}
+	for _, typ := range catalog.EventTypes() {
+		if listed[typ] {
+			t.Errorf("%q is listed twice", typ)
+		}
+		listed[typ] = true
+	}
+
+	fset := token.NewFileSet()
+	consts := map[string]string{} // Event* constant name -> value
+	var literals []string         // identifiers or string values used as kernel.Event{Type: x}
+	err := filepath.WalkDir(".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return err
+		}
+		f, err := parser.ParseFile(fset, path, nil, 0)
+		if err != nil {
+			return err
+		}
+		ast.Inspect(f, func(n ast.Node) bool {
+			switch n := n.(type) {
+			case *ast.ValueSpec:
+				for i, name := range n.Names {
+					if !strings.HasPrefix(name.Name, "Event") || i >= len(n.Values) {
+						continue
+					}
+					if lit, ok := n.Values[i].(*ast.BasicLit); ok && lit.Kind == token.STRING {
+						v, _ := strconv.Unquote(lit.Value)
+						consts[name.Name] = v
+					}
+				}
+			case *ast.CompositeLit:
+				sel, ok := n.Type.(*ast.SelectorExpr)
+				if !ok || sel.Sel.Name != "Event" {
+					return true
+				}
+				for _, el := range n.Elts {
+					kv, ok := el.(*ast.KeyValueExpr)
+					if !ok || kv.Key.(*ast.Ident).Name != "Type" {
+						continue
+					}
+					switch v := kv.Value.(type) {
+					case *ast.Ident:
+						literals = append(literals, v.Name)
+					case *ast.BasicLit:
+						s, _ := strconv.Unquote(v.Value)
+						literals = append(literals, "\x00"+s)
+					default:
+						t.Errorf("%s: event type is not a constant or a literal", fset.Position(kv.Pos()))
+					}
+				}
+			}
+			return true
+		})
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(consts) < 3 || len(literals) < 3 {
+		t.Fatalf("the scan found %d constants and %d event literals: it is not looking at the sources", len(consts), len(literals))
+	}
+	for name, v := range consts {
+		if !listed[v] {
+			t.Errorf("constant %s (%q) is not in EventTypes", name, v)
+		}
+	}
+	for _, l := range literals {
+		v, ok := consts[l]
+		if strings.HasPrefix(l, "\x00") {
+			v, ok = l[1:], true
+		}
+		if !ok {
+			t.Errorf("event literal uses %q, which is not an Event* constant", l)
+		} else if !listed[v] {
+			t.Errorf("event type %q is emitted but not in EventTypes", v)
+		}
+	}
+	for typ := range listed {
+		if !slices.Contains(slices.Collect(maps.Values(consts)), typ) {
+			t.Errorf("EventTypes lists %q, which no Event* constant declares", typ)
+		}
+	}
+}
+
+func TestEventTypesReturnsACopy(t *testing.T) {
+	first := catalog.EventTypes()
+	first[0] = "changed"
+	if catalog.EventTypes()[0] == "changed" {
+		t.Fatal("EventTypes returns its own storage")
 	}
 }

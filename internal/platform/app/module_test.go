@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/ai-pipes/mcp-registry/internal/kernel"
+	"github.com/ai-pipes/mcp-registry/internal/modules/catalog"
 	"github.com/ai-pipes/mcp-registry/internal/platform/httpx"
 	"github.com/ai-pipes/mcp-registry/internal/platform/outbox"
 )
@@ -147,5 +148,84 @@ func TestModuleRoutesAndPrefixesAreServedBeforeStaticFilesAndTheShell(t *testing
 	}
 	if w := do(h, nav("/catalog")); w.Code != 200 || w.Body.String() != "<shell>" {
 		t.Errorf("/catalog: %d %q", w.Code, w.Body)
+	}
+}
+
+func okHandler(context.Context, map[string]any) error { return nil }
+
+func handlersFor(types ...string) map[string]outbox.Handler {
+	m := map[string]outbox.Handler{}
+	for _, typ := range types {
+		m[typ] = okHandler
+	}
+	return m
+}
+
+// The worker marks an event of a type without a handler as processed, so a table that handles
+// only some of the types a module emits would lose the others for good.
+func TestAssembleRefusesAnIncompleteHandlerTableAndNamesTheMissingTypes(t *testing.T) {
+	_, err := assemble([]Module{
+		{Emits: []string{"a.one", "a.two", "a.three"}},
+		{Handlers: handlersFor("a.two")},
+	})
+	if err == nil {
+		t.Fatal("an incomplete table was accepted")
+	}
+	for _, want := range []string{"a.one", "a.three"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the error does not name %s: %v", want, err)
+		}
+	}
+	if strings.Contains(err.Error(), "a.two") {
+		t.Errorf("the error names a handled type: %v", err)
+	}
+}
+
+func TestAssembleAcceptsACompleteTableFromAnyModuleOrder(t *testing.T) {
+	a, err := assemble([]Module{
+		{Handlers: handlersFor("a.two", "extra.type")},
+		{Emits: []string{"a.one", "a.two"}, Handlers: handlersFor("a.one")},
+	})
+	if err != nil || len(a.handlers) != 3 {
+		t.Fatalf("%v %d", err, len(a.handlers))
+	}
+}
+
+// An empty table means "worker off": nothing is checked, however many types are emitted.
+func TestAssembleAcceptsAnEmptyTableWhateverIsEmitted(t *testing.T) {
+	a, err := assemble([]Module{{Emits: []string{"a.one"}}})
+	if err != nil || len(a.handlers) != 0 {
+		t.Fatalf("%v %d", err, len(a.handlers))
+	}
+}
+
+func TestAssembleComposesTheSweepsOfAllModules(t *testing.T) {
+	var ran []string
+	sweep := func(name string, every time.Duration) outbox.Sweep {
+		return outbox.Sweep{Every: every, Run: func(context.Context) error { ran = append(ran, name); return nil }}
+	}
+	a, err := assemble([]Module{
+		{Sweeps: []outbox.Sweep{sweep("one", 5*time.Minute)}},
+		{},
+		{Sweeps: []outbox.Sweep{sweep("two", time.Minute), sweep("three", time.Hour)}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.sweep == nil || a.sweep.Every != time.Minute {
+		t.Fatalf("composed sweep: %+v", a.sweep)
+	}
+	if err := a.sweep.Run(context.Background()); err != nil || !slices.Equal(ran, []string{"one", "two", "three"}) {
+		t.Fatalf("ran %v: %v", ran, err)
+	}
+	if a, _ := assemble([]Module{{}}); a.sweep != nil {
+		t.Error("no sweeps must leave the sweep nil")
+	}
+}
+
+func TestTheDefaultModulesAnnounceTheCatalogEventTypes(t *testing.T) {
+	got := modules(Runtime{Clock: kernel.SystemClock{}, Logger: discardLogger(), Version: "1.2.3"})
+	if !slices.Equal(got[2].Emits, catalog.EventTypes()) {
+		t.Fatalf("catalog Emits = %v, want %v", got[2].Emits, catalog.EventTypes())
 	}
 }
