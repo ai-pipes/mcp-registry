@@ -1,0 +1,62 @@
+[
+  {
+    "id": "gateway-client",
+    "secret": "gate+way%2F:secret",
+    "header": "Basic Z2F0ZXdheS1jbGllbnQ6Z2F0ZSUyQndheSUyNTJGJTNBc2VjcmV0"
+  },
+  {
+    "id": "7f3c2a10-aaaa-4bbb-8ccc-0123456789ab",
+    "secret": "s3cr3t",
+    "header": "Basic N2YzYzJhMTAtYWFhYS00YmJiLThjY2MtMDEyMzQ1Njc4OWFiOnMzY3IzdA=="
+  },
+  {
+    "id": "id*star",
+    "secret": "sec*ret",
+    "header": "Basic aWQqc3RhcjpzZWMqcmV0"
+  },
+  {
+    "id": "id~tilde",
+    "secret": "sec~ret",
+    "header": "Basic aWQlN0V0aWxkZTpzZWMlN0VyZXQ="
+  },
+  {
+    "id": "a b",
+    "secret": "c d",
+    "header": "Basic YStiOmMrZA=="
+  },
+  {
+    "id": "client:colon",
+    "secret": "se:cret",
+    "header": "Basic Y2xpZW50JTNBY29sb246c2UlM0FjcmV0"
+  },
+  {
+    "id": "é日",
+    "secret": "ключ😀",
+    "header": "Basic JUMzJUE5JUU2JTk3JUE1OiVEMCVCQSVEMCVCQiVEMSU4RSVEMSU4NyVGMCU5RiU5OCU4MA=="
+  },
+  {
+    "id": "id",
+    "secret": "p@ss/w0rd==",
+    "header": "Basic aWQ6cCU0MHNzJTJGdzByZCUzRCUzRA=="
+  },
+  {
+    "id": "x",
+    "secret": "a&b=c%d",
+    "header": "Basic eDphJTI2YiUzRGMlMjVk"
+  },
+  {
+    "id": "",
+    "secret": "",
+    "header": "Basic Og=="
+  },
+  {
+    "id": "id.dot_under-dash",
+    "secret": "!'()",
+    "header": "Basic aWQuZG90X3VuZGVyLWRhc2g6JTIxJTI3JTI4JTI5"
+  },
+  {
+    "id": "cid",
+    "secret": "~*-._",
+    "header": "Basic Y2lkOiU3RSotLl8="
+  }
+]

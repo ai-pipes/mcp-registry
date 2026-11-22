@@ -1,0 +1,522 @@
+[
+  {
+    "in": "",
+    "out": ""
+  },
+  {
+    "in": " ",
+    "out": "+"
+  },
+  {
+    "in": "a b",
+    "out": "a+b"
+  },
+  {
+    "in": "gate+way%2F:secret",
+    "out": "gate%2Bway%252F%3Asecret"
+  },
+  {
+    "in": "gateway-client",
+    "out": "gateway-client"
+  },
+  {
+    "in": "a*b",
+    "out": "a*b"
+  },
+  {
+    "in": "a~b",
+    "out": "a%7Eb"
+  },
+  {
+    "in": "-._*~",
+    "out": "-._*%7E"
+  },
+  {
+    "in": "!'()",
+    "out": "%21%27%28%29"
+  },
+  {
+    "in": "~~~",
+    "out": "%7E%7E%7E"
+  },
+  {
+    "in": "%41",
+    "out": "%2541"
+  },
+  {
+    "in": "a&b=c",
+    "out": "a%26b%3Dc"
+  },
+  {
+    "in": "é",
+    "out": "%C3%A9"
+  },
+  {
+    "in": "日本語",
+    "out": "%E6%97%A5%E6%9C%AC%E8%AA%9E"
+  },
+  {
+    "in": "😀",
+    "out": "%F0%9F%98%80"
+  },
+  {
+    "in": "\u0000",
+    "out": "%00"
+  },
+  {
+    "in": "\n",
+    "out": "%0A"
+  },
+  {
+    "in": "\t",
+    "out": "%09"
+  },
+  {
+    "in": "a/b?c#d",
+    "out": "a%2Fb%3Fc%23d"
+  },
+  {
+    "in": "UPPER lower 0123456789",
+    "out": "UPPER+lower+0123456789"
+  },
+  {
+    "in": "@:;,$[]{}<>\"\\^`|",
+    "out": "%40%3A%3B%2C%24%5B%5D%7B%7D%3C%3E%22%5C%5E%60%7C"
+  },
+  {
+    "in": "ÿĀ",
+    "out": "%C3%BF%C4%80"
+  },
+  {
+    "in": "uuid 7f3c2a10-aaaa-4bbb-8ccc-0123456789ab",
+    "out": "uuid+7f3c2a10-aaaa-4bbb-8ccc-0123456789ab"
+  },
+  {
+    "in": "p@ss w0rd!*~",
+    "out": "p%40ss+w0rd%21*%7E"
+  },
+  {
+    "in": "ключ",
+    "out": "%D0%BA%D0%BB%D1%8E%D1%87"
+  },
+  {
+    "in": "a+b",
+    "out": "a%2Bb"
+  },
+  {
+    "in": "100%",
+    "out": "100%25"
+  },
+  {
+    "in": "Ae﻿jj2日m{qE",
+    "out": "Ae%EF%BB%BFjj2%E6%97%A5m%7BqE"
+  },
+  {
+    "in": "5_96vé|,SpH>H",
+    "out": "5_96v%C3%A9%7C%2CSpH%3EH"
+  },
+  {
+    "in": "éNOz21BIW Sr8Oß",
+    "out": "%C3%A9NOz21BIW%C2%A0Sr8O%C3%9F"
+  },
+  {
+    "in": "AZ}m,`*lKl;JLN",
+    "out": "AZ%7Dm%2C%60*lKl%3BJLN"
+  },
+  {
+    "in": "O\";.i ?>M7xT[}cl",
+    "out": "O%22%3B.i+%3F%3EM7xT%5B%7Dcl"
+  },
+  {
+    "in": "\\",
+    "out": "%5C"
+  },
+  {
+    "in": "Xi@U\n6Yя",
+    "out": "Xi%40U%0A6Y%D1%8F"
+  },
+  {
+    "in": "!fgKxk?w﻿V",
+    "out": "%21fgKxk%3Fw%EF%BB%BFV"
+  },
+  {
+    "in": "^j~^",
+    "out": "%5Ej%7E%5E"
+  },
+  {
+    "in": ")🎉):QxB~9xLO",
+    "out": "%29%F0%9F%8E%89%29%3AQxB%7E9xLO"
+  },
+  {
+    "in": "C",
+    "out": "C"
+  },
+  {
+    "in": "zw﻿a~A ;Zgki",
+    "out": "zw%EF%BB%BFa%7EA+%3BZgki"
+  },
+  {
+    "in": "h😀k.^7jP",
+    "out": "h%F0%9F%98%80k.%5E7jP"
+  },
+  {
+    "in": "kGI;D-",
+    "out": "kGI%3BD-"
+  },
+  {
+    "in": "\tmXzxCTT.",
+    "out": "%09mXzxCTT."
+  },
+  {
+    "in": "E bJ*.--tnmF8S😀",
+    "out": "E+bJ*.--tnmF8S%F0%9F%98%80"
+  },
+  {
+    "in": "*日G 8;",
+    "out": "*%E6%97%A5G%E2%80%A88%3B"
+  },
+  {
+    "in": " ;pAz?YpYl",
+    "out": "%C2%A0%3BpAz%3FYpYl"
+  },
+  {
+    "in": "=.t#.VRHld_",
+    "out": "%3D.t%23.VRHld_"
+  },
+  {
+    "in": "OO`B🎉🎉",
+    "out": "OO%60B%F0%9F%8E%89%F0%9F%8E%89"
+  },
+  {
+    "in": "L日=$LK\u0000 #M",
+    "out": "L%E6%97%A5%3D%24LK%00%C2%A0%23M"
+  },
+  {
+    "in": "2本@\nn v",
+    "out": "2%E6%9C%AC%40%0An%E2%80%A8v"
+  },
+  {
+    "in": "i本Avad])",
+    "out": "i%E6%9C%ACAvad%5D%29"
+  },
+  {
+    "in": "q\"h?zp\nY日6-8яw=",
+    "out": "q%22h%3Fzp%0AY%E6%97%A56-8%D1%8Fw%3D"
+  },
+  {
+    "in": "~ulm5{",
+    "out": "%7Eulm5%7B"
+  },
+  {
+    "in": "t80):ETV&Cdя4$",
+    "out": "t80%29%3AETV%26Cd%D1%8F4%24"
+  },
+  {
+    "in": "uVf^,",
+    "out": "uVf%5E%2C"
+  },
+  {
+    "in": "PfdC,`\\uN$﻿ww",
+    "out": "PfdC%2C%60%5CuN%24%EF%BB%BFww"
+  },
+  {
+    "in": "5i🎉L",
+    "out": "5i%F0%9F%8E%89L"
+  },
+  {
+    "in": "\tjTkZWmn",
+    "out": "%09jTkZWmn"
+  },
+  {
+    "in": "<%1}V",
+    "out": "%3C%251%7DV"
+  },
+  {
+    "in": " + x` ",
+    "out": "+%2B%C2%A0x%60%C2%A0"
+  },
+  {
+    "in": "o{ gi.wGiVяS#",
+    "out": "o%7B%E2%80%A8gi.wGiV%D1%8FS%23"
+  },
+  {
+    "in": "-0﻿LP&😀Pe v",
+    "out": "-0%EF%BB%BFLP%26%F0%9F%98%80Pe%C2%A0v"
+  },
+  {
+    "in": "I8o&\"|M~g<0)`",
+    "out": "I8o%26%22%7CM%7Eg%3C0%29%60"
+  },
+  {
+    "in": "h(><*3+?|+",
+    "out": "h%28%3E%3C*3%2B%3F%7C%2B"
+  },
+  {
+    "in": "€%mjM!.5",
+    "out": "%E2%82%AC%25mjM%21.5"
+  },
+  {
+    "in": "zg7T9u!=BJNN",
+    "out": "zg7T9u%21%3DBJNN"
+  },
+  {
+    "in": "$本",
+    "out": "%24%E6%9C%AC"
+  },
+  {
+    "in": "Y\u0000",
+    "out": "Y%00"
+  },
+  {
+    "in": "4&8😀vF\rA*GgUQ",
+    "out": "4%268%F0%9F%98%80vF%0DA*GgUQ"
+  },
+  {
+    "in": "gZ#]ßséG",
+    "out": "gZ%23%5D%C3%9Fs%C3%A9G"
+  },
+  {
+    "in": "/[BSxULz",
+    "out": "%2F%5BBSxULz"
+  },
+  {
+    "in": "UJOz]€\r\r-an@S.|>",
+    "out": "UJOz%5D%E2%82%AC%0D%0D-an%40S.%7C%3E"
+  },
+  {
+    "in": "/{",
+    "out": "%2F%7B"
+  },
+  {
+    "in": " r@",
+    "out": "+r%40"
+  },
+  {
+    "in": "7\rI8O6KoTqil🎉sB",
+    "out": "7%0DI8O6KoTqil%F0%9F%8E%89sB"
+  },
+  {
+    "in": "*a<P#\rXwyRq_",
+    "out": "*a%3CP%23%0DXwyRq_"
+  },
+  {
+    "in": "\u0000",
+    "out": "%00"
+  },
+  {
+    "in": " IJ",
+    "out": "+IJ"
+  },
+  {
+    "in": "HS",
+    "out": "HS"
+  },
+  {
+    "in": "vZ |\"a\"GE'",
+    "out": "vZ+%7C%22a%22GE%27"
+  },
+  {
+    "in": "C `",
+    "out": "C%C2%A0%60"
+  },
+  {
+    "in": "Nß(uQPAw€Bb4eV\\",
+    "out": "N%C3%9F%28uQPAw%E2%82%ACBb4eV%5C"
+  },
+  {
+    "in": "C",
+    "out": "C"
+  },
+  {
+    "in": "}83^x{",
+    "out": "%7D83%5Ex%7B"
+  },
+  {
+    "in": "|0y+iv.^M日c",
+    "out": "%7C0y%2Biv.%5EM%E6%97%A5c"
+  },
+  {
+    "in": "~?яi",
+    "out": "%7E%3F%D1%8Fi"
+  },
+  {
+    "in": "q\"日﻿s@215F本Fm8",
+    "out": "q%22%E6%97%A5%EF%BB%BFs%40215F%E6%9C%ACFm8"
+  },
+  {
+    "in": "eaMPM",
+    "out": "eaMPM"
+  },
+  {
+    "in": "<🎉oD-",
+    "out": "%3C%F0%9F%8E%89oD-"
+  },
+  {
+    "in": "{Vn!AV 本y3i",
+    "out": "%7BVn%21AV%E2%80%A8%E6%9C%ACy3i"
+  },
+  {
+    "in": "T \t😀!\r-h",
+    "out": "T%E2%80%A8%09%F0%9F%98%80%21%0D-h"
+  },
+  {
+    "in": "日hG@\temo6Em\rd",
+    "out": "%E6%97%A5hG%40%09emo6Em%0Dd"
+  },
+  {
+    "in": "O本本pY1 ",
+    "out": "O%E6%9C%AC%E6%9C%ACpY1%C2%A0"
+  },
+  {
+    "in": "RV.j€€<ur&=",
+    "out": "RV.j%E2%82%AC%E2%82%AC%3Cur%26%3D"
+  },
+  {
+    "in": "bN)YPH7Z😀&",
+    "out": "bN%29YPH7Z%F0%9F%98%80%26"
+  },
+  {
+    "in": "}+f\u0000tuCEJGN|",
+    "out": "%7D%2Bf%00tuCEJGN%7C"
+  },
+  {
+    "in": "😀9",
+    "out": "%F0%9F%98%809"
+  },
+  {
+    "in": "q[t[\t日H:)(.w@oH",
+    "out": "q%5Bt%5B%09%E6%97%A5H%3A%29%28.w%40oH"
+  },
+  {
+    "in": ">pa\u00007fT8\"\tn",
+    "out": "%3Epa%007fT8%22%09n"
+  },
+  {
+    "in": "M€|ßpZ日ks本! T",
+    "out": "M%E2%82%AC%7C%C3%9FpZ%E6%97%A5ks%E6%9C%AC%21+T"
+  },
+  {
+    "in": "$\\9,w>|,",
+    "out": "%24%5C9%2Cw%3E%7C%2C"
+  },
+  {
+    "in": "J2Kn\"8U<W",
+    "out": "J2Kn%228U%3CW"
+  },
+  {
+    "in": "[3;aaUB>@`日",
+    "out": "%5B3%3BaaUB%3E%40%60%E6%97%A5"
+  },
+  {
+    "in": "a\u0000Z",
+    "out": "a%00Z"
+  },
+  {
+    "in": "+Y#€(>&ß!C",
+    "out": "%2BY%23%E2%82%AC%28%3E%26%C3%9F%21C"
+  },
+  {
+    "in": "&`u2l本,Sa\"`",
+    "out": "%26%60u2l%E6%9C%AC%2CSa%22%60"
+  },
+  {
+    "in": "|p.%E|3^o",
+    "out": "%7Cp.%25E%7C3%5Eo"
+  },
+  {
+    "in": "gq日Y#Z-!+S7",
+    "out": "gq%E6%97%A5Y%23Z-%21%2BS7"
+  },
+  {
+    "in": " !')_Oq}Vj;'",
+    "out": "+%21%27%29_Oq%7DVj%3B%27"
+  },
+  {
+    "in": "2A,w€=(\"@本T5",
+    "out": "2A%2Cw%E2%82%AC%3D%28%22%40%E6%9C%ACT5"
+  },
+  {
+    "in": "f|L\nK\\>",
+    "out": "f%7CL%0AK%5C%3E"
+  },
+  {
+    "in": "OS%",
+    "out": "OS%25"
+  },
+  {
+    "in": "本;] K?r6`Ig",
+    "out": "%E6%9C%AC%3B%5D%C2%A0K%3Fr6%60Ig"
+  },
+  {
+    "in": "i~63",
+    "out": "i%7E63"
+  },
+  {
+    "in": "R",
+    "out": "R"
+  },
+  {
+    "in": "🎉v😀C5",
+    "out": "%F0%9F%8E%89v%F0%9F%98%80C5"
+  },
+  {
+    "in": "u\r|",
+    "out": "u%0D%7C"
+  },
+  {
+    "in": "9hQrk\"ax_N🎉",
+    "out": "9hQrk%22ax_N%F0%9F%8E%89"
+  },
+  {
+    "in": "A2$u-",
+    "out": "A2%24u-"
+  },
+  {
+    "in": "h😀cK\",33,ZMEr",
+    "out": "h%F0%9F%98%80cK%22%2C33%2CZMEr"
+  },
+  {
+    "in": "ha4(>",
+    "out": "ha4%28%3E"
+  },
+  {
+    "in": "(ß9}!$本gN",
+    "out": "%28%C3%9F9%7D%21%24%E6%9C%ACgN"
+  },
+  {
+    "in": "﻿u\t\r`",
+    "out": "%EF%BB%BFu%09%0D%60"
+  },
+  {
+    "in": "qvv%W=c(^>\u00000^dn",
+    "out": "qvv%25W%3Dc%28%5E%3E%000%5Edn"
+  },
+  {
+    "in": "本CRId`\txM4Kf$s6\t",
+    "out": "%E6%9C%ACCRId%60%09xM4Kf%24s6%09"
+  },
+  {
+    "in": "d'y\u0000*[g`HRW,#7 4",
+    "out": "d%27y%00*%5Bg%60HRW%2C%237%C2%A04"
+  },
+  {
+    "in": "YjdToh&gjPL",
+    "out": "YjdToh%26gjPL"
+  },
+  {
+    "in": "ePi%6HzS\"b ]€|U",
+    "out": "ePi%256HzS%22b+%5D%E2%82%AC%7CU"
+  },
+  {
+    "in": "C}iZ",
+    "out": "C%7DiZ"
+  },
+  {
+    "in": "Lfra\\S(😀F",
+    "out": "Lfra%5CS%28%F0%9F%98%80F"
+  },
+  {
+    "in": "\u0000^6I",
+    "out": "%00%5E6I"
+  }
+]
