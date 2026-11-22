@@ -208,17 +208,51 @@ func connNewPAT(t *testing.T, s *harness.Stack, admin *harness.Client, opts ...f
 	return env
 }
 
-// connPerson is a member with a browser session and an MCP session.
+// connPerson is a member with a browser session and an MCP session. The MCP session is opened on
+// first use (session): most scenarios judge a person through REST, SQL and the fake provider only,
+// and a server without /mcp must not stop them at the person's creation. The first use fails the
+// test exactly as an eager open did when /mcp cannot be opened. The API token the session needs
+// is still created with the person, so the audit trail and the token list do not depend on when
+// the session opens. Copies of a connPerson share one lazy session.
 type connPerson struct {
-	c   *harness.Client
-	id  string
-	mcp *mcp.ClientSession
+	c    *harness.Client
+	id   string
+	lazy *lazyMCP
+}
+
+// lazyMCP opens one MCP session on the first session call. The session closes when the test that
+// created the person ends (not the one that happened to use it first: the person outlives
+// subtests).
+type lazyMCP struct {
+	s     *harness.Stack
+	token string
+	owner *testing.T
+	mu    sync.Mutex
+	open  *mcp.ClientSession
+}
+
+// session returns the person's MCP session, opening it on first use; t fails the test when it
+// cannot be opened. Call it before starting goroutines that use the session.
+func (p connPerson) session(t *testing.T) *mcp.ClientSession {
+	t.Helper()
+	l := p.lazy
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.open == nil {
+		sess, err := l.s.MCPOpen(l.token, nil)
+		if err != nil {
+			t.Fatalf("mcp connect (token %s): %v", harness.Redact(l.token), err)
+		}
+		l.owner.Cleanup(func() { _ = sess.Close() })
+		l.open = sess
+	}
+	return l.open
 }
 
 func connNewPerson(t *testing.T, s *harness.Stack) connPerson {
 	t.Helper()
 	c := s.Member(t, harness.Unique("conn-person"))
-	return connPerson{c: c, id: whoami(t, c).UserID, mcp: s.MCP(t, c.Token(t, "conn"))}
+	return connPerson{c: c, id: whoami(t, c).UserID, lazy: &lazyMCP{s: s, token: c.Token(t, "conn"), owner: t}}
 }
 
 type connResult struct {
@@ -228,7 +262,7 @@ type connResult struct {
 
 func (p connPerson) callRef(t *testing.T, ref string) connResult {
 	t.Helper()
-	res := catalogCallMCP(t, p.mcp, "call_tool", map[string]any{"tool": ref, "arguments": map[string]any{"text": "hi"}})
+	res := catalogCallMCP(t, p.session(t), "call_tool", map[string]any{"tool": ref, "arguments": map[string]any{"text": "hi"}})
 	return connResult{IsError: res.IsError, Text: catalogText(res)}
 }
 
@@ -241,12 +275,13 @@ func (p connPerson) call(t *testing.T, env *connEnv) connResult {
 func (p connPerson) callMany(t *testing.T, ref string, n int) []connResult {
 	t.Helper()
 	out := make([]connResult, n)
+	session := p.session(t)
 	var wg sync.WaitGroup
 	for i := range n {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			res, err := p.mcp.CallTool(t.Context(), &mcp.CallToolParams{Name: "call_tool", Arguments: map[string]any{"tool": ref, "arguments": map[string]any{"text": "hi"}}})
+			res, err := session.CallTool(t.Context(), &mcp.CallToolParams{Name: "call_tool", Arguments: map[string]any{"tool": ref, "arguments": map[string]any{"text": "hi"}}})
 			if err != nil {
 				out[i] = connResult{IsError: true, Text: "protocol error: " + err.Error()}
 				return

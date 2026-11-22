@@ -768,7 +768,7 @@ func TestConnectionsArePersonal(t *testing.T) {
 		catalogRegister(t, admin, fakes.ServerInput(env.up, shared, "shared_secret", fakes.WithSecret("shared-key")))
 		c := connNewPerson(t, s)
 		find := func(slug string) catalogListed {
-			for _, l := range catalogListServers(t, c.mcp) {
+			for _, l := range catalogListServers(t, c.session(t)) {
 				if l.Slug == slug {
 					return l
 				}

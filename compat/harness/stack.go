@@ -751,21 +751,27 @@ func (s *Stack) MCP(t *testing.T, token string) *mcp.ClientSession {
 // from several goroutines. A nil record is MCP.
 func (s *Stack) MCPRecording(t *testing.T, token string, record func(body []byte)) *mcp.ClientSession {
 	t.Helper()
-	hc := newHTTPClient(nil)
-	hc.Transport = &bearerTransport{base: hc.Transport, token: token, record: record}
-	client := mcp.NewClient(&mcp.Implementation{Name: "compat-harness", Version: "0"}, nil)
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	session, err := client.Connect(ctx, &mcp.StreamableClientTransport{
-		Endpoint:             s.BaseURL + "/mcp",
-		HTTPClient:           hc,
-		DisableStandaloneSSE: true,
-	}, nil)
+	session, err := s.MCPOpen(token, record)
 	if err != nil {
 		t.Fatalf("mcp connect (token %s): %v", Redact(token), err)
 	}
 	t.Cleanup(func() { _ = session.Close() })
 	return session
+}
+
+// MCPOpen opens an MCP session at /mcp with a bearer token and returns the error instead of
+// failing a test; the caller closes the session. record is as in MCPRecording.
+func (s *Stack) MCPOpen(token string, record func(body []byte)) (*mcp.ClientSession, error) {
+	hc := newHTTPClient(nil)
+	hc.Transport = &bearerTransport{base: hc.Transport, token: token, record: record}
+	client := mcp.NewClient(&mcp.Implementation{Name: "compat-harness", Version: "0"}, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return client.Connect(ctx, &mcp.StreamableClientTransport{
+		Endpoint:             s.BaseURL + "/mcp",
+		HTTPClient:           hc,
+		DisableStandaloneSSE: true,
+	}, nil)
 }
 
 type bearerTransport struct {
