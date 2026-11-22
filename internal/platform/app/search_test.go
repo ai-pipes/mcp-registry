@@ -39,6 +39,12 @@ func (i *fakeIndex) Upsert(_ context.Context, d searchapp.Document) error {
 	return nil
 }
 
+// UpsertEmbedFailed stores the document without a vector (the fake has no earlier vector to keep).
+func (i *fakeIndex) UpsertEmbedFailed(ctx context.Context, d searchapp.Document) error {
+	d.Embedding = nil
+	return i.Upsert(ctx, d)
+}
+
 func (i *fakeIndex) Remove(_ context.Context, refs []string) error {
 	i.mu.Lock()
 	defer i.mu.Unlock()

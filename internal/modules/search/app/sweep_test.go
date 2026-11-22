@@ -237,3 +237,29 @@ func TestSweepErrors(t *testing.T) {
 		}
 	})
 }
+
+// Decided deviation vector-kept-on-failed-reembedding: a row that kept its old vector after a
+// failed re-embedding is offered by the sweep and gets a fresh vector; the mark goes.
+func TestSweepRefreshesARowThatKeptAStaleVector(t *testing.T) {
+	w := newWorld(t)
+	w.cat.put("s", map[string]string{"a": "old text"})
+	if err := app.IndexTools(ctx, w.d, "s"); err != nil {
+		t.Fatal(err)
+	}
+	old := w.doc("s.a").Embedding
+	w.cat.tool("s", "a").Description = "completely different words"
+	w.failAll()
+	_ = app.IndexTools(ctx, w.d, "s")
+	w.emb.fail = nil
+	r, err := app.IndexMissingEmbeddings(ctx, w.d, app.SweepOptions{Limit: 20})
+	if err != nil || !slices.Equal(r.Indexed, []string{"s.a"}) {
+		t.Fatalf("result = %+v, err %v", r, err)
+	}
+	if slices.Equal(w.doc("s.a").Embedding, old) || w.isStale("s.a") {
+		t.Fatalf("the vector was not refreshed or the mark stayed (stale %v)", w.isStale("s.a"))
+	}
+	// nothing left to do
+	if r, _ := app.IndexMissingEmbeddings(ctx, w.d, app.SweepOptions{Limit: 20}); len(r.Indexed) != 0 {
+		t.Fatalf("second sweep indexed %v", r.Indexed)
+	}
+}

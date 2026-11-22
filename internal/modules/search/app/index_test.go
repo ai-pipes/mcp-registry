@@ -179,21 +179,44 @@ func TestIndexToolsStopsCallingTheEmbedderAfterTheFirstFailure(t *testing.T) {
 	}
 }
 
-func TestIndexToolsAFailedRecomputeNullsAnExistingVector(t *testing.T) {
+// Decided deviation vector-kept-on-failed-reembedding: the TypeScript server nulls the vector.
+func TestIndexToolsAFailedRecomputeKeepsAnExistingVectorAndMarksTheRow(t *testing.T) {
 	w := newWorld(t)
-	w.cat.put("s", map[string]string{"a": "1"})
+	w.cat.put("s", map[string]string{"a": "1", "b": "2"})
 	if err := app.IndexTools(ctx, w.d, "s"); err != nil {
 		t.Fatal(err)
 	}
-	if w.doc("s.a").Embedding == nil {
+	before := w.doc("s.a").Embedding
+	if before == nil {
 		t.Fatal("no vector to begin with")
 	}
+	w.cat.tool("s", "a").Description = "changed text"
 	w.failAll()
 	if err := app.IndexTools(ctx, w.d, "s"); !errors.Is(err, errEmbedder) {
 		t.Fatalf("err = %v", err)
 	}
-	if w.doc("s.a").Embedding != nil {
-		t.Fatal("the TypeScript behaviour: the old vector becomes NULL")
+	d := w.doc("s.a")
+	if !slices.Equal(d.Embedding, before) {
+		t.Fatal("the old vector was not kept")
+	}
+	if d.Description != "changed text" {
+		t.Fatalf("the text columns are not updated: %+v", d)
+	}
+	if !w.isStale("s.a") || !w.isStale("s.b") {
+		t.Fatal("the rows are not marked as needing a vector")
+	}
+}
+
+func TestIndexToolsAFailedFirstEmbeddingStoresTheRowWithoutAVectorAndWithoutTheKeepPath(t *testing.T) {
+	w := newWorld(t)
+	w.cat.put("s", map[string]string{"a": "1"})
+	w.failAll()
+	_ = app.IndexTools(ctx, w.d, "s")
+	if d := w.doc("s.a"); d.Ref == "" || d.Embedding != nil {
+		t.Fatalf("document = %+v", d)
+	}
+	if w.isStale("s.a") {
+		t.Fatal("a row that never had a vector is not stale")
 	}
 }
 
@@ -331,18 +354,60 @@ func TestIndexToolRefsKeepsTheCatalogOrderAndIgnoresUnofferedRefs(t *testing.T) 
 	}
 }
 
-func TestRemoveTools(t *testing.T) {
+// Decided deviation stale-removal-rechecks-catalog: the TypeScript server deletes without asking.
+func TestRemoveToolsDeletesOnlyWhatTheCatalogDoesNotOffer(t *testing.T) {
 	w := newWorld(t)
+	w.cat.put("g", map[string]string{"b": "back again"})
 	w.seed("g.a", false)
-	w.seed("g.b", false)
-	if err := app.RemoveTools(ctx, w.d, []string{"g.a"}); err != nil {
+	w.seed("g.b", true)
+	if err := app.RemoveTools(ctx, w.d, "g", []string{"g.a", "g.b"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := w.refs(); !slices.Equal(got, []string{"g.b"}) {
+		t.Fatalf("refs = %v: the live row must stay, the gone one go", got)
+	}
+	// replaying it changes nothing
+	if err := app.RemoveTools(ctx, w.d, "g", []string{"g.a", "g.b"}); err != nil {
 		t.Fatal(err)
 	}
 	if got := w.refs(); !slices.Equal(got, []string{"g.b"}) {
 		t.Fatalf("refs = %v", got)
 	}
-	if err := app.RemoveTools(ctx, w.d, nil); err != nil || w.j.count("remove") != 1 {
-		t.Fatalf("empty list: err %v, remove calls %d", err, w.j.count("remove"))
+}
+
+func TestRemoveToolsAnUnknownOrDisabledServerLosesEveryListedRef(t *testing.T) {
+	w := newWorld(t)
+	w.seed("ghost.a", true)
+	w.seed("off.a", true)
+	w.cat.put("off", map[string]string{}) // disabled: no tools
+	if err := app.RemoveTools(ctx, w.d, "ghost", []string{"ghost.a"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.RemoveTools(ctx, w.d, "off", []string{"off.a"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(w.refs()) != 0 {
+		t.Fatalf("refs = %v", w.refs())
+	}
+}
+
+func TestRemoveToolsEmptyListDoesNotAskTheCatalog(t *testing.T) {
+	w := newWorld(t)
+	if err := app.RemoveTools(ctx, w.d, "g", nil); err != nil || len(w.j.all()) != 0 {
+		t.Fatalf("err %v, calls %v", err, w.j.all())
+	}
+}
+
+func TestRemoveToolsACatalogErrorFailsTheHandlerAndRemovesNothing(t *testing.T) {
+	w := newWorld(t)
+	w.seed("g.a", true)
+	boom := errors.New("boom")
+	w.cat.errFor = boom
+	if err := app.RemoveTools(ctx, w.d, "g", []string{"g.a"}); !errors.Is(err, boom) {
+		t.Fatalf("err = %v", err)
+	}
+	if got := w.refs(); !slices.Equal(got, []string{"g.a"}) {
+		t.Fatalf("refs = %v", got)
 	}
 }
 

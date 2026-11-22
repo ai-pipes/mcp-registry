@@ -56,6 +56,10 @@ type memIndex struct {
 
 	docs   map[string]app.Document
 	failed map[string]bool
+	// stale is the rows UpsertEmbedFailed kept a vector for: the sweep offers them although they
+	// have a vector. The real index stamps them with the time and the hour's back-off applies;
+	// the fake has no clock, so "stale" stands for a mark older than an hour.
+	stale map[string]bool
 	// servers argument of every candidate query.
 	ftsServers, vecServers [][]string
 	// the floor and limit the vector query received
@@ -70,7 +74,7 @@ type memIndex struct {
 }
 
 func newIndex(j *journal) *memIndex {
-	return &memIndex{j: j, docs: map[string]app.Document{}, failed: map[string]bool{}}
+	return &memIndex{j: j, docs: map[string]app.Document{}, failed: map[string]bool{}, stale: map[string]bool{}}
 }
 
 func (m *memIndex) Upsert(_ context.Context, doc app.Document) error {
@@ -83,7 +87,25 @@ func (m *memIndex) Upsert(_ context.Context, doc app.Document) error {
 	m.docs[doc.Ref] = doc
 	if doc.Embedding != nil {
 		delete(m.failed, doc.Ref)
+		delete(m.stale, doc.Ref)
 	}
+	return nil
+}
+
+func (m *memIndex) UpsertEmbedFailed(_ context.Context, doc app.Document) error {
+	m.j.add("upsert-failed %s", doc.Ref)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.errUpsert != nil {
+		return m.errUpsert
+	}
+	if old, ok := m.docs[doc.Ref]; ok && old.Embedding != nil {
+		doc.Embedding = old.Embedding
+		m.stale[doc.Ref] = true
+	} else {
+		doc.Embedding = nil
+	}
+	m.docs[doc.Ref] = doc
 	return nil
 }
 
@@ -148,7 +170,7 @@ func (m *memIndex) WithoutEmbedding(_ context.Context, limit int) ([]domain.Cand
 	}
 	var out []domain.Candidate
 	for _, d := range m.docs {
-		if d.Embedding == nil && !m.failed[d.Ref] {
+		if (d.Embedding == nil || m.stale[d.Ref]) && !m.failed[d.Ref] {
 			out = append(out, domain.Candidate{Ref: d.Ref, Server: d.Server})
 		}
 	}
@@ -488,6 +510,12 @@ func (w *world) seed(ref string, withVector bool) {
 	w.idx.mu.Lock()
 	defer w.idx.mu.Unlock()
 	w.idx.docs[ref] = d
+}
+
+func (w *world) isStale(ref string) bool {
+	w.idx.mu.Lock()
+	defer w.idx.mu.Unlock()
+	return w.idx.stale[ref]
 }
 
 func (w *world) failAll() { w.emb.fail = func(int, string) error { return errEmbedder } }
