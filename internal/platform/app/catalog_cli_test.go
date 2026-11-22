@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ai-pipes/mcp-registry/internal/modules/catalog"
 )
@@ -23,12 +24,20 @@ func (r tripReader) Read([]byte) (int, error) {
 }
 
 type fakeTerminal struct {
-	line string
-	err  error
-	read int
+	line  string
+	err   error
+	read  int
+	block bool // waits for the context, as a terminal read with nothing typed does
 }
 
-func (f *fakeTerminal) ReadSecretLine() (string, error) { f.read++; return f.line, f.err }
+func (f *fakeTerminal) ReadSecretLine(ctx context.Context) (string, error) {
+	f.read++
+	if f.block {
+		<-ctx.Done()
+		return "", ctx.Err()
+	}
+	return f.line, f.err
+}
 
 func cioOf(stdin io.Reader, env map[string]string) (CLIIO, *bytes.Buffer, *bytes.Buffer) {
 	var out, errOut bytes.Buffer
@@ -57,7 +66,7 @@ func TestReadSecretFromAPipe(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cio, _, errOut := cioOf(strings.NewReader(tc.in), nil)
-			got, err := readSecret(cio, nil, sharedSecretMode)
+			got, err := readSecret(context.Background(), cio, nil, sharedSecretMode)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -74,16 +83,16 @@ func TestReadSecretFromAPipe(t *testing.T) {
 
 func TestReadSecretSkipsStdinForAModeWithoutOne(t *testing.T) {
 	cio, _, _ := cioOf(tripReader{t}, nil)
-	if got, err := readSecret(cio, nil, noneMode); err != nil || got != nil {
+	if got, err := readSecret(context.Background(), cio, nil, noneMode); err != nil || got != nil {
 		t.Fatalf("%v %v", got, err)
 	}
 	// An OAuth server holds the client secret, a PAT server the person's own token.
 	cio, _, _ = cioOf(strings.NewReader("c\n"), nil)
-	if got, _ := readSecret(cio, nil, catalog.AuthMode{Kind: catalog.AuthOAuthUser}); got == nil || *got != "c" {
+	if got, _ := readSecret(context.Background(), cio, nil, catalog.AuthMode{Kind: catalog.AuthOAuthUser}); got == nil || *got != "c" {
 		t.Errorf("oauth_user holds a secret: %v", got)
 	}
 	cio, _, _ = cioOf(tripReader{t}, nil)
-	if got, err := readSecret(cio, nil, catalog.AuthMode{Kind: catalog.AuthPATUser}); err != nil || got != nil {
+	if got, err := readSecret(context.Background(), cio, nil, catalog.AuthMode{Kind: catalog.AuthPATUser}); err != nil || got != nil {
 		t.Errorf("pat_user holds none: %v %v", got, err)
 	}
 }
@@ -91,18 +100,18 @@ func TestReadSecretSkipsStdinForAModeWithoutOne(t *testing.T) {
 func TestReadSecretFromTheEnvironment(t *testing.T) {
 	name := "K"
 	cio, _, _ := cioOf(tripReader{t}, map[string]string{"K": "from-env\n"})
-	got, err := readSecret(cio, &name, sharedSecretMode)
+	got, err := readSecret(context.Background(), cio, &name, sharedSecretMode)
 	if err != nil || got == nil || *got != "from-env\n" {
 		t.Fatalf("the variable is taken as it is (no newline stripping): %v %v", got, err)
 	}
 	// The variable wins even for a mode that holds no secret? TypeScript reads it first: yes.
 	cio, _, _ = cioOf(tripReader{t}, map[string]string{"K": "x"})
-	if got, _ := readSecret(cio, &name, noneMode); got == nil || *got != "x" {
+	if got, _ := readSecret(context.Background(), cio, &name, noneMode); got == nil || *got != "x" {
 		t.Errorf("--secret-env is read before the mode is asked: %v", got)
 	}
 	for _, env := range []map[string]string{{}, {"K": ""}} {
 		cio, _, _ := cioOf(tripReader{t}, env)
-		_, err := readSecret(cio, &name, sharedSecretMode)
+		_, err := readSecret(context.Background(), cio, &name, sharedSecretMode)
 		var u *UsageErr
 		if !errors.As(err, &u) || u.Msg != "K is unset or empty" {
 			t.Errorf("env %v: %v", env, err)
@@ -114,7 +123,7 @@ func TestReadSecretOnATerminal(t *testing.T) {
 	term := &fakeTerminal{line: "typed"}
 	cio, _, errOut := cioOf(tripReader{t}, nil)
 	cio.Terminal = term
-	got, err := readSecret(cio, nil, sharedSecretMode)
+	got, err := readSecret(context.Background(), cio, nil, sharedSecretMode)
 	if err != nil || got == nil || *got != "typed" {
 		t.Fatalf("%v %v", got, err)
 	}
@@ -123,24 +132,119 @@ func TestReadSecretOnATerminal(t *testing.T) {
 	}
 	term = &fakeTerminal{}
 	cio.Terminal = term
-	if got, _ := readSecret(cio, nil, sharedSecretMode); got != nil {
+	if got, _ := readSecret(context.Background(), cio, nil, sharedSecretMode); got != nil {
 		t.Errorf("an empty line is no secret: %v", got)
 	}
 	// A mode without a secret never prompts.
 	term = &fakeTerminal{line: "x"}
 	cio, _, errOut = cioOf(tripReader{t}, nil)
 	cio.Terminal = term
-	if got, _ := readSecret(cio, nil, noneMode); got != nil || term.read != 0 || errOut.Len() != 0 {
+	if got, _ := readSecret(context.Background(), cio, nil, noneMode); got != nil || term.read != 0 || errOut.Len() != 0 {
 		t.Errorf("none prompted: %v %d %q", got, term.read, errOut.String())
 	}
 }
 
 func TestATerminalFailureIsNeverQuoted(t *testing.T) {
-	cio, _, _ := cioOf(tripReader{t}, nil)
-	cio.Terminal = &fakeTerminal{line: "half", err: errors.New("read /dev/tty: s3cret-leak")}
-	got, err := readSecret(cio, nil, sharedSecretMode)
-	if got != nil || err == nil || strings.Contains(err.Error(), "s3cret-leak") {
+	cio, out, errOut := cioOf(tripReader{t}, nil)
+	cio.Terminal = &fakeTerminal{line: "half-typed", err: errors.New("read /dev/tty: s3cret-leak")}
+	got, err := readSecret(context.Background(), cio, nil, sharedSecretMode)
+	if got != nil || err == nil {
 		t.Fatalf("%v %v", got, err)
+	}
+	for _, text := range []string{err.Error(), out.String(), errOut.String()} {
+		if strings.Contains(text, "s3cret-leak") || strings.Contains(text, "half-typed") {
+			t.Errorf("the failure quotes what was typed or the cause: %q", text)
+		}
+	}
+	var failed *CommandErr
+	if !errors.As(err, &failed) || failed.Msg != "cannot read the secret from the terminal" {
+		t.Errorf("%v", err)
+	}
+}
+
+// An interrupt while the secret is read aborts the command (the reference carries on without a
+// secret; this is the safer reading of Ctrl-C).
+func TestAnInterruptAbortsTheSecretReadWithANewline(t *testing.T) {
+	var failed *CommandErr
+	for name, term := range map[string]*fakeTerminal{
+		"Ctrl-C as a byte": {line: "half", err: errInterrupted},
+	} {
+		cio, _, errOut := cioOf(tripReader{t}, nil)
+		cio.Terminal = term
+		got, err := readSecret(context.Background(), cio, nil, sharedSecretMode)
+		if got != nil || !errors.As(err, &failed) || failed.Msg != "interrupted" {
+			t.Errorf("%s: %v %v", name, got, err)
+		}
+		if errOut.String() != "Secret: \n" {
+			t.Errorf("%s: %q", name, errOut.String())
+		}
+	}
+	// The context cancelled while the terminal waits (SIGINT, SIGTERM).
+	ctx, cancel := context.WithCancel(context.Background())
+	cio, _, errOut := cioOf(tripReader{t}, nil)
+	cio.Terminal = &fakeTerminal{block: true}
+	done := make(chan error, 1)
+	go func() { _, err := readSecret(ctx, cio, nil, sharedSecretMode); done <- err }()
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.As(err, &failed) || failed.Msg != "interrupted" {
+			t.Errorf("%v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the read did not end")
+	}
+	if errOut.String() != "Secret: \n" {
+		t.Errorf("%q", errOut.String())
+	}
+	// A line that arrives together with the cancellation is not used.
+	ctx, cancel = context.WithCancel(context.Background())
+	cancel()
+	cio, _, _ = cioOf(tripReader{t}, nil)
+	cio.Terminal = &fakeTerminal{line: "late"}
+	if got, err := readSecret(ctx, cio, nil, sharedSecretMode); got != nil || err == nil {
+		t.Errorf("a cancelled command used the secret: %v %v", got, err)
+	}
+}
+
+func TestAPipeThatNeverClosesEndsOnCancellation(t *testing.T) {
+	pr, pw := io.Pipe()
+	t.Cleanup(func() { _ = pw.Close() })
+	ctx, cancel := context.WithCancel(context.Background())
+	cio, _, _ := cioOf(pr, nil)
+	done := make(chan error, 1)
+	go func() { _, err := readSecret(ctx, cio, nil, sharedSecretMode); done <- err }()
+	cancel()
+	select {
+	case err := <-done:
+		var failed *CommandErr
+		if !errors.As(err, &failed) || failed.Msg != "interrupted" {
+			t.Errorf("%v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the read did not end")
+	}
+}
+
+func TestInvalidUTF8OnAPipeIsReplacedAsJavaScriptDoes(t *testing.T) {
+	// One U+FFFD per maximal invalid subpart (the WHATWG decoder of TextDecoder and Node's
+	// stream decoding), not one per run of bad bytes.
+	for in, want := range map[string]string{
+		"ok\n":               "ok",
+		"a\xffb":             "a\ufffdb",
+		"\xff\xfe":           "\ufffd\ufffd",
+		"x\xe2\x82":          "x\ufffd", // a cut euro sign is one subpart
+		"\xf0\x9f\x98":       "\ufffd",
+		"\xc0\x80":           "\ufffd\ufffd",
+		"\xed\xa0\x80":       "\ufffd\ufffd\ufffd", // a surrogate
+		"\xe2\x82\xac\x80":   "\u20ac\ufffd",
+		"\u00e9\U0001F600\n": "\u00e9\U0001F600",
+	} {
+		cio, _, _ := cioOf(strings.NewReader(in), nil)
+		got, err := readSecret(context.Background(), cio, nil, sharedSecretMode)
+		if err != nil || got == nil || *got != want {
+			t.Errorf("%q: got %v, want %q", in, got, want)
+		}
 	}
 }
 

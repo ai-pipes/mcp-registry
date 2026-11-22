@@ -88,7 +88,7 @@ func (w catalogWiring) createServer(ctx context.Context, cio CLIIO, args []strin
 	if v, ok := p.values["secret-env"]; ok {
 		secretEnv = &v
 	}
-	secret, err := readSecret(cio, secretEnv, in.Fields.Auth)
+	secret, err := readSecret(ctx, cio, secretEnv, in.Fields.Auth)
 	if err != nil {
 		return err
 	}

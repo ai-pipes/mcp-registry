@@ -6,10 +6,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ai-pipes/mcp-registry/internal/platform/config"
 )
@@ -36,9 +38,14 @@ func newServerEnv(t *testing.T) *serverEnv {
 // runIn is RunCLI over the real modules with stdin and environment.
 func (e *cliEnv) runIn(cfg config.Config, stdin string, env map[string]string, args ...string) cliRun {
 	e.t.Helper()
+	return e.runCtx(context.Background(), cfg, strings.NewReader(stdin), env, args...)
+}
+
+func (e *cliEnv) runCtx(ctx context.Context, cfg config.Config, stdin io.Reader, env map[string]string, args ...string) cliRun {
+	e.t.Helper()
 	var out, errOut bytes.Buffer
-	code := RunCLI(context.Background(), CLIOptions{
-		Config: cfg, Version: "9.9.9-test", Args: args, Stdin: strings.NewReader(stdin),
+	code := RunCLI(ctx, CLIOptions{
+		Config: cfg, Version: "9.9.9-test", Args: args, Stdin: stdin,
 		Stdout: &out, Stderr: &errOut, Env: env,
 	})
 	return cliRun{code, out.String(), errOut.String()}
@@ -291,4 +298,84 @@ func TestCLISync(t *testing.T) {
 	pat := s.file("pat.json", map[string]any{"slug": "pat1", "auth": map[string]any{"kind": "pat_user", "header": "Authorization", "template": "Bearer {secret}"}})
 	s.create("", nil, "--json", pat, "--as", "owner")
 	golden(t, "sync-needs-connection", s.run("sync", "pat1", "--as", "owner"), "pat1", "<SLUG>")
+}
+
+// The person is looked up before the secret is read (readSecret comes after principalFor in
+// cli-commands.ts): an unknown --as with an unset --secret-env variable is the person's error,
+// a known one with the same variable is the usage error.
+func TestCLICreateServerLooksUpThePersonBeforeTheSecret(t *testing.T) {
+	s := newServerEnv(t)
+	f := s.file("o.json", nil)
+	r := s.create("", nil, "--json", f, "--as", "nobody", "--secret-env", "CLI_SECRET_UNSET")
+	golden(t, "create-server-unknown-sub", r, "nobody", "<SUB>")
+	r = s.create("", nil, "--json", f, "--as", "owner", "--secret-env", "CLI_SECRET_UNSET")
+	golden(t, "create-server-secret-env-unset", r)
+	// And the same for stdin: an unknown person never gets the prompt or the read.
+	cio := s.runCtx(context.Background(), s.cfg, tripReader{t}, nil, "create-server", "--json", f, "--as", "nobody")
+	if cio.code != 1 || !strings.Contains(cio.stderr, "not_found") {
+		t.Errorf("%+v", cio)
+	}
+}
+
+// cancelOnRead is a stdin that interrupts the command when it is read and then never answers.
+type cancelOnRead struct {
+	cancel context.CancelFunc
+	block  chan struct{}
+}
+
+func (c cancelOnRead) Read([]byte) (int, error) { c.cancel(); <-c.block; return 0, io.EOF }
+
+// An interrupt while the secret is read aborts: nothing is created, nothing contacted.
+func TestCLICreateServerInterruptedDuringTheSecretReadCreatesNothing(t *testing.T) {
+	s := newServerEnv(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	block := make(chan struct{})
+	t.Cleanup(func() { close(block) })
+	r := s.runCtx(ctx, s.cfg, cancelOnRead{cancel, block}, nil, "create-server", "--json", s.file("i.json", nil), "--as", "owner")
+	if r.code != 1 || r.stdout != "" || r.stderr != "error: interrupted\n" {
+		t.Errorf("%+v", r)
+	}
+	if s.servers() != 0 || len(s.up.authHeaders()) != 0 {
+		t.Error("something was created or contacted")
+	}
+}
+
+// A cancellation after the secret was read (a signal during the first sync) does not cut the
+// creation in half: the server, its sync and the audit records are all there.
+func TestCLICreateServerSurvivesACancellationAfterTheSecret(t *testing.T) {
+	s := newServerEnv(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go func() {
+		select {
+		case <-s.up.arrived: // the first sync reached the upstream
+			cancel()
+		case <-time.After(30 * time.Second):
+		}
+	}()
+	r := s.runCtx(ctx, s.cfg, strings.NewReader(cliSecret+"\n"), nil, "create-server", "--json", s.file("c.json", nil), "--as", "owner")
+	if r.code != 0 || r.stdout != "created server \"fake\" (shared_secret, secret set); 1 tool(s)\n" {
+		t.Fatalf("%+v", r)
+	}
+	for _, a := range []string{"server.create", "server.secret_set", "server.sync"} {
+		if s.count(`select count(*) from platform.audit_log where action = $1`, a) != 1 {
+			t.Errorf("audit %s missing", a)
+		}
+	}
+	if s.count(`select count(*) from catalog.tools where server = 'fake'`) != 1 {
+		t.Error("the tool was not stored")
+	}
+}
+
+// The counts of a sync are printed in the golden's wording with each number in its own place.
+func TestCLISyncPrintsDistinctCounts(t *testing.T) {
+	s := newServerEnv(t)
+	s.up.setTools("t1", "t2", "t3", "t4")
+	s.create(cliSecret, nil, "--json", s.file("n.json", nil), "--as", "owner")
+	s.up.mu.Lock()
+	s.up.suffix = " v2"
+	s.up.mu.Unlock()
+	s.up.setTools("t1", "n1", "n2") // t1 changed, n1 and n2 added, t2..t4 removed
+	r := s.run("sync", "fake", "--as", "owner")
+	golden(t, "sync-changed-removed", r, "fake", "<SLUG>", "2 added, 1 changed, 3 removed", "0 added, 1 changed, 1 removed")
 }

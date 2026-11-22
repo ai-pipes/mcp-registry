@@ -31,6 +31,7 @@ type mcpFake struct {
 
 	mu      sync.Mutex
 	tools   []string
+	suffix  string // appended to every description: a change the sync must notice
 	down    bool
 	auths   []string
 	hold    chan struct{} // when set, tools/list blocks until it is closed or the request ends
@@ -77,7 +78,7 @@ func (f *mcpFake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = json.Unmarshal(body, &in)
 	f.mu.Lock()
-	down, hold, tools := f.down, f.hold, slices.Clone(f.tools)
+	down, hold, tools, suffix := f.down, f.hold, slices.Clone(f.tools), f.suffix
 	if in.Method == "tools/list" {
 		f.auths = append(f.auths, r.Header.Get("Authorization"))
 	}
@@ -108,7 +109,7 @@ func (f *mcpFake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		parts := make([]string, len(tools))
 		for i, n := range tools {
-			parts[i] = fmt.Sprintf(`{"name":%q,"description":"the %s tool","inputSchema":{"type":"object"}}`, n, n)
+			parts[i] = fmt.Sprintf(`{"name":%q,"description":"the %s tool%s","inputSchema":{"type":"object"}}`, n, n, suffix)
 		}
 		reply(`{"tools":[` + strings.Join(parts, ",") + `]}`)
 	default:
