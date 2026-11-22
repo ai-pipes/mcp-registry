@@ -5,11 +5,15 @@ package app
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
+	"strings"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"golang.org/x/sys/unix"
+	"golang.org/x/term"
 )
 
 // These tests read a secret through a real pseudo-terminal: the slave is the process's terminal,
@@ -173,5 +177,72 @@ func TestAPseudoTerminalIsATerminal(t *testing.T) {
 	t.Cleanup(func() { _ = master.Close(); _ = slave.Close() })
 	if terminalOf(slave) == nil {
 		t.Error("a pty slave is a terminal")
+	}
+}
+
+// Keys that are not characters never become part of the secret: control bytes are dropped and
+// escape sequences (arrows, Home/End, function keys, bracketed-paste markers) are swallowed whole,
+// also when they arrive in pieces. Ctrl-U, backspace, Enter, Ctrl-C and Ctrl-D keep their meaning.
+func TestKeysThatAreNotCharactersAreNotPartOfTheSecret(t *testing.T) {
+	cases := []struct {
+		name, keys, want string
+	}{
+		{"arrow keys", "ab\x1b[Ac\x1b[D\x1b[Bd\x1b[C\r", "abcd"},
+		{"home and end and delete", "a\x1b[H\x1b[F\x1b[3~b\r", "ab"},
+		{"function keys, CSI with parameters", "a\x1b[15~\x1b[1;5Cb\r", "ab"},
+		{"SS3 sequences", "a\x1bOPb\x1bOH\r", "ab"},
+		{"a lone ESC and the byte after it", "a\x1bxb\r", "ab"},
+		{"tab and Ctrl-W and Ctrl-A", "a\tb\x17c\x01\r", "abc"},
+		{"bracketed paste keeps its content", "\x1b[200~pa55\x1b[201~\r", "pa55"},
+		{"UTF-8 is kept", "päß\r", "päß"},
+		{"Ctrl-U still clears the line", "abc\x15d\r", "d"},
+		{"Ctrl-C inside a sequence still interrupts", "a\x1b[\x03", "!interrupted"},
+	}
+	for _, c := range cases {
+		for _, oneByte := range []bool{false, true} {
+			name := c.name
+			if oneByte {
+				name += " (one byte per read)"
+			}
+			t.Run(name, func(t *testing.T) {
+				var r io.Reader = strings.NewReader(c.keys)
+				if oneByte {
+					r = iotest.OneByteReader(r)
+				}
+				got, err := readRawLine(r)
+				if c.want == "!interrupted" {
+					if !errors.Is(err, errInterrupted) {
+						t.Fatalf("%q, %v", got, err)
+					}
+					return
+				}
+				if err != nil || got != c.want {
+					t.Fatalf("%q, %v; want %q", got, err, c.want)
+				}
+			})
+		}
+	}
+}
+
+// What was typed after the first Enter (the rest of a multi-line paste) is discarded with the
+// terminal's input queue, so that the shell does not run it once the terminal is restored.
+func TestTheRestOfAPasteIsDiscardedWhenTheLineEnds(t *testing.T) {
+	ty := startTyping(t)
+	ty.typeKeys(t, "secret\nrm -rf x\n")
+	if r := ty.result(t); r.err != nil || r.line != "secret" {
+		t.Fatalf("%+v", r)
+	}
+	ty.restored(t)
+	// In line mode the count of unread bytes does not include input that has not been made into a
+	// line yet (macOS), so it is taken in raw mode, which sees all of it.
+	fd := int(ty.slave.Fd()) //nolint:gosec // G115: a descriptor is a small non-negative number
+	saved, err := term.MakeRaw(fd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, err := unix.IoctlGetInt(fd, pendingInput)
+	_ = term.Restore(fd, saved)
+	if err != nil || n != 0 {
+		t.Fatalf("%d bytes of input are left for the shell (%v)", n, err)
 	}
 }

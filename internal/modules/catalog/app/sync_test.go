@@ -883,6 +883,18 @@ func TestRegisterServer(t *testing.T) {
 		}
 	})
 
+	t.Run("a context that ends during the first sync keeps the created server and records nothing about the sync", func(t *testing.T) {
+		h := newSyncHarness()
+		h.upstream.failure = context.Canceled
+		cctx, cancel := context.WithCancel(ctx)
+		cancel() // the creation is written whole all the same
+		v, err := app.RegisterServer(cctx, h.deps, createCmd("gitea", ptr("k"), func(f *app.ServerFields) { f.Auth = authShared }))
+		if !errors.Is(err, app.ErrFirstSyncInterrupted) || v.Slug != "gitea" || v.LastSyncAt != nil || v.LastSyncError != nil {
+			t.Fatalf("view = %+v, err = %v", v, err)
+		}
+		equalStrings(t, h.audit.actions(), []string{"server.create", "server.secret_set"})
+	})
+
 	t.Run("a personal-auth server fails its first sync with needs_connection, the server stays", func(t *testing.T) {
 		h := newSyncHarness()
 		v, err := app.RegisterServer(ctx, h.deps, createCmd("gitea", nil, func(f *app.ServerFields) { f.Auth = authOAuth }))

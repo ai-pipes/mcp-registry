@@ -26,7 +26,9 @@ func (t fdTerminal) ReadSecretLine(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	restore := sync.OnceFunc(func() { _ = term.Restore(fd, saved) })
+	// Input typed after the line (the rest of a multi-line paste) is thrown away before the
+	// terminal is given back, or the shell would run it.
+	restore := sync.OnceFunc(func() { discardPendingInput(fd); _ = term.Restore(fd, saved) })
 	defer restore()
 
 	type result struct {
@@ -48,12 +50,28 @@ func (t fdTerminal) ReadSecretLine(ctx context.Context) (string, error) {
 	}
 }
 
+// keyState is where the key reader is inside an escape sequence.
+type keyState int
+
+const (
+	keyPlain keyState = iota // ordinary input
+	keyEsc                   // after ESC: the next byte says what follows
+	keyCSI                   // after ESC [ : parameters, then a final byte 0x40-0x7E
+	keySS3                   // after ESC O : one more byte
+)
+
 // readRawLine reads keys from a terminal in raw mode until Enter. Backspace (0x7f, 0x08) removes
 // the last character, Ctrl-U the whole line, Ctrl-D on an empty line (or the end of input) ends
-// with an empty line and is ignored inside a line, Ctrl-C is errInterrupted.
+// with an empty line and is ignored inside a line, Ctrl-C is errInterrupted. Every other control
+// byte is dropped, and escape sequences (arrows, Home/End, function keys, the bracketed-paste
+// markers ESC [ 200 ~ and ESC [ 201 ~) are swallowed whole, wherever the reads split them, so a
+// key that is not a character never becomes part of the secret; the text between the paste markers
+// is kept. A lone ESC takes the byte after it with it. A control byte inside a sequence ends the
+// sequence and is then handled as typed (so Ctrl-C always interrupts).
 func readRawLine(r io.Reader) (string, error) {
 	var line []byte
 	var key [1]byte
+	state := keyPlain
 	for {
 		if _, err := io.ReadFull(r, key[:]); err != nil {
 			if errors.Is(err, io.EOF) { // the terminal went away: what was typed is not a secret
@@ -61,22 +79,57 @@ func readRawLine(r io.Reader) (string, error) {
 			}
 			return "", err
 		}
-		switch c := key[0]; c {
-		case '\r', '\n':
+		c := key[0]
+		switch state {
+		case keyEsc:
+			switch {
+			case c == '[':
+				state = keyCSI
+				continue
+			case c == 'O':
+				state = keySS3
+				continue
+			case c == 0x1b:
+				continue // ESC ESC: still waiting for what follows
+			case c >= 0x20 && c != 0x7f:
+				state = keyPlain
+				continue // the byte of a two-byte sequence
+			}
+			state = keyPlain // a control byte: typed as it is
+		case keyCSI:
+			if c >= 0x20 && c < 0x40 { // parameter and intermediate bytes
+				continue
+			}
+			state = keyPlain
+			if c >= 0x40 && c <= 0x7e { // the final byte
+				continue
+			}
+		case keySS3:
+			state = keyPlain
+			if c >= 0x20 && c != 0x7f {
+				continue
+			}
+		}
+		switch {
+		case c == 0x1b:
+			state = keyEsc
+		case c == '\r' || c == '\n':
 			return string(line), nil
-		case 0x03:
+		case c == 0x03:
 			return "", errInterrupted
-		case 0x04:
+		case c == 0x04:
 			if len(line) == 0 {
 				return "", nil
 			}
-		case 0x7f, 0x08:
+		case c == 0x7f || c == 0x08:
 			if len(line) > 0 {
 				_, size := utf8.DecodeLastRune(line)
 				line = line[:len(line)-size]
 			}
-		case 0x15:
+		case c == 0x15:
 			line = line[:0]
+		case c < 0x20:
+			// Tab, Ctrl-W, Ctrl-A...: not characters.
 		default:
 			line = append(line, c)
 		}

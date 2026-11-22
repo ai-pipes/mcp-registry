@@ -13,6 +13,9 @@ import (
 
 const getTermios = unix.TCGETS
 
+// pendingInput is the request for the number of unread input bytes (FIONREAD).
+const pendingInput = unix.TIOCINQ
+
 // openPTY is a pseudo-terminal pair: what is written to master is typed at slave (/dev/ptmx, then
 // the numbered slave under /dev/pts).
 func openPTY(t *testing.T) (master, slave *os.File) {

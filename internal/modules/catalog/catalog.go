@@ -215,6 +215,9 @@ func (s *Service) ListServerSlugs(ctx context.Context) ([]string, error) {
 	return app.ListServerSlugs(ctx, s.d)
 }
 
+// ErrFirstSyncInterrupted is returned by RegisterServer, with the created server, when the context ends during the first sync.
+var ErrFirstSyncInterrupted = app.ErrFirstSyncInterrupted
+
 // SyncServer synchronises one server with its upstream: counts, or a DomainError (needs_connection,
 // sync_failed, not_found, forbidden...).
 func (s *Service) SyncServer(ctx context.Context, cmd SyncCommand) (SyncCounts, error) {
@@ -227,7 +230,8 @@ func (s *Service) SyncAllServers(ctx context.Context) ([]SyncOutcome, error) {
 }
 
 // RegisterServer creates a server and synchronises it at once; a failed synchronisation is
-// recorded in the returned view's LastSyncError and is not an error.
+// recorded in the returned view's LastSyncError and is not an error. A context that ends during
+// the first sync returns the created server's view with ErrFirstSyncInterrupted.
 func (s *Service) RegisterServer(ctx context.Context, cmd CreateServerCommand) (ServerView, error) {
 	return app.RegisterServer(ctx, s.d, cmd)
 }

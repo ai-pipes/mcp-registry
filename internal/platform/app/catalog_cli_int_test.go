@@ -340,30 +340,79 @@ func TestCLICreateServerInterruptedDuringTheSecretReadCreatesNothing(t *testing.
 	}
 }
 
-// A cancellation after the secret was read (a signal during the first sync) does not cut the
-// creation in half: the server, its sync and the audit records are all there.
-func TestCLICreateServerSurvivesACancellationAfterTheSecret(t *testing.T) {
-	s := newServerEnv(t)
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-	go func() {
+// holdUpstream makes tools/list wait and returns a function that waits until it has arrived.
+func (s *serverEnv) holdUpstream() (arrived func()) {
+	s.t.Helper()
+	for len(s.up.arrived) > 0 { // signals of earlier syncs
+		<-s.up.arrived
+	}
+	hold := make(chan struct{})
+	s.up.setHold(hold)
+	s.t.Cleanup(func() { close(hold) })
+	return func() {
 		select {
-		case <-s.up.arrived: // the first sync reached the upstream
-			cancel()
+		case <-s.up.arrived:
 		case <-time.After(30 * time.Second):
+			s.t.Error("tools/list never arrived")
 		}
-	}()
-	r := s.runCtx(ctx, s.cfg, strings.NewReader(cliSecret+"\n"), nil, "create-server", "--json", s.file("c.json", nil), "--as", "owner")
-	if r.code != 0 || r.stdout != "created server \"fake\" (shared_secret, secret set); 1 tool(s)\n" {
+	}
+}
+
+// runInterrupted runs a command whose context ends once tools/list has reached the held upstream.
+// It must come back long before the call timeout.
+func (s *serverEnv) runInterrupted(stdin string, args ...string) cliRun {
+	s.t.Helper()
+	arrived := s.holdUpstream()
+	ctx, cancel := context.WithCancel(context.Background())
+	s.t.Cleanup(cancel)
+	go func() { arrived(); cancel() }()
+	start := time.Now()
+	r := s.runCtx(ctx, s.cfg, strings.NewReader(stdin), nil, args...)
+	if d := time.Since(start); d > 10*time.Second {
+		s.t.Errorf("the command took %v to notice the interrupt", d)
+	}
+	return r
+}
+
+// A signal while the first sync waits on the upstream ends the command: the server stays, with
+// its creation records, and nothing about the unfinished attempt is recorded.
+func TestCLICreateServerInterruptedDuringTheFirstSync(t *testing.T) {
+	s := newServerEnv(t)
+	r := s.runInterrupted(cliSecret+"\n", "create-server", "--json", s.file("c.json", nil), "--as", "owner")
+	if r.code != 1 || r.stdout != "created server \"fake\" (shared_secret, secret set); 0 tool(s)\n" ||
+		r.stderr != "error: interrupted; the server was created, its first sync did not finish\n" {
 		t.Fatalf("%+v", r)
 	}
-	for _, a := range []string{"server.create", "server.secret_set", "server.sync"} {
-		if s.count(`select count(*) from platform.audit_log where action = $1`, a) != 1 {
-			t.Errorf("audit %s missing", a)
+	for action, want := range map[string]int{"server.create": 1, "server.secret_set": 1, "server.sync": 0} {
+		if got := s.count(`select count(*) from platform.audit_log where action = $1`, action); got != want {
+			t.Errorf("audit %s: %d, want %d", action, got, want)
 		}
 	}
+	if s.servers() != 1 || s.count(`select count(*) from catalog.servers where last_sync_at is null and last_sync_error is null`) != 1 {
+		t.Error("the server must exist with no sync recorded")
+	}
+	s.noSecretAnywhere(r)
+}
+
+// sync interrupted while it waits: the use case records nothing, as for any cancelled attempt.
+func TestCLISyncInterruptedWhileWaitingOnTheUpstream(t *testing.T) {
+	s := newServerEnv(t)
+	s.create(cliSecret, nil, "--json", s.file("s.json", nil), "--as", "owner")
+	syncs := s.count(`select count(*) from platform.audit_log where action = 'server.sync'`)
+	before := s.count(`select extract(epoch from last_sync_at)::bigint from catalog.servers where slug = 'fake'`)
+	s.up.setTools("echo", "second")
+	r := s.runInterrupted("", "sync", "fake", "--as", "owner")
+	if r.code != 1 || r.stdout != "" || r.stderr != "error: interrupted\n" {
+		t.Fatalf("%+v", r)
+	}
+	if got := s.count(`select count(*) from platform.audit_log where action = 'server.sync'`); got != syncs {
+		t.Errorf("a cancelled attempt was audited")
+	}
+	if got := s.count(`select extract(epoch from last_sync_at)::bigint from catalog.servers where slug = 'fake'`); got != before {
+		t.Errorf("a cancelled attempt changed last_sync_at")
+	}
 	if s.count(`select count(*) from catalog.tools where server = 'fake'`) != 1 {
-		t.Error("the tool was not stored")
+		t.Error("the tools changed")
 	}
 }
 

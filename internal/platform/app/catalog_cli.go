@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -92,11 +93,13 @@ func (w catalogWiring) createServer(ctx context.Context, cio CLIIO, args []strin
 	if err != nil {
 		return err
 	}
-	// A signal does not cut the creation and its audit records in half.
-	view, err := w.service.RegisterServer(context.WithoutCancel(ctx), catalog.CreateServerCommand{
+	// The use case writes the creation whole whatever ctx does and ends the wait on the upstream
+	// when ctx ends (a signal): the server then stays, the first sync is simply not recorded.
+	view, err := w.service.RegisterServer(ctx, catalog.CreateServerCommand{
 		Principal: principal, Input: in, Secret: secret,
 	})
-	if err != nil {
+	interrupted := errors.Is(err, catalog.ErrFirstSyncInterrupted)
+	if err != nil && !interrupted {
 		return err
 	}
 	mode := string(view.Auth.Kind)
@@ -108,6 +111,9 @@ func (w catalogWiring) createServer(ctx context.Context, cio CLIIO, args []strin
 		report = "sync failed: " + *view.LastSyncError
 	}
 	out(cio, fmt.Sprintf("created server \"%s\" (%s); %s", view.Slug, mode, report))
+	if interrupted {
+		return CommandError(msgInterrupted + "; the server was created, its first sync did not finish")
+	}
 	if view.LastSyncError != nil {
 		return CommandError(msgFirstSyncFailed)
 	}
@@ -133,8 +139,13 @@ func (w catalogWiring) syncServer(ctx context.Context, cio CLIIO, args []string)
 		principal = &pr
 	}
 	slug := p.positionals[0]
-	counts, err := w.service.SyncServer(context.WithoutCancel(ctx), catalog.SyncCommand{Principal: principal, Slug: slug})
+	// ctx ends the wait on the upstream; once the upstream has answered the use case writes what
+	// follows whole, whatever ctx does.
+	counts, err := w.service.SyncServer(ctx, catalog.SyncCommand{Principal: principal, Slug: slug})
 	if err != nil {
+		if ctx.Err() != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+			return CommandError(msgInterrupted)
+		}
 		return err
 	}
 	out(cio, fmt.Sprintf("synced \"%s\": %d added, %d changed, %d removed", slug, counts.Added, counts.Changed, counts.Removed))

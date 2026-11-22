@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/ai-pipes/mcp-registry/internal/kernel"
@@ -277,22 +278,38 @@ func SyncAllServers(ctx context.Context, deps Deps) ([]SyncOutcome, error) {
 // creation and is not an error of the registration: it is recorded as the server's
 // last_sync_error, which the returned view carries (the REST route answers created with that
 // view; the CLI prints "sync failed: <LastSyncError>" and exits 1). The view is read after the
-// sync, so LastSyncAt, LastSyncError and ToolCount are current.
+// sync, so LastSyncAt, LastSyncError and ToolCount are current. A context that ends while the
+// sync waits on the upstream is the one exception: the view of the created server comes back with
+// ErrFirstSyncInterrupted.
 func RegisterServer(ctx context.Context, deps Deps, cmd CreateServerCommand) (ServerView, error) {
-	created, err := CreateServer(ctx, deps, cmd)
+	// The creation (the row, its events, its audit records) is written whole: a cancelled caller
+	// does not decide, half-way, whether the server exists.
+	created, err := CreateServer(context.WithoutCancel(ctx), deps, cmd)
 	if err != nil {
 		return ServerView{}, err
 	}
 	// The server exists: whatever the sync answers, the creation stands.
-	_, _ = SyncServerRecordingFailure(ctx, deps, SyncCommand{Principal: &cmd.Principal, Slug: created.Slug})
-	listing, err := deps.Servers.List(ctx)
+	_, syncErr := SyncServerRecordingFailure(ctx, deps, SyncCommand{Principal: &cmd.Principal, Slug: created.Slug})
+	_, answered := kernel.AsDomainError(syncErr)
+	interrupted := syncErr != nil && !answered && ctx.Err() != nil
+	view := created
+	listing, err := deps.Servers.List(context.WithoutCancel(ctx))
 	if err != nil {
 		return ServerView{}, err
 	}
 	for _, l := range listing {
 		if l.Server.Slug() == created.Slug {
-			return toServerView(l.Server, l.ToolCount), nil
+			view = toServerView(l.Server, l.ToolCount)
+			break
 		}
 	}
-	return created, nil
+	if interrupted {
+		return view, ErrFirstSyncInterrupted
+	}
+	return view, nil
 }
+
+// ErrFirstSyncInterrupted is what RegisterServer returns, together with the view of the server
+// that was created, when the caller's context ended while the first synchronisation waited on the
+// upstream: nothing about that attempt is recorded.
+var ErrFirstSyncInterrupted = errors.New("first sync interrupted")
