@@ -71,7 +71,7 @@ func TestToolsChangedIsIdempotentAndConvergesOnTheCurrentCatalog(t *testing.T) {
 	}
 }
 
-func TestToolsRemovedDeletesByRefWithoutConsultingTheCatalog(t *testing.T) {
+func TestToolsRemovedDeletesWhatTheCatalogDoesNotOfferAndKeepsALiveRow(t *testing.T) {
 	w := newWorld(t)
 	h := app.EventHandlers(w.d)[catalog.EventToolsRemoved]
 	w.seed("gitea.a", false)
@@ -82,16 +82,16 @@ func TestToolsRemovedDeletesByRefWithoutConsultingTheCatalog(t *testing.T) {
 	if got := w.refs(); !slices.Equal(got, []string{"gitea.b"}) {
 		t.Fatalf("refs = %v", got)
 	}
-	if w.j.count("catalog") != 0 {
-		t.Fatal("the removal consulted the catalog")
+	if w.j.count("catalog") != 1 {
+		t.Fatal("the removal did not read the catalog")
 	}
-	// the stale-event peculiarity: a live document of a revived tool is deleted all the same
+	// decided deviation stale-removal-rechecks-catalog: a stale event of a revived tool keeps its row
 	w.cat.put("gitea", map[string]string{"b": "back again"})
 	if err := h(ctx, map[string]any{"server": "gitea", "refs": []any{"gitea.b"}}); err != nil {
 		t.Fatal(err)
 	}
-	if len(w.refs()) != 0 {
-		t.Fatalf("refs = %v", w.refs())
+	if got := w.refs(); !slices.Equal(got, []string{"gitea.b"}) {
+		t.Fatalf("refs = %v", got)
 	}
 }
 
@@ -143,6 +143,18 @@ func TestHandlerFailureRule(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
+	t.Run("a catalog error fails the removal and keeps the row", func(t *testing.T) {
+		boom := errors.New("boom")
+		w := newWorld(t)
+		w.seed("g.a", true)
+		w.cat.errFor = boom
+		if err := app.EventHandlers(w.d)[catalog.EventToolsRemoved](ctx, changed); !errors.Is(err, boom) {
+			t.Fatalf("err = %v", err)
+		}
+		if got := w.refs(); !slices.Equal(got, []string{"g.a"}) {
+			t.Fatalf("refs = %v", got)
+		}
+	})
 	t.Run("embedder down does not make removal fail", func(t *testing.T) {
 		w := newWorld(t)
 		w.failAll()
@@ -158,6 +170,7 @@ func TestHandlerFailureRule(t *testing.T) {
 		if err := app.EventHandlers(w.d)[catalog.EventServerChanged](ctx, map[string]any{"server": "g"}); !errors.Is(err, boom) {
 			t.Fatalf("err = %v", err)
 		}
+		w.cat.errFor = nil
 		w.idx.errRemove = boom
 		if err := app.EventHandlers(w.d)[catalog.EventToolsRemoved](ctx, changed); !errors.Is(err, boom) {
 			t.Fatalf("err = %v", err)
@@ -215,6 +228,7 @@ func TestHandlersAcceptThePayloadsAsTheOutboxReturnsThem(t *testing.T) {
 	if err := h[catalog.EventServerChanged](ctx, roundTrip(map[string]any{"server": "gitea"})); err != nil {
 		t.Fatal(err)
 	}
+	w.cat.hide("gitea", "issue") // removed from the catalog: its removal event now takes effect
 	if err := h[catalog.EventToolsRemoved](ctx, roundTrip(map[string]any{"server": "gitea", "refs": []string{"gitea.issue"}})); err != nil {
 		t.Fatal(err)
 	}

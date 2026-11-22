@@ -354,18 +354,60 @@ func TestIndexToolRefsKeepsTheCatalogOrderAndIgnoresUnofferedRefs(t *testing.T) 
 	}
 }
 
-func TestRemoveTools(t *testing.T) {
+// Decided deviation stale-removal-rechecks-catalog: the TypeScript server deletes without asking.
+func TestRemoveToolsDeletesOnlyWhatTheCatalogDoesNotOffer(t *testing.T) {
 	w := newWorld(t)
+	w.cat.put("g", map[string]string{"b": "back again"})
 	w.seed("g.a", false)
-	w.seed("g.b", false)
-	if err := app.RemoveTools(ctx, w.d, []string{"g.a"}); err != nil {
+	w.seed("g.b", true)
+	if err := app.RemoveTools(ctx, w.d, "g", []string{"g.a", "g.b"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := w.refs(); !slices.Equal(got, []string{"g.b"}) {
+		t.Fatalf("refs = %v: the live row must stay, the gone one go", got)
+	}
+	// replaying it changes nothing
+	if err := app.RemoveTools(ctx, w.d, "g", []string{"g.a", "g.b"}); err != nil {
 		t.Fatal(err)
 	}
 	if got := w.refs(); !slices.Equal(got, []string{"g.b"}) {
 		t.Fatalf("refs = %v", got)
 	}
-	if err := app.RemoveTools(ctx, w.d, nil); err != nil || w.j.count("remove") != 1 {
-		t.Fatalf("empty list: err %v, remove calls %d", err, w.j.count("remove"))
+}
+
+func TestRemoveToolsAnUnknownOrDisabledServerLosesEveryListedRef(t *testing.T) {
+	w := newWorld(t)
+	w.seed("ghost.a", true)
+	w.seed("off.a", true)
+	w.cat.put("off", map[string]string{}) // disabled: no tools
+	if err := app.RemoveTools(ctx, w.d, "ghost", []string{"ghost.a"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.RemoveTools(ctx, w.d, "off", []string{"off.a"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(w.refs()) != 0 {
+		t.Fatalf("refs = %v", w.refs())
+	}
+}
+
+func TestRemoveToolsEmptyListDoesNotAskTheCatalog(t *testing.T) {
+	w := newWorld(t)
+	if err := app.RemoveTools(ctx, w.d, "g", nil); err != nil || len(w.j.all()) != 0 {
+		t.Fatalf("err %v, calls %v", err, w.j.all())
+	}
+}
+
+func TestRemoveToolsACatalogErrorFailsTheHandlerAndRemovesNothing(t *testing.T) {
+	w := newWorld(t)
+	w.seed("g.a", true)
+	boom := errors.New("boom")
+	w.cat.errFor = boom
+	if err := app.RemoveTools(ctx, w.d, "g", []string{"g.a"}); !errors.Is(err, boom) {
+		t.Fatalf("err = %v", err)
+	}
+	if got := w.refs(); !slices.Equal(got, []string{"g.a"}) {
+		t.Fatalf("refs = %v", got)
 	}
 }
 

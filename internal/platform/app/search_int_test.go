@@ -271,6 +271,37 @@ func TestAFailedReembeddingKeepsTheVectorsAndTheSweepRefreshesThem(t *testing.T)
 	}
 }
 
+// Decided deviation stale-removal-rechecks-catalog. A removal event replayed for a tool the
+// catalog offers again leaves its row alone; one for a tool it does not offer deletes it.
+func TestAReplayedStaleRemovalKeepsTheLiveRow(t *testing.T) {
+	url := pgtest.StartURL(t)
+	emb := newFakeEmbeddingServer(t)
+	rs := startReal(t, url, newKey(t), remoteEmbedder(emb))
+	admin := person{rs, rs.person("alice", idapp.RoleAdmin)}
+	registerFiles(t, admin, newMCPFake(t, "alpha", "beta"))
+	waitCount(t, url, 2, vectorsOf, "files")
+	waitCount(t, url, 0, unprocessed)
+	if _, err := execSQL(url, `insert into search.documents (ref, server, description, tsv)
+		values ('files.ghost', 'files', 'gone', to_tsvector('simple', 'ghost'))`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := execSQL(url, `insert into platform.outbox (type, payload) values
+		('catalog.tools_removed', '{"server":"files","refs":["files.alpha","files.ghost"]}')`); err != nil {
+		t.Fatal(err)
+	}
+	waitCount(t, url, 0, unprocessed)
+	if n := queryInt(t, url, `select count(*)::int from search.documents where ref = 'files.ghost'`); n != 0 {
+		t.Error("a ref the catalog does not offer survived its removal")
+	}
+	waitCount(t, url, 2, vectorsOf, "files")
+	if n := queryInt(t, url, `select count(*)::int from search.documents where ref = 'files.alpha'`); n != 1 {
+		t.Fatalf("the live row of a tool the catalog offers was deleted by a stale event (%d rows)", n)
+	}
+	if code := rs.stop("SIGTERM"); code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+}
+
 // Hiding a tool, unhiding it, disabling a server and enabling it again reach the index.
 func TestHidingAndDisablingReachTheIndex(t *testing.T) {
 	url := pgtest.StartURL(t)

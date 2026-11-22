@@ -130,13 +130,31 @@ func deref(s *string) string {
 	return *s
 }
 
-// RemoveTools deletes the documents of the refs without asking the catalog. Reproduced from
-// TypeScript on purpose (owner decision pending): a removal event delivered late, after the tool
-// was offered again, deletes a live document, and neither the sweep (it only fills missing
-// vectors of existing rows) nor anything but the next event for that tool or `reindex` restores it.
-func RemoveTools(ctx context.Context, d Deps, refs []string) error {
+// RemoveTools deletes the documents of the listed refs of a server that the catalog does not
+// currently offer for indexing. Decided deviation stale-removal-rechecks-catalog (the TypeScript
+// server deletes the listed refs without asking): a removal event delivered late or twice, after
+// the tool was offered again, leaves the live document alone. An unknown or disabled server offers
+// nothing, so all listed refs go. It is idempotent; a catalog error is returned (the event is
+// retried) and nothing is removed.
+func RemoveTools(ctx context.Context, d Deps, server string, refs []string) error {
 	if len(refs) == 0 {
 		return nil
 	}
-	return d.Index.Remove(ctx, refs)
+	source, err := d.Tools.ListToolsForIndex(ctx, server)
+	if err != nil {
+		return err
+	}
+	offered := map[string]bool{}
+	if source != nil {
+		for _, t := range source.Tools {
+			offered[t.Ref] = true
+		}
+	}
+	var gone []string
+	for _, ref := range refs {
+		if !offered[ref] {
+			gone = append(gone, ref)
+		}
+	}
+	return d.Index.Remove(ctx, gone)
 }
