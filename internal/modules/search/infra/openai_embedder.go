@@ -46,11 +46,22 @@ type OpenAIEmbedder struct {
 
 var _ app.Embedder = (*OpenAIEmbedder)(nil)
 
+// newDefaultClient is the client of the adapter when none is given: the default transport's
+// settings and net/http's redirect rules, but no proxy. Node's fetch ignores HTTP_PROXY and
+// HTTPS_PROXY (the reference sends the text straight to EMBEDDER_URL), and the upstream client
+// of this server does not use them either, so passage text never goes through a proxy of the
+// environment.
+func newDefaultClient() *http.Client {
+	tr := http.DefaultTransport.(*http.Transport).Clone() //nolint:forcetypeassert // the default transport is an *http.Transport
+	tr.Proxy = nil
+	return &http.Client{Transport: tr}
+}
+
 // NewOpenAIEmbedder builds the adapter for EMBEDDER_URL and EMBEDDER_MODEL. client may be nil
-// (a plain http.Client); the 20 s timeout is applied per request whatever client is given.
+// (see newDefaultClient); the 20 s timeout is applied per request whatever client is given.
 func NewOpenAIEmbedder(url, model string, client *http.Client) *OpenAIEmbedder {
 	if client == nil {
-		client = &http.Client{}
+		client = newDefaultClient()
 	}
 	return &OpenAIEmbedder{
 		endpoint: strings.TrimRight(url, "/") + "/embeddings",
@@ -78,7 +89,9 @@ func (e *OpenAIEmbedder) EmbedQuery(ctx context.Context, text string) ([]float32
 // high surrogate JavaScript's slice leaves when a cut falls inside an emoji; the local embedder
 // reads it as ordinary text, but TypeScript would put a lone-surrogate escape into the JSON,
 // which many servers refuse, so this adapter sends the replacement character (a decided
-// difference). Only the last rune is looked at: the stand-in appears nowhere else.
+// difference). Only the last rune is looked at: the domain puts the stand-in only at the end of a
+// cut passage, but a description that itself ends in U+F0000 within the cut is sent as U+FFFD too
+// (the local embedder keeps it; the reference would send the character as it is).
 func sendable(text string) string {
 	if body, ok := strings.CutSuffix(text, domain.SplitPairStandIn); ok {
 		return body + "�"

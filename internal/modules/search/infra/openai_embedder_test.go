@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -541,5 +542,45 @@ func TestOpenAIEmbedderNamesNoProductInItsHeaders(t *testing.T) {
 				t.Errorf("header %s names the product: %q", name, v)
 			}
 		}
+	}
+}
+
+// Node's fetch ignores HTTP_PROXY and HTTPS_PROXY, so the reference sends the passage text straight
+// to EMBEDDER_URL; the default client's transport would route it through the proxy of the
+// environment. Go's proxy-from-environment skips loopback targets, so the target here is a
+// made-up host name that a custom dialer maps to the test server: with the environment proxy in
+// play the request would go to the recording proxy instead. The transport is the default client's
+// own, cloned, with only its dialer replaced, so its Proxy field is what the adapter ships.
+func TestOpenAIEmbedderIgnoresProxyVariables(t *testing.T) {
+	target := startEmbeddingServer(t)
+	proxy := startEmbeddingServer(t)
+	t.Setenv("HTTP_PROXY", proxy.URL)
+	t.Setenv("http_proxy", proxy.URL)
+	t.Setenv("HTTPS_PROXY", proxy.URL)
+	t.Setenv("https_proxy", proxy.URL)
+	t.Setenv("NO_PROXY", "")
+	t.Setenv("no_proxy", "")
+
+	def := newDefaultClient()
+	tr, ok := def.Transport.(*http.Transport)
+	if !ok || tr.Proxy != nil {
+		t.Fatalf("the default client's transport must be an http.Transport with no Proxy: %#v", def.Transport)
+	}
+	tr = tr.Clone()
+	tr.DialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, network, target.Listener.Addr().String())
+	}
+	e := NewOpenAIEmbedder("http://embedder.example.test:8080/v1", "m", &http.Client{Transport: tr})
+	if _, err := e.EmbedPassage(context.Background(), "hello"); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(target.requests()); n != 1 {
+		t.Fatalf("the target saw %d requests, want 1", n)
+	}
+	if n := len(proxy.requests()); n != 0 {
+		t.Fatalf("the environment proxy saw %d requests: the adapter must ignore the proxy variables", n)
+	}
+	if got := NewOpenAIEmbedder("http://x/v1", "m", nil).client.Transport.(*http.Transport).Proxy; got != nil {
+		t.Fatal("NewOpenAIEmbedder(nil client) must use a transport without Proxy")
 	}
 }

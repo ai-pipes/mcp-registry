@@ -151,3 +151,20 @@ func TestAComposedRunJudgesDueMembersAtTheTimeItStarted(t *testing.T) {
 		t.Fatalf("second run: %v", log)
 	}
 }
+
+// One member is the sweep itself: the worker already gates it by its own clock reading, and a
+// second gate read from another now() could judge it not yet due after the worker advanced its mark
+// (one skipped sweep). With a clock that never moves a single member runs on every call.
+func TestASingleMemberRunsOnEveryDuePass(t *testing.T) {
+	now := time.Unix(1_000_000, 0)
+	ran := 0
+	s := composeSweeps(func() time.Time { return now }, []Sweep{{Every: time.Hour, Run: func(context.Context) error { ran++; return nil }}})
+	for range 3 {
+		if err := s.Run(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if ran != 3 {
+		t.Fatalf("the single member ran %d times in 3 passes, want 3 (the worker decides when it is due)", ran)
+	}
+}

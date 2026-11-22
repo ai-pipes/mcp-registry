@@ -261,7 +261,7 @@ func (w *worker) runSweep(ctx context.Context, s *Sweep) (err error) {
 // period and runs the members that are due, one after another, so two sweeps never overlap each
 // other or a delivery. A member that returns an error or panics does not stop the others; their
 // errors are joined (a panic stays recognisable for the worker's log). Members without Run are
-// ignored; no members give nil.
+// ignored; no members give nil; one member is returned as it is.
 func ComposeSweeps(sweeps ...Sweep) *Sweep { return composeSweeps(time.Now, sweeps) }
 
 func composeSweeps(now func() time.Time, sweeps []Sweep) *Sweep {
@@ -273,6 +273,9 @@ func composeSweeps(now func() time.Time, sweeps []Sweep) *Sweep {
 	}
 	if len(members) == 0 {
 		return nil
+	}
+	if len(members) == 1 {
+		return &members[0] // the worker gates it already; a second gate on another now() could skip a run
 	}
 	every := members[0].Every
 	for _, s := range members[1:] {
