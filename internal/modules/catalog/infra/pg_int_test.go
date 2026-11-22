@@ -1158,3 +1158,38 @@ func TestAHideCommittedDuringASnapshotSurvivesIt(t *testing.T) {
 		t.Fatalf("hidden %v, description %q: the hide was lost or the snapshot not applied", got.Hidden(), got.Description())
 	}
 }
+
+// An event whose type is not in domain.EventTypes is refused inside the transaction: nothing of
+// the change is written.
+func TestAnUnlistedEventTypeRollsTheWholeChangeBack(t *testing.T) {
+	pool, r := setup(t)
+	ctx := context.Background()
+	bad := []kernel.Event{{Type: domain.EventServerChanged, Payload: map[string]any{"server": "gitea"}}, {Type: "catalog.unlisted"}}
+
+	s := newServer(t, "gitea")
+	if err := r.Servers.Create(ctx, s, bad); err == nil {
+		t.Fatal("Create accepted an unlisted event type")
+	}
+	var n int
+	if err := pool.QueryRow(ctx, `select count(*) from catalog.servers`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("servers written: %d %v", n, err)
+	}
+	if rows := outboxRows(t, pool); len(rows) != 0 {
+		t.Fatalf("outbox rows: %+v", rows)
+	}
+
+	create(t, r, s)
+	clearOutbox(t, pool)
+	loaded := load(t, r, "gitea")
+	_, err := loaded.Update(domain.Changes{Name: domain.Some("Gitea 2")}, t1)
+	mustOK(t, err)
+	if err := r.Servers.Save(ctx, loaded, bad); err == nil {
+		t.Fatal("Save accepted an unlisted event type")
+	}
+	if got := load(t, r, "gitea"); got.Name() == "Gitea 2" {
+		t.Fatal("the refused Save changed the server")
+	}
+	if rows := outboxRows(t, pool); len(rows) != 0 {
+		t.Fatalf("outbox rows after Save: %+v", rows)
+	}
+}

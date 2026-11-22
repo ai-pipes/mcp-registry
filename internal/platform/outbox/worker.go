@@ -5,9 +5,11 @@ import (
 	"errors"
 	"log/slog"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/ai-pipes/mcp-registry/internal/kernel"
 	"github.com/ai-pipes/mcp-registry/internal/platform/logging"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -280,8 +282,8 @@ func composeSweeps(now func() time.Time, sweeps []Sweep) *Sweep {
 	ran := make([]bool, len(members))
 	return &Sweep{Every: every, Run: func(ctx context.Context) error {
 		var errs []error
+		t := now() // once: a slow member does not count against the periods of the ones after it
 		for i, s := range members {
-			t := now()
 			if ran[i] && t.Sub(last[i]) < s.Every {
 				continue
 			}
@@ -290,8 +292,51 @@ func composeSweeps(now func() time.Time, sweeps []Sweep) *Sweep {
 				errs = append(errs, err)
 			}
 		}
-		return errors.Join(errs...)
+		switch len(errs) {
+		case 0:
+			return nil
+		case 1:
+			return errs[0] // its own label, not a wrapper's
+		}
+		return newSweepFailures(errs)
 	}}
+}
+
+// sweepFailures is the error of a composed run in which several members failed. Its message and
+// its code list the members' labels (type names, never messages), since the label is what the
+// log and the operator see. The members stay reachable through errors.As.
+type sweepFailures struct {
+	errs   []error
+	labels []string
+}
+
+func newSweepFailures(errs []error) sweepFailures {
+	f := sweepFailures{errs: errs}
+	for _, e := range errs {
+		f.labels = append(f.labels, kernel.ErrorLabel(e))
+	}
+	return f
+}
+
+func (f sweepFailures) Error() string { return "sweeps failed: " + strings.Join(f.labels, "; ") }
+
+func (f sweepFailures) Unwrap() []error { return f.errs }
+
+// Code is the labels joined and cut to the 32 characters a label code may have (kernel.ErrorLabel
+// appends it to the type name).
+func (f sweepFailures) Code() string {
+	short := make([]string, len(f.labels))
+	for i, l := range f.labels {
+		typ, _, _ := strings.Cut(l, ": ")
+		short[i] = typ[strings.LastIndex(typ, ".")+1:] // without the package, to fit the limit
+	}
+	code := strings.Map(func(r rune) rune {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' {
+			return r
+		}
+		return '_'
+	}, strings.Join(short, "_"))
+	return code[:min(len(code), 32)]
 }
 
 func runMember(ctx context.Context, s Sweep) (err error) {

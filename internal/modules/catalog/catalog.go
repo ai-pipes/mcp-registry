@@ -247,10 +247,8 @@ func (s *Service) ResealServerSecrets(ctx context.Context, from, to kernel.Secre
 // caller.
 func ValidateServerInput(in ServerInput) []Issue { return app.ValidateServerInput(in) }
 
-// EventTypes lists every outbox event type the catalog emits. The composition checks that the
-// outbox handler table has a handler for each of them (an event of an unhandled type is marked
-// processed by the worker and lost). Keep it complete: a test reads the module's sources and
-// fails when an Event* constant or an emitted type is missing here.
-func EventTypes() []string {
-	return []string{EventToolsChanged, EventToolsRemoved, EventServerChanged}
-}
+// EventTypes lists every outbox event type the catalog emits (domain.EventTypes). The composition
+// checks that the outbox handler table has a handler for each of them (an event of an unhandled
+// type is marked processed by the worker and lost). The catalog's repositories refuse an event
+// whose type is not in the list, so it cannot go stale unnoticed.
+func EventTypes() []string { return domain.EventTypes() }

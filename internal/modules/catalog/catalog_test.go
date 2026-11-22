@@ -261,7 +261,10 @@ func TestEventTypesListsEveryEventTheCatalogEmits(t *testing.T) {
 				}
 				for _, el := range n.Elts {
 					kv, ok := el.(*ast.KeyValueExpr)
-					if !ok || kv.Key.(*ast.Ident).Name != "Type" {
+					if !ok {
+						continue
+					}
+					if key, ok := kv.Key.(*ast.Ident); !ok || key.Name != "Type" {
 						continue
 					}
 					switch v := kv.Value.(type) {

@@ -13,6 +13,13 @@ const (
 	EventServerChanged = "catalog.server_changed"
 )
 
+// EventTypes lists every event type the catalog may write to the outbox. The repositories refuse
+// an event of any other type, so a new emission path fails in tests until it is listed here, and
+// the composition checks the outbox handler table against this list (see catalog.EventTypes).
+func EventTypes() []string {
+	return []string{EventToolsChanged, EventToolsRemoved, EventServerChanged}
+}
+
 // ToolsChangedEvent is raised when tools were added, changed, revived, hidden or unhidden. Payload {server, refs}.
 func ToolsChangedEvent(server string, refs []string) kernel.Event {
 	return kernel.Event{Type: EventToolsChanged, Payload: map[string]any{"server": server, "refs": slices.Clone(refs)}}
