@@ -90,8 +90,15 @@ compat-image-go:
 #   - TestConfigNetworkAndRetention, TestConfigSecretsFromFiles: their cleanup demands that the
 #     scenario's MCP ledger saw an answer (milestone 6), whatever subtests are skipped.
 #   - TestUpgradeKeepsEverything, TestGatewayAuditAPI, TestConfigModelDirMissing and every
-#     connections, search, gateway, MCP scenario and the operator commands reindex,
-#     rotate-secrets-key, reset-key-check (milestones 4 to 7).
+#     connections, gateway, MCP scenario and the operator commands rotate-secrets-key and
+#     reset-key-check (milestones 5 to 7).
+# Milestone 4 (search) added the scenarios that judge the index, the stored vectors and the reindex
+# command without /mcp: TestSearchStoredVectors (the milestone's judge: every stored vector equals
+# the reference image's on the same machine), TestCLIReindexEmpty, TestConfigOpenAICompatibleEmbedder,
+# TestConfigModelDirMissing, and TestCatalogSearch with its /mcp subtests skipped (what stays: "the
+# index follows the catalog", "a change of the server is reindexed", the reindex command). Not
+# added: TestSearchReadyBeforeServing (its decided branch compares a search made at once with a
+# settled one: /mcp, milestone 6) and TestUpgradeKeepsEverything (search through /mcp, 6).
 COMPAT_GO_TESTS := TestConfigRefused TestPlatformStartsOnReferenceDatabase TestPlatformReverseHandOver \
 	TestPlatformWithoutPeople TestPlatformMigrationsAndKeyCheck TestPlatformStaticFilesAndSPA \
 	TestIdentityOIDC TestIdentityOIDCFailedCallbackAudit TestIdentityOIDCProviderDownAtStart \
@@ -101,7 +108,9 @@ COMPAT_GO_TESTS := TestConfigRefused TestPlatformStartsOnReferenceDatabase TestP
 	TestConfigEmptyMeansUnset TestPlatformMethodsWithoutOIDC TestPlatformCSRF TestPlatformHealthz \
 	TestPlatformAccessLog TestPlatformBodyLimit TestPlatformSecurityHeaders TestIdentityOIDCBindingKept \
 	TestCatalogOptimisticConcurrency TestCatalogValidation TestCatalogServers TestCLIServers \
-	TestPlatformBearerNeverOpensTheWebAPI
+	TestPlatformBearerNeverOpensTheWebAPI \
+	TestCatalogSearch TestSearchStoredVectors TestCLIReindexEmpty TestConfigOpenAICompatibleEmbedder \
+	TestConfigModelDirMissing
 
 # Subtests of the scenarios above that need a later milestone, as a go test -skip expression: one
 # entry per line below, joined with `|` (slash-separated regular expressions per level; spaces of a
@@ -142,8 +151,19 @@ COMPAT_GO_TESTS := TestConfigRefused TestPlatformStartsOnReferenceDatabase TestP
 #   milestone 5 (connections: PUT /api/connections/<slug>/pat)
 #   - TestCLIServers, "sync of a personal-auth server uses the connection of the administrator it
 #     names".
-#   milestone 4 (search: the index and its command)
-#   - TestCLIServers, "reindex rebuilds the search index and prints the number of indexed tools".
+#   milestone 6 also (the search scenarios reach it; their SQL and CLI steps are judged)
+#   - TestCatalogSearch: every subtest that asks search_tools, describe_tool, list_servers or
+#     call_tool: "the recorded queries" (also the rankings against the reference image),
+#     "searching every usable server ...", "limit is respected", "the servers filter applies before
+#     the limit", "an unknown server and an empty filter are refused", "list_servers and
+#     describe_tool" (also connections, 5), "hiding, removing and changing a tool ...", "a disabled
+#     server leaves the index ...", "names with dots and dashes ..." and "access by groups".
+#   - TestSearchStoredVectors, "SEARCH_MIN_SIMILARITY sets the floor of vector candidates".
+#   - TestCLIServers, "reindex rebuilds the search index ...": its three nested searches ("search
+#     finds ..."); the reindex itself, the digests and the wording are judged.
+#   - TestConfigOpenAICompatibleEmbedder, "a query is embedded with the query: prefix ..." and the
+#     nested "text search over MCP ..." of "with the embedder down ..."; TestConfigModelDirMissing,
+#     its nested "text search over MCP ...".
 COMPAT_GO_SKIP_ENTRIES := \
 	^TestPlatformMigrationsAndKeyCheck$$/^the_old_key_alone:_healthy,_one_warning;_rotate-secrets-key_re-seals_the_check$$ \
 	^TestPlatformStaticFilesAndSPA$$/^$$/^api,_$$/^mcp_and_$$/^healthz_are_never_the_shell$$ \
@@ -165,20 +185,38 @@ COMPAT_GO_SKIP_ENTRIES := \
 	^TestPlatformBearerNeverOpensTheWebAPI$$/^the_same_token_opens_ \
 	^TestPlatformBearerNeverOpensTheWebAPI$$/^a_bad_token_on_ \
 	^TestCLIServers$$/^sync_of_a_personal-auth_server_uses_ \
-	^TestCLIServers$$/^reindex_rebuilds_
+	^TestCatalogSearch$$/^the_recorded_queries$$ \
+	^TestCatalogSearch$$/^searching_every_usable_server_ \
+	^TestCatalogSearch$$/^limit_is_respected$$ \
+	^TestCatalogSearch$$/^the_servers_filter_applies_before_the_limit$$ \
+	^TestCatalogSearch$$/^an_unknown_server_and_an_empty_filter_are_refused$$ \
+	^TestCatalogSearch$$/^list_servers_and_describe_tool$$ \
+	^TestCatalogSearch$$/^hiding, \
+	^TestCatalogSearch$$/^a_disabled_server_leaves_the_index; \
+	^TestCatalogSearch$$/^names_with_dots_and_dashes_ \
+	^TestCatalogSearch$$/^access_by_groups$$ \
+	^TestSearchStoredVectors$$/^SEARCH_MIN_SIMILARITY_ \
+	^TestCLIServers$$/^reindex_rebuilds_.*$$/^search_ \
+	^TestConfigOpenAICompatibleEmbedder$$/^a_query_is_embedded_ \
+	^TestConfigOpenAICompatibleEmbedder$$/^with_the_embedder_down_.*$$/^text_search_over_MCP_ \
+	^TestConfigModelDirMissing$$/^text_search_over_MCP_
 
 space := $(subst ,, )
 COMPAT_GO_SKIP := $(subst $(space),|,$(strip $(COMPAT_GO_SKIP_ENTRIES)))
 COMPAT_GO_RUN := ^($(subst $(space),|,$(strip $(COMPAT_GO_TESTS))))$$
 
+# The deviations (compat/harness/deviations.go) whose decided behaviour the Go server has, for
+# compat-go and e2e-flows-go: config-errors (milestone 1), audit-login-via, create-user-keeps-role
+# and oidc-binding-kept (milestone 2), create-server-sync-exit (milestone 3), reindex-wording
+# (milestone 4). Left out, each until the milestone that implements it: token-429-retry-after and
+# request-id-on-refusals (the /mcp route, milestone 6), oauth-state-kept (connections, milestone 5),
+# ready-before-serving (its scenario compares a search made at once with a settled one, so it needs
+# /mcp, milestone 6; the Go server already loads the model before it listens).
+COMPAT_GO_FIXED := config-errors,audit-login-via,create-user-keeps-role,oidc-binding-kept,create-server-sync-exit,reindex-wording
+
 # The suite against the Go image. The reference image (mcp-registry:compat-ts) must exist as well:
 # some scenarios compare with it on the same machine, and the new-database scenario starts from it.
-# COMPAT_FIXED: the deviations (compat/harness/deviations.go) whose decided behaviour the Go server
-# has: config-errors (milestone 1), audit-login-via, create-user-keeps-role and oidc-binding-kept (milestone 2),
-# create-server-sync-exit (milestone 3). Left out, each until the milestone that implements it:
-# token-429-retry-after and request-id-on-refusals (the /mcp route, milestone 6), oauth-state-kept
-# (connections, milestone 5), reindex-wording (the reindex command, milestone 4 or 7),
-# ready-before-serving (search, milestone 4). Before it runs, the pattern is
+# Before it runs, the pattern is
 # listed (nothing is started): it must match exactly the scenarios named in COMPAT_GO_TESTS, so a
 # renamed or mistyped scenario fails here instead of passing by running nothing.
 compat-go:
@@ -187,7 +225,7 @@ compat-go:
 	@listed="$$(go test -tags compat -count=1 -list '$(COMPAT_GO_RUN)' ./compat/ | grep -c '^Test')"; \
 	if [ "$$listed" != "$(words $(COMPAT_GO_TESTS))" ]; then \
 		echo "compat-go: the pattern '$(COMPAT_GO_RUN)' matches $$listed scenario(s), COMPAT_GO_TESTS names $(words $(COMPAT_GO_TESTS)): $(COMPAT_GO_TESTS)"; exit 1; fi
-	COMPAT_IMAGE=mcp-registry:compat-go COMPAT_CLI=mcp-registry COMPAT_FIXED=config-errors,audit-login-via,create-user-keeps-role,oidc-binding-kept,create-server-sync-exit \
+	COMPAT_IMAGE=mcp-registry:compat-go COMPAT_CLI=mcp-registry COMPAT_FIXED=$(COMPAT_GO_FIXED) \
 		go test -tags compat -count=1 -p 1 -timeout 30m -run '$(COMPAT_GO_RUN)' $(if $(COMPAT_GO_SKIP),-skip '$(COMPAT_GO_SKIP)') $(COMPAT_ARGS) ./compat/
 
 # COMPAT_ARGS adds go test arguments, e.g. make compat COMPAT_ARGS='-run ^TestPlatform' (the -run
@@ -227,7 +265,7 @@ E2E_GO_SPECS := 00-guard-selftest.spec.ts 01-first-start-link.spec.ts 02-oidc-lo
 	10-disable-person.spec.ts 11-session-expiry.spec.ts
 e2e-flows-go:
 	@docker image inspect mcp-registry:compat-go >/dev/null 2>&1 || { echo "e2e-flows-go: the image mcp-registry:compat-go is missing: run make compat-image-go"; exit 1; }
-	COMPAT_IMAGE=mcp-registry:compat-go COMPAT_CLI=mcp-registry COMPAT_FIXED=config-errors,audit-login-via,create-user-keeps-role,oidc-binding-kept,create-server-sync-exit \
+	COMPAT_IMAGE=mcp-registry:compat-go COMPAT_CLI=mcp-registry COMPAT_FIXED=$(COMPAT_GO_FIXED) \
 		E2E_PLAYWRIGHT_ARGS='$(E2E_GO_SPECS)' \
 		go test -tags "compat e2e" -count=1 -timeout 30m -v -run '^TestBrowserFlows$$' ./compat/e2e/
 
