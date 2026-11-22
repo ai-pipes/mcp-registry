@@ -37,6 +37,8 @@ linters:
               desc: deps-only-in-infra, use a port implemented in infra
             - pkg: github.com/yalue/onnxruntime_go
               desc: deps-only-in-infra, use a port implemented in infra
+            - pkg: golang.org/x/term
+              desc: deps-only-in-infra, terminal handling belongs to the composition (internal/platform)
             - pkg: crypto
               desc: deps-only-in-infra, use a port (SecretBox, Pkce...) implemented in infra
         no-mcp-sdk-outside-transport:

@@ -1249,22 +1249,26 @@ func TestCatalogServers(t *testing.T) {
 		slug := harness.Unique("adm")
 		catalogRegister(t, admin, fakes.ServerInput(up, slug, "none"))
 		member := s.Member(t, harness.Unique("m"))
-		routes := []struct{ method, path string }{
-			{"GET", "/api/servers"},
-			{"POST", "/api/servers"},
-			{"GET", "/api/servers/" + slug},
-			{"PUT", "/api/servers/" + slug},
-			{"PUT", "/api/servers/" + slug + "/secret"},
-			{"POST", "/api/servers/" + slug + "/status"},
-			{"POST", "/api/servers/" + slug + "/sync"},
-			{"GET", "/api/servers/" + slug + "/tools"},
-			{"PUT", "/api/servers/" + slug + "/tools/list_repos/hidden"},
-			{"GET", "/api/calls"},
-			{"GET", "/api/audit"},
+		// One subtest per route, named without slashes (a slash in a name splits -run and -skip
+		// patterns), so that a server under test that lacks one route is judged on the others.
+		routes := []struct{ name, method, path string }{
+			{"GET servers", "GET", "/api/servers"},
+			{"POST servers", "POST", "/api/servers"},
+			{"GET server", "GET", "/api/servers/" + slug},
+			{"PUT server", "PUT", "/api/servers/" + slug},
+			{"PUT secret", "PUT", "/api/servers/" + slug + "/secret"},
+			{"POST status", "POST", "/api/servers/" + slug + "/status"},
+			{"POST sync", "POST", "/api/servers/" + slug + "/sync"},
+			{"GET tools", "GET", "/api/servers/" + slug + "/tools"},
+			{"PUT hidden", "PUT", "/api/servers/" + slug + "/tools/list_repos/hidden"},
+			{"GET calls", "GET", "/api/calls"},
+			{"GET audit", "GET", "/api/audit"},
 		}
 		for _, rt := range routes {
-			// A body that is not JSON: an admin would get 422, a member must get 403 first.
-			catalogExpectError(t, "member "+rt.method+" "+rt.path, member.Do(t, rt.method, rt.path, "{bad"), 403, catalogAdminErr)
+			t.Run(rt.name, func(t *testing.T) {
+				// A body that is not JSON: an admin would get 422, a member must get 403 first.
+				catalogExpectError(t, "member "+rt.method+" "+rt.path, member.Do(t, rt.method, rt.path, "{bad"), 403, catalogAdminErr)
+			})
 		}
 		// Negative controls: the admin reaches the body, and a member may read the catalog.
 		catalogExpectError(t, "admin POST with a broken body", admin.Do(t, "POST", "/api/servers", "{bad"), 422, "invalid_request|body is not valid JSON")
@@ -1274,7 +1278,9 @@ func TestCatalogServers(t *testing.T) {
 		// No session: 401 on every route that needs one.
 		anon := s.Anonymous()
 		for _, path := range []string{"/api/servers", "/api/catalog", "/api/calls", "/api/audit"} {
-			catalogExpectError(t, "anonymous GET "+path, anon.Do(t, "GET", path, nil), 401, identityUnauthenticated)
+			t.Run("anonymous GET "+strings.TrimPrefix(path, "/api/"), func(t *testing.T) {
+				catalogExpectError(t, "anonymous GET "+path, anon.Do(t, "GET", path, nil), 401, identityUnauthenticated)
+			})
 		}
 		// A bearer token never opens the web API, even next to a valid session cookie.
 		catalogExpectError(t, "Bearer next to a cookie", admin.Do(t, "GET", "/api/servers", nil, "Authorization: Bearer sk_abcdef"), 401, "unauthenticated|tokens do not work on the web API")

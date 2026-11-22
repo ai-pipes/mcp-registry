@@ -141,6 +141,7 @@ var archFixtures = []struct{ rule, fixture, component, badImport string }{
 	{"no-inward-infra", "no-inward-infra", "catalog-app", modPath + "modules/catalog/http"},
 	{"deps-only-in-infra (vendors)", "deps-only-in-infra", "catalog-app", "github.com/jackc/pgx/v5"},
 	{"deps-only-in-infra (x/oauth2 root package)", "deps-only-in-infra-oauth2", "catalog-app", "golang.org/x/oauth2"},
+	{"deps-only-in-infra (x/term is the composition's, not even infra's)", "deps-only-in-infra-term", "catalog-infra", "golang.org/x/term"},
 	{"modules-via-index", "modules-via-index", "gateway-infra", modPath + "modules/catalog/domain"},
 	{"migrations-only-platform", "migrations-only-platform", "catalog-infra", "github.com/ai-pipes/mcp-registry/apps/server/migrations"},
 	// platform-leaves: modules reach platform only through the leaves, and only from http and infra.
@@ -162,6 +163,11 @@ var archFixtures = []struct{ rule, fixture, component, badImport string }{
 	{"no-inward-infra (module root imports its http)", "root-imports-http", "catalog-root", modPath + "modules/catalog/http"},
 	{"modules-via-index (http imports another module's app)", "http-imports-other-module-internals", "catalog-http", modPath + "modules/identity/app"},
 	{"no-inward-infra (domain imports its own infra)", "domain-imports-own-infra", "catalog-domain", modPath + "modules/catalog/infra"},
+	// upstream-client-injected: the upstream client is imported by no module layer (the composition
+	// injects it as kernel.UpstreamClient) and imports no module.
+	{"upstream-client-injected (infra imports the client)", "infra-imports-upstream", "catalog-infra", modPath + "platform/upstream"},
+	{"upstream-client-injected (http imports the client)", "http-imports-upstream", "catalog-http", modPath + "platform/upstream"},
+	{"upstream-client-injected (the client imports a module)", "upstream-imports-module", "platform-upstream", modPath + "modules/catalog"},
 	// layer-self-dependency: a layer may import itself, nothing else follows from it.
 	{"layer-self-dependency (domain still may not import its own app)", "domain-imports-own-app", "catalog-domain", modPath + "modules/catalog/app"},
 	{"layer-self-dependency (an external test package is still checked)", "external-test-imports-app", "catalog-domain", modPath + "modules/catalog/app"},

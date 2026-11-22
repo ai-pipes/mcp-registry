@@ -736,6 +736,11 @@ func TestTokens(t *testing.T) {
 		t.Errorf("another person's list = %s", got)
 	}
 
+	// zod counts code points: 100 emoji pass, 101 do not.
+	if r := e.do("POST", "/api/tokens", `{"name":"`+strings.Repeat("\U0001F600", 100)+`"}`, withCookie(ann)); r.StatusCode != 201 {
+		t.Errorf("100 emoji: %d", r.StatusCode)
+	}
+	wantError(t, e.do("POST", "/api/tokens", `{"name":"`+strings.Repeat("\U0001F600", 101)+`"}`, withCookie(ann)), 422, "invalid_request", "name: must be at most 100 characters")
 	// 100 characters pass, 101 do not, blanks are empty.
 	if r := e.do("POST", "/api/tokens", `{"name":"`+strings.Repeat("n", 100)+`"}`, withCookie(ann)); r.StatusCode != 201 {
 		t.Errorf("100 chars: %d", r.StatusCode)
