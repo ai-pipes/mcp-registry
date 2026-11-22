@@ -3,7 +3,6 @@ package infra
 import (
 	"context"
 	"errors"
-	"slices"
 
 	"github.com/ai-pipes/mcp-registry/internal/modules/catalog"
 	"github.com/ai-pipes/mcp-registry/internal/modules/connections/app"
@@ -35,22 +34,8 @@ func (d *serverDirectory) Config(ctx context.Context, slug string) (*app.ServerC
 	if err != nil || t == nil {
 		return nil, err
 	}
-	cfg := &app.ServerConfig{Slug: t.Slug, URL: t.URL, AuthKind: t.Auth.Kind}
-	if t.Auth.Kind == catalog.AuthOAuthUser && t.Auth.OAuth != nil {
-		o := copyOAuth(*t.Auth.OAuth)
-		cfg.OAuth = &o
-	}
-	return cfg, nil
-}
-
-func copyOAuth(o catalog.OAuthClientConfig) catalog.OAuthClientConfig {
-	o.Scopes = slices.Clone(o.Scopes)
-	o.ExtraAuthorizeParams = slices.Clone(o.ExtraAuthorizeParams)
-	if o.RevokeURL != nil {
-		v := *o.RevokeURL
-		o.RevokeURL = &v
-	}
-	return o
+	cfg := app.ServerConfigOf(*t)
+	return &cfg, nil
 }
 
 // PersonalServersFor lists the active servers the person may use that take a personal credential

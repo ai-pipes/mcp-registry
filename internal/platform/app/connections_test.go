@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -298,7 +299,9 @@ func TestSyncCredentialsMapConnectionsAnswersToTheCatalogsFailures(t *testing.T)
 				t.Fatalf("got %+v, %v; want %+v", got, err, c.want)
 			}
 			// No forced refresh in a synchronisation: the reference does not ask for one.
-			if len(asked) != 1 || asked[0] != (connections.ResolveQuery{UserID: "u1", Server: "gitea"}) {
+			want := connections.ServerConfigOf(catalog.ServerCallTarget{Slug: "gitea"})
+			if len(asked) != 1 || asked[0].UserID != "u1" || asked[0].Server != "gitea" || asked[0].ForceRefresh ||
+				asked[0].Expect == nil || !reflect.DeepEqual(*asked[0].Expect, want) {
 				t.Fatalf("asked %+v", asked)
 			}
 		})

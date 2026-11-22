@@ -82,6 +82,12 @@ type ResolveQuery struct {
 	UserID       string
 	Server       string
 	ForceRefresh bool
+	// Expect, when set, is the configuration the caller is going to send the secret to (read from
+	// the catalog earlier). When its fingerprint differs from the configuration this call loads,
+	// the caller's view is stale and the answer is `unavailable` (retry later): nothing is opened,
+	// stored, expired, sent or audited. Nil keeps the old behaviour (the current configuration is
+	// the one the secret is checked against).
+	Expect *ServerConfig
 }
 
 // ResolveCredential is the person's upstream secret for the server: the OAuth access token or the
@@ -114,6 +120,11 @@ func ResolveCredential(ctx context.Context, d Deps, q ResolveQuery) (CredentialR
 		return failed(FailureNeedsConnection), nil
 	}
 	fp := fingerprint(*cfg)
+	// Before any secret is opened or any renewal starts, and per caller (not inside the shared
+	// work): a caller that read another configuration never receives a secret meant for this one.
+	if q.Expect != nil && fingerprint(*q.Expect) != fp {
+		return failed(FailureUnavailable), nil
+	}
 	switch plan := seen.CredentialPlan(d.Clock.Now(), domain.PlanOptions{ForceRefresh: q.ForceRefresh, Config: fp}); plan.Action {
 	case domain.PlanUse:
 		secret, err := openToken(d.Box, seen.AccessToken())
@@ -126,7 +137,7 @@ func ResolveCredential(ctx context.Context, d Deps, q ResolveQuery) (CredentialR
 	case domain.PlanRefresh, domain.PlanExpire:
 	}
 	in := renewal{seen: seen, cfg: *cfg, config: fp, forceRefresh: q.ForceRefresh}
-	return d.Flights.Do(ctx, q.UserID+"\x00"+q.Server, func(fctx context.Context) (CredentialResult, error) {
+	return d.Flights.Do(ctx, q.UserID+"\x00"+q.Server+"\x00"+fp, func(fctx context.Context) (CredentialResult, error) {
 		return renewUnderLock(fctx, d, in)
 	})
 }

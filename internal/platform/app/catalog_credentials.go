@@ -65,13 +65,17 @@ func (c *lateSyncCredentials) IsActiveAdmin(ctx context.Context, userID string) 
 
 // PersonalSecret is ResolveCredential for that person and server: a secret, or one of the three
 // failures the catalog maps to its own (needs_connection and expired both to "an administrator
-// needs to connect this server", unavailable to "the OAuth provider is unavailable").
+// needs to connect this server", unavailable to "the OAuth provider is unavailable"; unavailable
+// is also what connections answers when the target this sync read no longer matches the server).
 func (c *lateSyncCredentials) PersonalSecret(ctx context.Context, server catalog.ServerCallTarget, userID string) (catalog.PersonalCredential, error) {
 	r := c.bound()
 	if r == nil {
 		return catalog.PersonalCredential{}, errCredentialsNotBound
 	}
-	res, err := r.ResolveCredential(ctx, connections.ResolveQuery{UserID: userID, Server: server.Slug})
+	// The secret goes to the target this sync read earlier: connections hands it out only while the
+	// server is still configured as that target says (else `unavailable`, retry later).
+	expect := connections.ServerConfigOf(server)
+	res, err := r.ResolveCredential(ctx, connections.ResolveQuery{UserID: userID, Server: server.Slug, Expect: &expect})
 	if err != nil {
 		return catalog.PersonalCredential{}, err
 	}

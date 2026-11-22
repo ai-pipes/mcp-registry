@@ -2,11 +2,31 @@ package app
 
 import (
 	"context"
+	"slices"
 
 	"github.com/ai-pipes/mcp-registry/internal/kernel"
 	"github.com/ai-pipes/mcp-registry/internal/modules/catalog"
 	"github.com/ai-pipes/mcp-registry/internal/modules/connections/domain"
 )
+
+// ServerConfigOf is the configuration of a catalog server as far as personal credentials care: the
+// one mapping from the catalog's call target to what the fingerprint is computed over (the
+// directory's Config and a caller's expectation both use it). The OAuth client only for an
+// oauth_user server; slices and the revoke URL are copied.
+func ServerConfigOf(t catalog.ServerCallTarget) ServerConfig {
+	cfg := ServerConfig{Slug: t.Slug, URL: t.URL, AuthKind: t.Auth.Kind}
+	if t.Auth.Kind == catalog.AuthOAuthUser && t.Auth.OAuth != nil {
+		o := *t.Auth.OAuth
+		o.Scopes = slices.Clone(o.Scopes)
+		o.ExtraAuthorizeParams = slices.Clone(o.ExtraAuthorizeParams)
+		if o.RevokeURL != nil {
+			v := *o.RevokeURL
+			o.RevokeURL = &v
+		}
+		cfg.OAuth = &o
+	}
+	return cfg
+}
 
 // fingerprint is the ServerFingerprint of a server's configuration: the places a person's token or
 // code is sent.

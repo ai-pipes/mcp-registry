@@ -3,6 +3,7 @@
 package app
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
@@ -11,11 +12,16 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	catapp "github.com/ai-pipes/mcp-registry/internal/modules/catalog/app"
+	catdomain "github.com/ai-pipes/mcp-registry/internal/modules/catalog/domain"
+	catinfra "github.com/ai-pipes/mcp-registry/internal/modules/catalog/infra"
 	idapp "github.com/ai-pipes/mcp-registry/internal/modules/identity/app"
 	"github.com/ai-pipes/mcp-registry/internal/platform/pgtest"
+	"github.com/ai-pipes/mcp-registry/internal/platform/upstream"
 )
 
 // oauthProvider is a small OAuth authorization server: authorization code with PKCE (S256) checked
@@ -708,4 +714,100 @@ func TestConnectionsOnTheComposedServer(t *testing.T) {
 			}
 		}
 	})
+}
+
+// holdServers pauses ONE synchronisation right after it read its server: the window in which an
+// admin can change the server before the sync asks connections for the person's secret.
+type holdServers struct {
+	catapp.ServerRepository
+	arm     atomic.Bool
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (h *holdServers) FindBySlug(ctx context.Context, slug string) (*catdomain.Server, error) {
+	s, err := h.ServerRepository.FindBySlug(ctx, slug)
+	if err == nil && h.arm.CompareAndSwap(true, false) {
+		h.entered <- struct{}{}
+		<-h.release
+	}
+	return s, err
+}
+
+// A sync that read configuration A must never send a token issued for configuration B to A's URL,
+// even when the person reconnected for B in between.
+func TestAResolvedCredentialIsBoundToTheConfigurationTheSyncWillUse(t *testing.T) {
+	url := pgtest.StartURL(t)
+	hold := &holdServers{entered: make(chan struct{}), release: make(chan struct{})}
+	build := func(rt Runtime) []Module {
+		id := newIdentityWiring(rt)
+		repos := catinfra.NewPg(rt.Pool)
+		hold.ServerRepository = repos.Servers
+		repos.Servers = hold
+		cat := catalogWiringOver(rt, id, repos, upstream.New(upstream.Options{}))
+		con := newConnectionsWiring(rt, id, cat)
+		return []Module{id.module(), platformModule(rt, id), cat.module(), con.module()}
+	}
+	rs := startRealWith(t, url, newKey(t), catalogConfig, build)
+	e := &conEnv{t: t, rs: rs, url: url}
+	alice := e.admin("alice")
+	upA, upB := newMCPFake(t, "alpha"), newMCPFake(t, "alpha")
+	const patA, patB = "PAT-MARKER-A", "PAT-MARKER-B"
+	auth := map[string]any{"kind": "pat_user", "header": "Authorization", "template": "Token {secret}"}
+	if status, _, raw := alice.do("POST", "/api/servers", serverBody("moving", upA.url(), auth)); status != 201 {
+		t.Fatalf("create: %d %s", status, raw)
+	}
+	if status, _, raw := alice.do("PUT", "/api/connections/moving/pat", map[string]any{"token": patA}); status != 204 {
+		t.Fatalf("save PAT: %d %s", status, raw)
+	}
+
+	// The sync reads configuration A and stops.
+	hold.arm.Store(true)
+	type answer struct {
+		status int
+		raw    string
+	}
+	done := make(chan answer, 1)
+	go func() {
+		s, raw := e.sync(alice, "moving")
+		done <- answer{s, raw}
+	}()
+	await(t, hold.entered, "the sync to read the server")
+
+	// Meanwhile the admin moves the server to B and the person reconnects for B.
+	if status, _, raw := alice.do("PUT", "/api/servers/moving", serverBody("moving", upB.url(), auth)); status != 200 {
+		t.Fatalf("move: %d %s", status, raw)
+	}
+	if status, _, raw := alice.do("PUT", "/api/connections/moving/pat", map[string]any{"token": patB}); status != 204 {
+		t.Fatalf("save the PAT for B: %d %s", status, raw)
+	}
+	before := e.snapshot("moving")
+	close(hold.release)
+	got := <-done
+
+	if got.status == 200 {
+		t.Fatalf("the sync that read A succeeded: %s", got.raw)
+	}
+	for _, h := range upA.authHeaders() {
+		if strings.Contains(h, patB) {
+			t.Fatalf("the token issued for B was sent to A: %q", h)
+		}
+	}
+	if upB.listed.Load() != 0 {
+		t.Fatal("B was contacted by the sync that read A")
+	}
+	if text := e.lastSyncError(alice, "moving"); text != "The OAuth provider is unavailable" {
+		t.Fatalf("lastSyncError = %v, want the unavailable-class text", text)
+	}
+	if e.snapshot("moving") != before || e.connectionStatus(alice, "moving") != "ready" {
+		t.Fatal("the connection for B was changed")
+	}
+
+	// A new sync reads B and works with B's token.
+	if status, raw := e.sync(alice, "moving"); status != 200 {
+		t.Fatalf("sync against B: %d %s", status, raw)
+	}
+	if h := lastOf(upB.authHeaders()); h != "Token "+patB {
+		t.Fatalf("B saw %q", h)
+	}
 }
