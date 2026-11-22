@@ -173,6 +173,15 @@ func renewUnderLock(ctx context.Context, d Deps, in renewal) (CredentialResult, 
 		if secret, err = d.Servers.ClientSecret(ctx, in.cfg.Slug); err != nil {
 			return CredentialResult{}, fmt.Errorf("connections: read the OAuth client secret of %q: %w", in.cfg.Slug, err)
 		}
+		// The secret was read after the configuration: if the server changed in between, the new
+		// secret must not go with the old configuration's token URL. Nothing is stored or sent.
+		again, err := d.Servers.Config(ctx, in.cfg.Slug)
+		if err != nil {
+			return CredentialResult{}, err
+		}
+		if again == nil || fingerprint(*again) != in.config {
+			return failed(FailureUnavailable), nil
+		}
 	}
 	env := lockEnv{box: d.Box, clock: d.Clock, oauth: d.OAuth, secret: secret}
 	var out locked

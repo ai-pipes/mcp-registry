@@ -101,6 +101,13 @@ func CompleteConnect(ctx context.Context, d Deps, c CompleteConnectCommand) (Con
 	if err != nil {
 		return ConnectResult{}, fmt.Errorf("connections: read the OAuth client secret of %q: %w", pending.Server(), err)
 	}
+	// The secret was read after the configuration: if the server changed in between, neither the
+	// code nor the new secret goes to the old token URL (refused like any configuration change).
+	if again, err := d.Servers.Config(ctx, pending.Server()); err != nil {
+		return ConnectResult{}, err
+	} else if again == nil || fingerprint(*again) != issuedFor {
+		return ConnectResult{}, domain.ErrInvalidState()
+	}
 	tokens, err := d.OAuth.ExchangeCode(ctx, *cfg.OAuth, secret, ExchangeInput{Code: c.Code, CodeVerifier: pending.CodeVerifier(), RedirectURI: d.RedirectURI})
 	if err != nil {
 		return ConnectResult{}, domain.ErrExchangeFailed()

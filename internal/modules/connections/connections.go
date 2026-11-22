@@ -80,13 +80,13 @@ const (
 	SummaryMissing = app.SummaryMissing
 )
 
+// ServerCallTarget is the catalog's description of a server to call.
+type ServerCallTarget = app.ServerCallTarget
+
 // ServerConfigOf is the configuration of a catalog server as the module fingerprints it: a caller
 // that is about to send a resolved secret to a server sets ResolveQuery.Expect to it, built from the
-// catalog target it read.
-//
-// It is a variable because this package may not import the catalog's types in a signature of its
-// own (the architecture rule): the function is the app layer's, the only mapping there is.
-var ServerConfigOf = app.ServerConfigOf
+// catalog target it read. It is the one mapping from a target to the fingerprint input.
+func ServerConfigOf(t ServerCallTarget) ServerConfig { return app.ServerConfigOf(t) }
 
 // NewClientSecret is a client secret (a public client is the zero ClientSecret).
 func NewClientSecret(v string) ClientSecret { return app.NewClientSecret(v) }

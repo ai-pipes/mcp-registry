@@ -108,3 +108,138 @@ func TestServerConfigOfIsTheDirectorysMapping(t *testing.T) {
 		t.Fatal("only an oauth_user server has an OAuth client")
 	}
 }
+
+// Each part of the fingerprint counts: an expectation that differs in only one of them is stale.
+func TestExpectationDiffersInAnyFingerprintedPartIsUnavailable(t *testing.T) {
+	changes := map[string]func(*app.ServerConfig){
+		"url":           func(c *app.ServerConfig) { c.URL = "https://other.example.com/mcp" },
+		"token url":     func(c *app.ServerConfig) { o := *c.OAuth; o.TokenURL += "2"; c.OAuth = &o },
+		"client id":     func(c *app.ServerConfig) { o := *c.OAuth; o.ClientID = "other"; c.OAuth = &o },
+		"authorize url": func(c *app.ServerConfig) { o := *c.OAuth; o.AuthorizeURL += "2"; c.OAuth = &o },
+		"auth kind":     func(c *app.ServerConfig) { c.AuthKind = catalog.AuthPATUser; c.OAuth = nil },
+	}
+	for name, change := range changes {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t)
+			h.seedOAuth(tp(at(3_600_000)), "R1", "alice")
+			exp := *h.expectOf(false)
+			change(&exp)
+			r, err := app.ResolveCredential(ctx, h.d, app.ResolveQuery{UserID: "alice", Server: "gitea", Expect: &exp})
+			wantFailure(t, r, err, app.FailureUnavailable)
+		})
+	}
+	t.Run("a part that is not fingerprinted does not count", func(t *testing.T) {
+		h := newHarness(t)
+		h.seedOAuth(tp(at(3_600_000)), "R1", "alice")
+		exp := *h.expectOf(false)
+		o := *exp.OAuth
+		o.Scopes = []string{"more"}
+		exp.OAuth = &o
+		r, err := app.ResolveCredential(ctx, h.d, app.ResolveQuery{UserID: "alice", Server: "gitea", Expect: &exp})
+		wantOK(t, r, err, "A1")
+	})
+}
+
+// The secret box is never asked to open anything before the expectation has been checked.
+func TestNothingIsOpenedBeforeTheExpectationIsChecked(t *testing.T) {
+	for name, expires := range map[string]*time.Time{"fresh": tp(at(3_600_000)), "due": tp(at(-1000))} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t)
+			h.seedOAuth(expires, "R1", "alice")
+			r, err := app.ResolveCredential(ctx, h.d, app.ResolveQuery{UserID: "alice", Server: "gitea", Expect: h.expectOf(true)})
+			wantFailure(t, r, err, app.FailureUnavailable)
+			if h.box.opens != 0 {
+				t.Fatalf("the box opened %d values", h.box.opens)
+			}
+		})
+	}
+}
+
+// Two callers that loaded DIFFERENT configurations (an admin change in between), each expecting
+// the one it loaded, must not share one renewal: the follower would receive the token the leader's
+// renewal produced under the other configuration. The follower waits for its own turn on the row
+// and then finds the connection issued for the other configuration: expired, never the secret.
+func TestCallersThatLoadedDifferentConfigurationsDoNotShareARenewal(t *testing.T) {
+	h := newHarness(t)
+	h.v.setStrict(false)
+	h.seedOAuth(tp(at(-1000)), "R1", "alice")
+	h.oauth.entered = make(chan string, 4)
+	gate := make(chan struct{})
+	h.oauth.gate = gate
+	h.oauth.refreshFn = func(_ context.Context, rt string) (app.TokenSet, error) {
+		return app.TokenSet{AccessToken: "new-" + rt, ExpiresAt: tp(at(3_600_000))}, nil
+	}
+	type out struct {
+		r   app.CredentialResult
+		err error
+	}
+	a := h.expectOf(false)
+	leader := make(chan out, 1)
+	go func() {
+		r, err := app.ResolveCredential(ctx, h.d, app.ResolveQuery{UserID: "alice", Server: "gitea", Expect: a})
+		leader <- out{r, err}
+	}()
+	select {
+	case <-h.oauth.entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the renewal never started")
+	}
+	// The admin moves the server; the follower loads the new configuration and expects it.
+	g := h.gitea()
+	h.dir.mu.Lock()
+	g.url = "https://moved.example.com/gitea"
+	h.dir.mu.Unlock()
+	follower := make(chan out, 1)
+	go func() {
+		r, err := app.ResolveCredential(ctx, h.d, app.ResolveQuery{UserID: "alice", Server: "gitea", Expect: h.expectOf(false)})
+		follower <- out{r, err}
+	}()
+	// Wait until the follower has read the secret of its own renewal: it did not join the leader's
+	// flight. (With a shared flight it never gets there; the bound only ends that wait.)
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) && countOf(h.j.all(), "servers.client_secret") < 2 {
+		time.Sleep(time.Millisecond)
+	}
+	close(gate)
+	l, f := <-leader, <-follower
+	wantOK(t, l.r, l.err, "new-R1")
+	if f.err != nil || f.r.Secret != "" {
+		t.Fatalf("the follower got a secret issued under the other configuration: %+v %v", f.r, f.err)
+	}
+	if f.r.Failure != app.FailureExpired {
+		t.Fatalf("follower failure %q, want expired (the connection was issued for the old configuration)", f.r.Failure)
+	}
+}
+
+func countOf(all []string, what string) int {
+	n := 0
+	for _, c := range all {
+		if c == what {
+			n++
+		}
+	}
+	return n
+}
+
+// The client secret is read after the configuration: if the server changed in between, the new
+// secret must not travel with the old configuration's token URL. Nothing is stored or sent.
+func TestResolveRefusesWhenTheConfigurationChangedWhileTheClientSecretWasRead(t *testing.T) {
+	h := newHarness(t)
+	h.seedOAuth(tp(at(-1000)), "R1", "alice")
+	before, _ := h.store.snap("alice", "gitea")
+	h.dir.onSecret = func() {
+		g := h.gitea()
+		h.dir.mu.Lock()
+		defer h.dir.mu.Unlock()
+		o := *g.oauth
+		o.TokenURL = "https://evil.example.com/token"
+		g.oauth = &o
+		g.clientSecret = "the-new-client-secret"
+	}
+	r, err := app.ResolveCredential(ctx, h.d, app.ResolveQuery{UserID: "alice", Server: "gitea"})
+	wantFailure(t, r, err, app.FailureUnavailable)
+	after, _ := h.store.snap("alice", "gitea")
+	if !reflect.DeepEqual(before, after) || len(h.oauth.refreshed()) != 0 || len(h.audit.all()) != 0 {
+		t.Fatalf("something happened: refreshed %v, audit %s", h.oauth.refreshed(), h.audit.text())
+	}
+}

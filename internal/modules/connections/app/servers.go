@@ -9,11 +9,15 @@ import (
 	"github.com/ai-pipes/mcp-registry/internal/modules/connections/domain"
 )
 
+// ServerCallTarget is the catalog's description of a server to call (an alias, so the root package
+// can name it without importing the catalog).
+type ServerCallTarget = catalog.ServerCallTarget
+
 // ServerConfigOf is the configuration of a catalog server as far as personal credentials care: the
 // one mapping from the catalog's call target to what the fingerprint is computed over (the
 // directory's Config and a caller's expectation both use it). The OAuth client only for an
 // oauth_user server; slices and the revoke URL are copied.
-func ServerConfigOf(t catalog.ServerCallTarget) ServerConfig {
+func ServerConfigOf(t ServerCallTarget) ServerConfig {
 	cfg := ServerConfig{Slug: t.Slug, URL: t.URL, AuthKind: t.Auth.Kind}
 	if t.Auth.Kind == catalog.AuthOAuthUser && t.Auth.OAuth != nil {
 		o := *t.Auth.OAuth

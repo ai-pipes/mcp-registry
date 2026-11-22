@@ -33,6 +33,7 @@ type mcpFake struct {
 	tools   []string
 	suffix  string // appended to every description: a change the sync must notice
 	down    bool
+	reject  bool // answer every request 401
 	auths   []string
 	hold    chan struct{} // when set, tools/list blocks until it is closed or the request ends
 	listed  atomic.Int32  // tools/list requests that arrived
@@ -48,6 +49,8 @@ func newMCPFake(t *testing.T, tools ...string) *mcpFake {
 }
 
 func (f *mcpFake) url() string { return f.srv.URL + "/mcp" }
+
+func (f *mcpFake) setReject(v bool) { f.mu.Lock(); f.reject = v; f.mu.Unlock() }
 
 func (f *mcpFake) setDown(v bool) { f.mu.Lock(); f.down = v; f.mu.Unlock() }
 
@@ -78,11 +81,15 @@ func (f *mcpFake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = json.Unmarshal(body, &in)
 	f.mu.Lock()
-	down, hold, tools, suffix := f.down, f.hold, slices.Clone(f.tools), f.suffix
+	down, hold, tools, suffix, reject := f.down, f.hold, slices.Clone(f.tools), f.suffix, f.reject
 	if in.Method == "tools/list" {
 		f.auths = append(f.auths, r.Header.Get("Authorization"))
 	}
 	f.mu.Unlock()
+	if reject {
+		http.Error(w, "no", http.StatusUnauthorized)
+		return
+	}
 	if down {
 		http.Error(w, "down", http.StatusServiceUnavailable)
 		return

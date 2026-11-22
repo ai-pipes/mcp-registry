@@ -133,6 +133,7 @@ type fakeBox struct {
 	openFails map[string]bool
 	id        byte
 	sealErr   error
+	opens     int // calls to Open
 }
 
 func newBox(id byte) *fakeBox { return &fakeBox{openFails: map[string]bool{}, id: id} }
@@ -149,6 +150,9 @@ func (b *fakeBox) Seal(plain string) ([]byte, error) {
 }
 
 func (b *fakeBox) Open(sealed []byte) (string, error) {
+	b.mu.Lock()
+	b.opens++
+	b.mu.Unlock()
 	if len(sealed) < 2 || sealed[0] != 0xee || sealed[1] != b.id {
 		return "", errors.New("box: cannot open")
 	}
@@ -594,7 +598,10 @@ type fakeDirectory struct {
 	mu      sync.Mutex
 	servers []*fakeServer
 	// onConfig runs at the start of every Config call.
-	onConfig  func()
+	onConfig func()
+	// onSecret runs at the start of every ClientSecret call: an admin changing the server between
+	// the two reads.
+	onSecret  func()
 	secretErr error
 	listErr   error
 	configErr error
@@ -659,6 +666,9 @@ func (d *fakeDirectory) Config(c context.Context, slug string) (*app.ServerConfi
 func (d *fakeDirectory) ClientSecret(c context.Context, slug string) (app.ClientSecret, error) {
 	d.v.check(c, "servers.client_secret")
 	d.j.add("servers.client_secret")
+	if d.onSecret != nil {
+		d.onSecret()
+	}
 	if d.secretErr != nil {
 		return app.ClientSecret{}, d.secretErr
 	}

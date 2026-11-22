@@ -727,3 +727,30 @@ func TestAuditErrorsPropagate(t *testing.T) {
 		t.Fatal("revoked after a failed audit")
 	}
 }
+
+// The same window in the callback: the client secret is read after the configuration; if the
+// server changed in between, nothing is sent (no code, no new secret) and the attempt is refused
+// like any other configuration change (consumed, invalid_state).
+func TestCompleteConnectRefusesWhenTheConfigurationChangedWhileTheClientSecretWasRead(t *testing.T) {
+	h := newHarness(t)
+	state := stateOf(startURL(t, h, "gitea"))
+	h.dir.onSecret = func() {
+		g := h.gitea()
+		h.dir.mu.Lock()
+		defer h.dir.mu.Unlock()
+		o := *g.oauth
+		o.TokenURL = "https://evil.example.com/token"
+		g.oauth = &o
+		g.clientSecret = "the-new-client-secret"
+	}
+	_, err := app.CompleteConnect(ctx, h.d, app.CompleteConnectCommand{Principal: alice, State: state, Code: "c"})
+	if code(err) != "invalid_state" {
+		t.Fatalf("%v", err)
+	}
+	if len(h.oauth.exchanged()) != 0 || h.store.size() != 0 {
+		t.Fatal("the code was sent or a connection stored")
+	}
+	if _, ok := h.pending.get(state); ok {
+		t.Fatal("the state was not consumed")
+	}
+}

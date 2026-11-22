@@ -664,6 +664,32 @@ func TestConnectionsOnTheComposedServer(t *testing.T) {
 		}
 	})
 
+	t.Run("an upstream 401 during a sync leaves the connection ready and refreshes nothing", func(t *testing.T) {
+		prov, up := e.provider("r401"), newMCPFake(t, "alpha")
+		alice := e.admin("alice10")
+		e.oauthServer(alice, "r401", prov, up)
+		e.connect(alice, "r401", prov)
+		before, refreshes := e.snapshot("r401"), prov.count("/token", "refresh_token")
+		up.setReject(true)
+		status, raw := e.sync(alice, "r401")
+		if status != 502 || !strings.Contains(raw, "sync_failed") {
+			t.Fatalf("sync against a rejecting upstream: %d %s", status, raw)
+		}
+		if got := e.lastSyncError(alice, "r401"); got != "Upstream rejected the credentials (HTTP 401)" {
+			t.Fatalf("lastSyncError = %v", got)
+		}
+		if e.snapshot("r401") != before || e.connectionStatus(alice, "r401") != "ready" || e.audit("connection.expired", "r401") != 0 {
+			t.Fatal("the connection was changed by an upstream 401 in a sync")
+		}
+		if prov.count("/token", "refresh_token") != refreshes {
+			t.Fatal("a refresh was triggered by an upstream 401 in a sync")
+		}
+		up.setReject(false)
+		if status, raw := e.sync(alice, "r401"); status != 200 {
+			t.Fatalf("sync after the upstream recovered: %d %s", status, raw)
+		}
+	})
+
 	t.Run("the scheduled sync of a restarted server uses the sync owner's connection and clears the stub's stored text", func(t *testing.T) {
 		up := newMCPFake(t, "alpha")
 		prov := e.provider("sched")
