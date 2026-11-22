@@ -8,6 +8,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	neturl "net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -96,9 +97,10 @@ func (e *embedError) Error() string { return e.msg }
 func (e *embedError) Unwrap() error { return e.cause }
 
 var (
-	errNotJSON  = &embedError{msg: "embedder response is not valid JSON"}
-	errShape    = &embedError{msg: "embedder must return 1 vectors of " + strconv.Itoa(app.Dimensions) + " numbers"}
-	errTooLarge = &embedError{msg: "embedder response is too large"}
+	errNotJSON         = &embedError{msg: "embedder response is not valid JSON"}
+	errShape           = &embedError{msg: "embedder must return 1 vectors of " + strconv.Itoa(app.Dimensions) + " numbers"}
+	errTooLarge        = &embedError{msg: "embedder response is too large"}
+	errCredentialedURL = &embedError{msg: "embedder URL must not contain credentials"}
 )
 
 func (e *OpenAIEmbedder) embed(ctx context.Context, input string) ([]float32, error) {
@@ -112,6 +114,12 @@ func (e *OpenAIEmbedder) embed(ctx context.Context, input string) ([]float32, er
 		return nil, &embedError{msg: "embedder request cannot be encoded"}
 	}
 	payload := bytes.TrimSuffix(body.Bytes(), []byte("\n")) // JSON.stringify has no trailing newline
+
+	// Node's fetch refuses a URL with credentials, so the reference fails every call; Go's client
+	// would send them as Basic authentication, which no code path of this adapter may do.
+	if u, err := neturl.Parse(e.endpoint); err == nil && u.User != nil {
+		return nil, errCredentialedURL
+	}
 
 	rctx, cancel := context.WithTimeout(ctx, e.timeout)
 	defer cancel()
@@ -182,10 +190,24 @@ func parseEmbedding(raw []byte) ([]float32, error) {
 		if p == nil {
 			return nil, errShape
 		}
-		out[i] = float32(*p)
-		if math.IsInf(float64(out[i]), 0) {
+		f, ok := asFloat4(*p)
+		if !ok {
 			return nil, errShape
 		}
+		out[i] = f
 	}
 	return out, nil
+}
+
+// asFloat4 converts a JSON number the way the reference stores it: TypeScript prints the double's
+// shortest decimal text and pgvector parses that text as float4. Rounding the double directly
+// differs for a double exactly halfway between two float32 values (1.0000000596046448 is read as
+// 1.0000001 from its text, as 1 when rounded to even). A value beyond float32 is refused; one that
+// underflows becomes zero (a negative one is stored as 0, not -0, by the vector literal).
+func asFloat4(v float64) (float32, bool) {
+	f, err := strconv.ParseFloat(strconv.FormatFloat(v, 'g', -1, 64), 32)
+	if err != nil || math.IsNaN(f) || math.IsInf(f, 0) {
+		return 0, false
+	}
+	return float32(f), true
 }

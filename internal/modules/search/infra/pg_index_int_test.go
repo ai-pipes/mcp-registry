@@ -15,6 +15,7 @@ import (
 	"github.com/ai-pipes/mcp-registry/internal/modules/search/app"
 	"github.com/ai-pipes/mcp-registry/internal/modules/search/domain"
 	"github.com/ai-pipes/mcp-registry/internal/platform/pgtest"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -735,5 +736,128 @@ func TestVectorCandidatesAgreeWithAnUpsertedVectorAcrossFormats(t *testing.T) {
 	put(t, idx, "s.same", "s", q)
 	if got := vec(t, idx, q, 5, 0.999999, "s"); !slices.Equal(got, []string{"s.same"}) {
 		t.Fatalf("a vector is not its own nearest neighbour: %v", got)
+	}
+}
+
+// referenceFTS is the TypeScript statement of ftsCandidates (pg-search-index.ts), verbatim except
+// for the rank expression, which the test substitutes to prove its data tells the variants apart.
+const referenceFTS = `
+with q as (
+  select websearch_to_tsquery('russian', $1::text)
+    || websearch_to_tsquery('english', $1::text)
+    || websearch_to_tsquery('simple', $1::text) as q
+)
+select d.ref from search.documents d, q
+where d.tsv @@ q.q and d.server = any($2::text[])
+order by %s desc, d.ref
+limit 50`
+
+func orderBy(t *testing.T, pool *pgxpool.Pool, rank, query string) []string {
+	t.Helper()
+	rows, err := pool.Query(t.Context(), strings.Replace(referenceFTS, "%s", rank, 1), query, []string{"s"})
+	mustOK(t, err)
+	out, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	mustOK(t, err)
+	return out
+}
+
+// TestFTSRankIsCoverDensityWithoutNormalisation pins ts_rank_cd(tsv, q) with no flags. The three
+// documents are ordered differently by ts_rank and by ts_rank_cd with normalisation 1 (length), so
+// either substitution in the repository's SQL is noticed; the expected order is what the
+// TypeScript statement returns, run here as a literal.
+func TestFTSRankIsCoverDensityWithoutNormalisation(t *testing.T) {
+	pool, idx := setupIndex(t)
+	filler := strings.Repeat("lorem ipsum dolor sit amet ", 12)
+	for ref, desc := range map[string]string{
+		"s.short":   "widget lorem gadget",
+		"s.long":    filler + "widget gadget " + filler,
+		"s.scatter": "widget " + filler + "gadget " + filler + "widget " + filler + "gadget",
+	} {
+		mustOK(t, idx.Upsert(t.Context(), app.Document{Ref: ref, Server: "s", Description: desc}))
+	}
+	const q = "widget gadget"
+	reference := orderBy(t, pool, "ts_rank_cd(d.tsv, q.q)", q)
+	for _, variant := range []string{"ts_rank(d.tsv, q.q)", "ts_rank_cd(d.tsv, q.q, 1)"} {
+		if slices.Equal(orderBy(t, pool, variant, q), reference) {
+			t.Fatalf("the data does not tell %s from the reference: %v", variant, reference)
+		}
+	}
+	if !slices.Equal(reference, []string{"s.long", "s.short", "s.scatter"}) {
+		t.Fatalf("reference order %v", reference)
+	}
+	if got := fts(t, idx, q, "s"); !slices.Equal(got, reference) {
+		t.Fatalf("FTSCandidates %v, the TypeScript statement %v", got, reference)
+	}
+}
+
+// referenceUpsert is the TypeScript upsert (pg-search-index.ts) with postgres.js numbering: one
+// parameter per interpolation (ref, server, title, description, body, then the tsv's own).
+const referenceUpsert = `
+insert into search.documents
+  (ref, server, title, description, body, tsv, embedding, updated_at)
+values (
+  $1, $2, $3, $4, $5,
+  setweight(to_tsvector('simple', translate($6, '._-/', '    ')
+      || ' ' || coalesce($7::text, '')), 'A')
+    || setweight(to_tsvector('russian', $8), 'B')
+    || setweight(to_tsvector('english', $9), 'B')
+    || setweight(to_tsvector('russian', $10), 'C')
+    || setweight(to_tsvector('english', $11), 'C'),
+  $12::vector,
+  now()
+)
+on conflict (ref) do update set
+  server = excluded.server,
+  title = excluded.title,
+  description = excluded.description,
+  body = excluded.body,
+  tsv = excluded.tsv,
+  embedding = excluded.embedding,
+  embed_failed_at = case when excluded.embedding is null
+    then search.documents.embed_failed_at else null end,
+  updated_at = excluded.updated_at`
+
+// TestTsvEqualsTheTypeScriptUpsertsForEveryKindOfText writes documents through Upsert, reads their
+// tsv, overwrites them with the TypeScript statement run by hand and reads again: equal text means
+// the same configurations, weights, translate set and title handling.
+func TestTsvEqualsTheTypeScriptUpsertsForEveryKindOfText(t *testing.T) {
+	pool, idx := setupIndex(t)
+	docs := []app.Document{
+		{Ref: "gitea.issues_create", Server: "gitea", Title: str("Create issue"), Description: "Creates a new issue in the repository", Body: "owner repo title labels"},
+		{Ref: "yt.создать-задачу", Server: "yt", Title: str("Создать задачу"), Description: "Создаёт новую задачу в трекере проекта", Body: "проект описание приоритет"},
+		{Ref: "a.b-c_d/e.f", Server: "a", Description: "dots, dashes, underscores and a slash in the ref", Body: ""},
+		{Ref: "nulltitle.x", Server: "nulltitle", Title: nil, Description: "no title here", Body: "b"},
+		{Ref: "punct.mix", Server: "punct", Title: str("E-mail: me@example.com, v1.2.3"), Description: "Send mail to admin@example.org (v2.0) at 3.14159 or 1,000 now!", Body: "http://host:8080/path?x=1&y=2 foo_bar-baz 42"},
+		{Ref: "both.langs", Server: "both", Title: str("Mixed"), Description: "Running runners ran; бегущие бегуны бежали", Body: "parameters параметры"},
+	}
+	for _, d := range docs {
+		mustOK(t, idx.Upsert(t.Context(), d))
+	}
+	read := func() map[string]string {
+		rows, err := pool.Query(t.Context(), `select ref, tsv::text from search.documents`)
+		mustOK(t, err)
+		out := map[string]string{}
+		for rows.Next() {
+			var r, v string
+			mustOK(t, rows.Scan(&r, &v))
+			out[r] = v
+		}
+		mustOK(t, rows.Err())
+		return out
+	}
+	ours := read()
+	for _, d := range docs {
+		_, err := pool.Exec(t.Context(), referenceUpsert, d.Ref, d.Server, d.Title, d.Description, d.Body,
+			d.Ref, d.Title, d.Description, d.Description, d.Body, d.Body, nil)
+		mustOK(t, err)
+	}
+	ref := read()
+	for _, d := range docs {
+		if ours[d.Ref] != ref[d.Ref] {
+			t.Errorf("%s:\n ours      %s\n reference %s", d.Ref, ours[d.Ref], ref[d.Ref])
+		}
+	}
+	if len(ours) != len(docs) || len(ref) != len(docs) {
+		t.Fatalf("%d / %d rows", len(ours), len(ref))
 	}
 }

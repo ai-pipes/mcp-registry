@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -288,13 +290,13 @@ func TestOpenAIEmbedderFailures(t *testing.T) {
 
 func TestOpenAIEmbedderTransportErrorsCarryNoURLOrText(t *testing.T) {
 	s := startEmbeddingServer(t)
-	url := strings.Replace(s.URL, "http://", "http://user:pw-SECRET@", 1) + "/v1"
+	url := s.URL + "/v1"
 	s.Close()
 	_, err := NewOpenAIEmbedder(url, "m", nil).EmbedPassage(t.Context(), "TEXTSECRET")
 	if err == nil {
 		t.Fatal("no error")
 	}
-	for _, leak := range []string{"pw-SECRET", "TEXTSECRET", "127.0.0.1", "/v1", "user"} {
+	for _, leak := range []string{"TEXTSECRET", "127.0.0.1", "/v1"} {
 		if strings.Contains(err.Error(), leak) {
 			t.Errorf("error %q contains %q", err, leak)
 		}
@@ -459,5 +461,85 @@ func TestOpenAIEmbedderWorksWhenCalledConcurrently(t *testing.T) {
 	}
 	if n := len(s.requests()); n != 16 {
 		t.Fatalf("%d requests", n)
+	}
+}
+
+// TestOpenAIEmbedderConvertsNumbersAsTheReferenceDoes: TypeScript prints each JSON double as its
+// shortest decimal and pgvector parses that text as float4, so a double exactly halfway between two
+// float32 values goes where the decimal text points, not to the even neighbour.
+func TestOpenAIEmbedderConvertsNumbersAsTheReferenceDoes(t *testing.T) {
+	s := startEmbeddingServer(t)
+	e := NewOpenAIEmbedder(s.URL, "m", nil)
+	above := 1 + math.Ldexp(1, -24)   // halfway between 1 and 1+2^-23; its shortest text, 1.0000000596046448, is above it
+	below := 1 + 3*math.Ldexp(1, -24) // halfway between 1+2^-23 and 1+2^-22; its text, 1.0000001788139343, is below it
+	for name, tc := range map[string]struct {
+		x    float64
+		bits uint32
+	}{
+		"halfway, text above (Go's direct rounding gives 1)":           {above, 0x3f800001},
+		"halfway, text below (Go's direct rounding gives 1+2^-22)":     {below, 0x3f800001},
+		"halfway, negative, text above":                                {-above, 0xbf800001},
+		"an exactly representable value":                               {0.25, 0x3e800000},
+		"underflow to zero is positive or negative zero, kept as zero": {1e-60, 0},
+	} {
+		v := vector384(0)
+		v[7] = tc.x
+		body, _ := json.Marshal(map[string]any{"data": []any{map[string]any{"embedding": v}}})
+		s.answer(rawAnswer(200, string(body)))
+		got, err := e.EmbedQuery(t.Context(), "q")
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if math.Float32bits(got[7]) != tc.bits {
+			t.Errorf("%s: %v became %08x, want %08x", name, tc.x, math.Float32bits(got[7]), tc.bits)
+		}
+	}
+	// The JSON the test sent really holds the halfway double (the encoder prints the shortest text).
+	if strconv.FormatFloat(above, 'g', -1, 64) != "1.0000000596046448" || strconv.FormatFloat(below, 'g', -1, 64) != "1.0000001788139343" {
+		t.Fatal("the halfway values are not the ones the test names")
+	}
+}
+
+func TestOpenAIEmbedderRefusesACredentialedURLWithoutSendingAnything(t *testing.T) {
+	s := startEmbeddingServer(t)
+	for _, base := range []string{
+		strings.Replace(s.URL, "http://", "http://user:pw-SECRET@", 1) + "/v1",
+		strings.Replace(s.URL, "http://", "http://user@", 1),
+		strings.Replace(s.URL, "http://", "http://:pw-SECRET@", 1),
+	} {
+		e := NewOpenAIEmbedder(base, "m", nil)
+		for _, call := range []func() error{
+			func() error { _, err := e.EmbedPassage(t.Context(), "TEXTSECRET"); return err },
+			func() error { _, err := e.EmbedQuery(t.Context(), "TEXTSECRET"); return err },
+		} {
+			err := call()
+			if err == nil {
+				t.Fatal("a URL with credentials was used")
+			}
+			if err.Error() != "embedder URL must not contain credentials" {
+				t.Errorf("error %q", err)
+			}
+		}
+	}
+	if n := len(s.requests()); n != 0 {
+		t.Fatalf("%d requests were sent", n)
+	}
+}
+
+func TestOpenAIEmbedderNamesNoProductInItsHeaders(t *testing.T) {
+	s := startEmbeddingServer(t)
+	if _, err := NewOpenAIEmbedder(s.URL, "m", nil).EmbedQuery(t.Context(), "q"); err != nil {
+		t.Fatal(err)
+	}
+	allowed := map[string]bool{"Content-Type": true, "Content-Length": true, "User-Agent": true, "Accept-Encoding": true}
+	for name, values := range s.requests()[0].Header {
+		if !allowed[name] {
+			t.Errorf("unexpected header %s: %q", name, values)
+		}
+		for _, v := range values {
+			if name != "Content-Type" && strings.Contains(strings.ToLower(v), "mcp-registry") {
+				t.Errorf("header %s names the product: %q", name, v)
+			}
+		}
 	}
 }
