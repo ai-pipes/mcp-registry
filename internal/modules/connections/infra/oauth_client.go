@@ -27,7 +27,7 @@ const (
 	// answer is a few hundred bytes.
 	maxResponseBytes = 1 << 20
 	// maxExpiresIn keeps now + expires_in inside what time.Duration and Postgres can hold. A
-	// provider that says "expires in more than a century" is not usable.
+	// larger value (a provider's way of saying "never expires") is read as no expiry.
 	maxExpiresIn = 100 * 365 * 24 * 3600.0
 	userAgent    = "mcp-registry"
 )
@@ -146,6 +146,9 @@ func (c *OAuthClient) AuthorizeURL(cfg catalog.OAuthClientConfig, in app.Authori
 	}
 	if err := policy.check(u); err != nil {
 		return "", err
+	}
+	if u.User != nil {
+		return "", errEndpointCreds
 	}
 	var pairs [][2]string
 	for _, p := range cfg.ExtraAuthorizeParams {
@@ -347,7 +350,7 @@ func tokenAnswer(res response) (tokens, error) {
 		return tokens{}, &app.TokenEndpointError{Status: res.status, Code: errorCode(res)}
 	}
 	var m map[string]json.RawMessage
-	if err := json.Unmarshal(res.body, &m); err != nil || m == nil {
+	if err := json.Unmarshal(stripBOM(res.body), &m); err != nil || m == nil {
 		return tokens{}, errNoAnswer
 	}
 	var t tokens
@@ -367,7 +370,10 @@ func tokenAnswer(res response) (tokens, error) {
 		if !ok {
 			return tokens{}, errNoAnswer
 		}
-		t.expiresIn = &secs
+		// A value beyond what a time can hold is a provider's way of saying "never": no expiry.
+		if secs <= maxExpiresIn {
+			t.expiresIn = &secs
+		}
 	}
 	if raw, present := m["refresh_token"]; present {
 		if t.refresh, ok = nonEmptyString(raw); !ok {
@@ -382,6 +388,9 @@ func tokenAnswer(res response) (tokens, error) {
 	}
 	return t, nil
 }
+
+// stripBOM drops one leading UTF-8 byte order mark, as fetch's response.json() does.
+func stripBOM(b []byte) []byte { return bytes.TrimPrefix(b, []byte("\xef\xbb\xbf")) }
 
 func nonEmptyString(raw json.RawMessage) (string, bool) {
 	var s string
@@ -421,7 +430,7 @@ func parseExpiresIn(raw json.RawMessage) (float64, bool) {
 	default:
 		return 0, false
 	}
-	if math.IsNaN(f) || math.IsInf(f, 0) || f < 0 || f > maxExpiresIn {
+	if math.IsNaN(f) || math.IsInf(f, 0) || f < 0 {
 		return 0, false
 	}
 	return math.Floor(f), true
@@ -439,7 +448,7 @@ func errorCode(res response) string {
 		return ""
 	}
 	var m map[string]json.RawMessage
-	if json.Unmarshal(bytes.TrimSpace(res.body), &m) != nil || m == nil {
+	if json.Unmarshal(stripBOM(bytes.TrimSpace(res.body)), &m) != nil || m == nil {
 		return ""
 	}
 	code, _ := nonEmptyString(m["error"])

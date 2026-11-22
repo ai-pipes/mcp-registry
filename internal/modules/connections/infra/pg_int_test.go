@@ -523,7 +523,7 @@ func TestPendingInsertAndConsume(t *testing.T) {
 	}
 	if err := s.Pending.Insert(ctx, pending("st1", userA, now)); err == nil {
 		t.Error("state is unique")
-	} else if want := "st1"; containsStr(err.Error(), want) {
+	} else if containsStr(err.Error(), "st1") || containsStr(fmt.Sprintf("%+v", err), "st1") {
 		t.Errorf("error quotes the state: %v", err)
 	}
 	if p, err := s.Pending.Consume(ctx, "unknown", userA); p != nil || err != nil {

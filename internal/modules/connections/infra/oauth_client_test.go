@@ -255,7 +255,11 @@ func responseClasses() []answerCase {
 		{"200 expires_in negative", jsonAt(200, j, `{"access_token":"a","token_type":"bearer","expires_in":-1}`), "none"},
 		{"200 expires_in text", jsonAt(200, j, `{"access_token":"a","token_type":"bearer","expires_in":"soon"}`), "none"},
 		{"200 expires_in null", jsonAt(200, j, `{"access_token":"a","token_type":"bearer","expires_in":null}`), "none"},
-		{"200 expires_in huge", jsonAt(200, j, `{"access_token":"a","token_type":"bearer","expires_in":1e300}`), "none"},
+		{"200 expires_in huge means no expiry", jsonAt(200, j, `{"access_token":"a","token_type":"bearer","expires_in":1e300}`), "ok"},
+		{"200 with a byte order mark", jsonAt(200, j, "\ufeff"+`{"access_token":"a","token_type":"bearer"}`), "ok"},
+		{"400 invalid_client with a byte order mark", jsonAt(400, j, "\ufeff"+`{"error":"invalid_client"}`), "HTTP 400 invalid_client"},
+		{"400 invalid_grant with a byte order mark", jsonAt(400, j, "\ufeff"+`{"error":"invalid_grant"}`), "HTTP 400 invalid_grant"},
+		{"401 invalid_client with a byte order mark", jsonAt(401, j, "\ufeff"+`{"error":"invalid_client"}`), "HTTP 401 invalid_client"},
 		{"200 no access_token", jsonAt(200, j, `{"token_type":"bearer"}`), "none"},
 		{"200 empty access_token", jsonAt(200, j, `{"access_token":"","token_type":"bearer"}`), "none"},
 		{"200 numeric access_token", jsonAt(200, j, `{"access_token":5,"token_type":"bearer"}`), "none"},
@@ -651,5 +655,78 @@ func TestTokenSetNeverPrintsTokens(t *testing.T) {
 		if strings.Contains(s, "MARK") {
 			t.Errorf("printed: %s", s)
 		}
+	}
+}
+
+func TestHugeExpiresInMeansNoExpiryAndAByteOrderMarkIsStripped(t *testing.T) {
+	for _, body := range []string{
+		`{"access_token":"a","token_type":"bearer","expires_in":1e300}`,
+		`{"access_token":"a","token_type":"bearer","expires_in":"99999999999999999999"}`,
+		`{"access_token":"a","token_type":"bearer","expires_in":4000000000}`,
+	} {
+		p := newProvider(t, okJSON(body))
+		ts, err := testClient().Refresh(context.Background(), cfgFor(p.URL), app.NewClientSecret("s"), "r")
+		if err != nil || ts.AccessToken != "a" || ts.ExpiresAt != nil {
+			t.Errorf("%s: %v expiry %v", body, err, ts.ExpiresAt)
+		}
+	}
+	p := newProvider(t, okJSON("\ufeff"+`{"access_token":"A","token_type":"bearer","expires_in":60}`))
+	ts, err := testClient().Refresh(context.Background(), cfgFor(p.URL), app.NewClientSecret("s"), "r")
+	if err != nil || ts.AccessToken != "A" || ts.ExpiresAt == nil || !ts.ExpiresAt.Equal(clientNow.Add(time.Minute)) {
+		t.Errorf("bom: %v %v", ts.ExpiresAt, err)
+	}
+}
+
+func TestNoUsableAnswerNeverQuotesTheBody(t *testing.T) {
+	const mark = "BODYMARK-XYZ"
+	for _, body := range []string{
+		`{"access_token":"` + mark + `","token_type":"mac"}`,
+		`{"access_token":"` + mark + `"}`,
+		`not json ` + mark,
+		`{"access_token":"` + mark + `","token_type":"bearer","expires_in":"` + mark + `"}`,
+	} {
+		p := newProvider(t, okJSON(body))
+		_, err := testClient().Refresh(context.Background(), cfgFor(p.URL), app.NewClientSecret("s"), "r")
+		if err == nil {
+			t.Fatalf("%s: no error", body)
+		}
+		for _, text := range []string{err.Error(), fmt.Sprintf("%+v", err), fmt.Sprintf("%#v", err)} {
+			if strings.Contains(text, mark) {
+				t.Errorf("error quotes the body: %s", text)
+			}
+		}
+	}
+}
+
+func TestUserInfoInAnyEndpointIsRefusedBeforeAnythingIsSentAndNotQuoted(t *testing.T) {
+	ok := newProvider(t, okJSON(`{"access_token":"a","token_type":"bearer"}`))
+	host := strings.TrimPrefix(ok.URL, "http://")
+	creds := "http://USERMARK:PWMARK@" + host
+	c := testClient()
+	check := func(what string, err error) {
+		t.Helper()
+		if err == nil {
+			t.Errorf("%s: no error", what)
+			return
+		}
+		for _, m := range []string{"USERMARK", "PWMARK"} {
+			if strings.Contains(err.Error(), m) {
+				t.Errorf("%s: error quotes the credentials: %v", what, err)
+			}
+		}
+	}
+	cfg := cfgFor(ok.URL)
+	cfg.TokenURL = creds + "/token"
+	_, err := c.Refresh(context.Background(), cfg, app.NewClientSecret("s"), "r")
+	check("token", err)
+	cfg = cfgFor(ok.URL)
+	cfg.RevokeURL = ptr(creds + "/revoke")
+	check("revoke", c.Revoke(context.Background(), cfg, app.NewClientSecret("s"), "t"))
+	cfg = cfgFor(ok.URL)
+	cfg.AuthorizeURL = creds + "/authorize"
+	_, err = c.AuthorizeURL(cfg, app.AuthorizeInput{RedirectURI: "r", State: "s", CodeChallenge: "c"})
+	check("authorize", err)
+	if n := len(ok.requests()); n != 0 {
+		t.Errorf("%d requests were sent", n)
 	}
 }
