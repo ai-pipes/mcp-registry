@@ -43,29 +43,56 @@ USER node
 EXPOSE 8080
 CMD ["node", "--experimental-strip-types", "--no-warnings", "apps/server/test/smoke/upstream.ts"]
 
-# --- go-build: the Go server (milestone 1: the platform layer), CGO_ENABLED=0. The cgo build with
-#     ONNX Runtime arrives in milestone 4. Built only with `--target go` (make compat-image-go);
-#     the default target stays `runtime` below, the last stage of this file. ----------------------
+# --- go-native: the native libraries of the local embedder for the target platform (TARGETARCH),
+#     from the pinned sources with SHA-256 checks before and after extraction. The script and the
+#     list of pins are the ones `make native-libs` uses (internal/modules/search/infra/onnx/native:
+#     fetch.sh, pins.env): there is no second copy of a URL or a hash in this file. -------------------
+FROM golang:1.27-bookworm@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea AS go-native
+ARG TARGETARCH
+COPY internal/modules/search/infra/onnx/native/fetch.sh internal/modules/search/infra/onnx/native/pins.env /native-src/
+RUN sh /native-src/fetch.sh "linux-${TARGETARCH}" /native \
+    && . /native-src/pins.env \
+    && eval "sha=\$ORT_SHA_linux_${TARGETARCH}" \
+    && echo "${sha}  /usr/local/lib/libonnxruntime.so.1" > /native/ort.sha256
+
+# --- go-build: the Go server, CGO_ENABLED=1 with the build tag onnx (the local embedder), built
+#     natively for the target platform. Built only with `--target go` (make compat-image-go) or as
+#     the base of the parity check; the default target stays `runtime` below, the last stage of
+#     this file. ----------------------------------------------------------------------------------
 FROM golang:1.27-bookworm@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea AS go-build
 ARG VERSION=dev
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
+COPY --from=go-native /native/libtokenizers.a /native/libtokenizers.a
 COPY cmd cmd
 COPY internal internal
 # The migrations are embedded from the TypeScript server's folder (apps/server/migrations/embed.go).
 COPY apps/server/migrations apps/server/migrations
-RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/mcp-registry ./cmd/mcp-registry
+RUN CGO_ENABLED=1 CGO_LDFLAGS="-L/native" go build -tags onnx -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/mcp-registry ./cmd/mcp-registry
 
 # --- go: the Go image. No ENTRYPOINT (the compat suite runs the CLI in the same image by replacing
-#     the command), no HEALTHCHECK yet (the TypeScript one runs node). ---------------------------
+#     the command), no HEALTHCHECK yet (the TypeScript one runs node). The binary is dynamically
+#     linked (glibc, libstdc++ for the tokenizer and ONNX Runtime). ONNX Runtime sits at
+#     onnx.DefaultLibraryPath, the model at the default MODEL_DIR (/app/models, the same layout the
+#     TypeScript image has: it comes from the same `model` stage). ----------------------------------
 FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc AS go
+# glibc keeps freed native memory per thread arena: repeated failed model loads inflated the resident
+# memory to gigabytes; with two arenas it plateaus (about 660 MB measured).
+ENV MALLOC_ARENA_MAX=2
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
+    && apt-get install -y --no-install-recommends ca-certificates libstdc++6 \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin mcp
 COPY --from=go-build /out/mcp-registry /usr/local/bin/mcp-registry
+COPY --from=go-native --chmod=0755 /native/libonnxruntime.so.1 /usr/local/lib/libonnxruntime.so.1
+# A truncated library crashes the process inside dlopen instead of returning an error, so the file
+# is checked again at its installed path (the expected hash comes from pins.env through go-native).
+RUN --mount=type=bind,from=go-native,source=/native/ort.sha256,target=/tmp/ort.sha256 \
+    sha256sum -c /tmp/ort.sha256
+COPY --from=model /app/models /app/models
 COPY --from=build /app/apps/web/dist /app/web
+COPY LICENSE THIRD_PARTY_NOTICES /usr/share/licenses/mcp-registry/
 USER 10001
 EXPOSE 3000
 CMD ["mcp-registry"]

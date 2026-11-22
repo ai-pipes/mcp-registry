@@ -1,18 +1,32 @@
 #!/bin/sh
 # Downloads the native libraries the `onnx` build needs into <dest>, verifying every SHA-256
-# (the downloads and the extracted files) against the values the Makefile pins. Nothing downloaded
+# (the downloads and the extracted files) against the values pinned in pins.env. Nothing downloaded
 # is ever executed: archives are only listed and unpacked with tar (one named member), and the
 # libraries are loaded later by the Go program. Idempotent: a library that is already in <dest>
 # with the right hash is left alone. A mismatch is an error, never a warning.
 #
-# Usage (through `make native-libs`, which sets the environment):
-#   fetch.sh <platform> <dest>
-# Environment: ORT_URL ORT_TGZ_SHA256 ORT_MEMBER ORT_FILE ORT_FILE_SHA256
-#              TOK_URL TOK_TGZ_SHA256 TOK_FILE_SHA256
+# Usage (through `make native-libs` and the Dockerfile stage go-native):
+#   fetch.sh <platform> <dest>          platform: darwin-arm64, linux-arm64 or linux-amd64
+# The URLs and hashes are read from pins.env next to this script (the only list of them).
 set -eu
 
 platform=${1:?platform}
 dest=${2:?dest}
+
+here=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source=pins.env
+. "$here/pins.env"
+key=$(echo "$platform" | tr '-' '_')
+get() { eval "printf '%s' \"\${$1_$key:-}\""; }
+ORT_MEMBER=$(get ORT_MEMBER)
+ORT_FILE=$(get ORT_FILE)
+ORT_FILE_SHA256=$(get ORT_SHA)
+TOK_TGZ_SHA256=$(get TOK_SHA_TGZ)
+TOK_FILE_SHA256=$(get TOK_SHA)
+ORT_URL=$ORT_NPM_URL
+ORT_TGZ_SHA256=$ORT_NPM_SHA256
+TOK_URL="$TOK_BASE_URL/libtokenizers.$platform.tar.gz"
+[ -n "$ORT_FILE" ] && [ -n "$ORT_MEMBER" ] && [ -n "$ORT_FILE_SHA256" ] && [ -n "$TOK_TGZ_SHA256" ] && [ -n "$TOK_FILE_SHA256" ] || { echo "native-libs: no pinned libraries for $platform" >&2; exit 1; }
 
 sha256() {
 	if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1; else shasum -a 256 "$1" | cut -d' ' -f1; fi

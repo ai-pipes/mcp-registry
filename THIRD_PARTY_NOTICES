@@ -1,0 +1,51 @@
+Third-party components redistributed with the mcp-registry Go image (target `go`)
+=================================================================================
+
+mcp-registry itself is MIT licensed (LICENSE). The Go image additionally contains the components
+below. In the image this file is /usr/share/licenses/mcp-registry/THIRD_PARTY_NOTICES, the project
+licence is next to it, and the Apache-2.0 text is the Debian copy at
+/usr/share/common-licenses/Apache-2.0.
+
+1. ONNX Runtime 1.30.0 (CPU) - MIT
+   File: /usr/local/lib/libonnxruntime.so.1, taken unchanged from the npm package
+   onnxruntime-node@1.30.0 (SHA-256 pinned in internal/modules/search/infra/onnx/native/pins.env).
+   Source: https://github.com/microsoft/onnxruntime
+
+   MIT License
+
+   Copyright (c) Microsoft Corporation
+
+   Permission is hereby granted, free of charge, to any person obtaining a copy of this software
+   and associated documentation files (the "Software"), to deal in the Software without
+   restriction, including without limitation the rights to use, copy, modify, merge, publish,
+   distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the
+   Software is furnished to do so, subject to the following conditions:
+
+   The above copyright notice and this permission notice shall be included in all copies or
+   substantial portions of the Software.
+
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING
+   BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+   NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+   DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+   ONNX Runtime bundles further components under their own licences; their notices are listed
+   in the ONNX Runtime repository (ThirdPartyNotices.txt, release v1.30.0).
+
+2. Hugging Face tokenizers 0.22.0 - Apache-2.0
+   Statically linked into the binary through libtokenizers.a (github.com/daulet/tokenizers
+   v1.27.0, release asset, SHA-256 pinned in pins.env), together with the Rust crates it depends
+   on (versions in the Cargo.lock of daulet/tokenizers v1.27.0; each crate declares its licence,
+   MIT and/or Apache-2.0 for the usual ones, in its own manifest).
+   Source: https://github.com/huggingface/tokenizers
+   Licence text: /usr/share/common-licenses/Apache-2.0 (Apache License, Version 2.0, also at
+   https://www.apache.org/licenses/LICENSE-2.0).
+
+3. github.com/daulet/tokenizers v1.27.0 (Go binding) - MIT, Copyright (c) 2023 Daulet Zhanguzin
+   github.com/yalue/onnxruntime_go v1.37.0 (Go binding) - MIT, Copyright (c) 2023 Nathan Otterness
+   Compiled into the binary. Both licences are the MIT text above with their own copyright line.
+
+4. Model Xenova/multilingual-e5-small (ONNX, q8), a conversion of intfloat/multilingual-e5-small
+   - MIT. Files under /app/models, downloaded at build time at a pinned revision and checked by
+   SHA-256 (scripts/download-model.mjs). Source: https://huggingface.co/Xenova/multilingual-e5-small
