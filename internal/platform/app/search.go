@@ -28,7 +28,13 @@ const (
 	msgEmbedderUnavailable = "search: local embedder unavailable, search is text-only until it loads"
 	reasonNotBuilt         = "not_built"
 	reasonLoadFailed       = "load_failed"
+	reasonLoadTimeout      = "load_timeout"
 )
+
+// modelLoadBound is how long the start waits for the local model. A load that takes longer (a
+// hung disk, a stuck mount) logs the same record with reason load_timeout and the start goes on;
+// the load itself continues in the background and the embedder reports ready when it is done.
+const modelLoadBound = 2 * time.Minute
 
 // embedderHandle is the embedder the composition chose and what the lifecycle needs from it. load
 // and close are nil for an embedder that has none (the OpenAI-compatible adapter holds no state).
@@ -57,6 +63,8 @@ type searchWiring struct {
 	rt       Runtime
 	service  *search.Service
 	embedder embedderHandle
+	// loadBound is how long BeforeServing waits for the load (modelLoadBound; tests shorten it).
+	loadBound time.Duration
 }
 
 func newSearchWiring(rt Runtime, cat catalogWiring) searchWiring {
@@ -67,7 +75,7 @@ func newSearchWiring(rt Runtime, cat catalogWiring) searchWiring {
 // in-memory index and a fake embedder). It panics when one of them would be nil.
 func searchWiringOver(rt Runtime, index search.Index, emb embedderHandle, tools search.ToolSource) searchWiring {
 	return searchWiring{
-		rt: rt, embedder: emb,
+		rt: rt, embedder: emb, loadBound: modelLoadBound,
 		service: search.New(search.Deps{
 			Index: index, Embedder: emb.Embedder, Tools: tools,
 			Clock: rt.Clock, Logger: rt.Logger, MinSimilarity: rt.Config.SearchMinSimilarity,
@@ -92,7 +100,7 @@ func (w searchWiring) module() Module {
 		m.BeforeServing = w.loadModel
 	}
 	if w.embedder.close != nil {
-		m.Closers = []func(context.Context) error{func(context.Context) error { return w.embedder.close() }}
+		m.Closers = []func(context.Context) error{w.closeEmbedder}
 	}
 	return m
 }
@@ -104,17 +112,44 @@ func (w searchWiring) sweep(ctx context.Context) error {
 	return err
 }
 
+// closeEmbedder releases the embedder, but gives up waiting when ctx ends: Close waits for a load
+// or a run in flight, and a hung one must not hold the shutdown past its limit. The shutdown then
+// logs its timeout and exits 1; the close goes on in its goroutine until the process ends.
+func (w searchWiring) closeEmbedder(ctx context.Context) error {
+	done := make(chan error, 1)
+	go func() { done <- w.embedder.close() }()
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 // loadModel loads the local embedder before the server accepts requests (decided deviation
 // ready-before-serving: the first search is answered with the vector half, and /healthz never
 // reports the model). A failure never stops the start: one warning and text search; the embedder
-// tries again on its next use, so a model that appears later is picked up. A load cut short by
-// the shutdown logs nothing.
+// tries again on its next use, so a model that appears later is picked up. The wait is bounded
+// (loadBound): past it the same warning with reason load_timeout, and the start goes on while the
+// load finishes in the background. A load cut short by the shutdown logs nothing.
 func (w searchWiring) loadModel(ctx context.Context) {
-	err := w.embedder.load(ctx)
+	done := make(chan error, 1)
+	go func() { done <- w.embedder.load(ctx) }()
+	timer := time.NewTimer(w.loadBound)
+	defer timer.Stop()
+	var err error
+	reason := reasonLoadFailed
+	select {
+	case err = <-done:
+	case <-timer.C:
+		w.rt.Logger.Warn(msgEmbedderUnavailable, "reason", reasonLoadTimeout)
+		return
+	case <-ctx.Done():
+		return
+	}
 	if err == nil || ctx.Err() != nil {
 		return
 	}
-	reason := reasonLoadFailed
 	if errors.Is(err, onnx.ErrNotBuilt) {
 		reason = reasonNotBuilt
 	}

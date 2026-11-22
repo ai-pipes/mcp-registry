@@ -412,3 +412,98 @@ func TestTheSearchWiringRefusesToBeBuiltWithoutItsParts(t *testing.T) {
 		}()
 	}
 }
+
+func TestAModelLoadThatNeverFinishesIsBoundedAndTheStartGoesOn(t *testing.T) {
+	var buf logBuf
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	w := wiringOver(&buf, newFakeIndex(), embedderHandle{Embedder: &fakeEmbedder{}, load: func(context.Context) error {
+		<-release // a loader that never returns on its own and ignores its context
+		return nil
+	}}, fakeTools{})
+	w.loadBound = 20 * time.Millisecond
+	returned := make(chan struct{})
+	go func() { w.module().BeforeServing(context.Background()); close(returned) }()
+	recv(t, returned, "BeforeServing to give up waiting")
+	recs := buf.find(t, msgEmbedderUnavailable)
+	if len(recs) != 1 || len(buf.records(t)) != 1 || recs[0]["reason"] != "load_timeout" || recs[0]["level"] != float64(40) {
+		t.Fatalf("records: %v", buf.records(t))
+	}
+}
+
+func TestTheDefaultLoadBoundIsTwoMinutes(t *testing.T) {
+	if w := wiringOver(&logBuf{}, newFakeIndex(), embedderHandle{Embedder: &fakeEmbedder{}}, fakeTools{}); w.loadBound != 2*time.Minute {
+		t.Fatalf("bound %s", w.loadBound)
+	}
+}
+
+func TestTheEmbedderCloserReturnsAtTheEndOfItsContextWhileCloseIsStuck(t *testing.T) {
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	w := wiringOver(&logBuf{}, newFakeIndex(), embedderHandle{
+		Embedder: &fakeEmbedder{}, load: func(context.Context) error { return nil },
+		close: func() error { <-release; return nil },
+	}, fakeTools{})
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	got := make(chan error, 1)
+	go func() { got <- w.module().Closers[0](ctx) }()
+	if err := recv(t, got, "the closer to return"); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("closer returned %v, want the context's error", err)
+	}
+}
+
+func TestTheEmbedderCloserReturnsWhatCloseReturns(t *testing.T) {
+	bad := errors.New("close failed")
+	for _, want := range []error{nil, bad} {
+		w := wiringOver(&logBuf{}, newFakeIndex(), embedderHandle{
+			Embedder: &fakeEmbedder{}, load: func(context.Context) error { return nil },
+			close: func() error { return want },
+		}, fakeTools{})
+		if err := w.module().Closers[0](context.Background()); !errors.Is(err, want) && err != want {
+			t.Errorf("got %v, want %v", err, want)
+		}
+	}
+}
+
+// SEARCH_MIN_SIMILARITY reaches the vector query through the wiring.
+func TestTheSimilarityFloorOfTheConfigurationReachesTheVectorQuery(t *testing.T) {
+	for _, floor := range []float64{0.83, 0.42} {
+		idx := &floorIndex{fakeIndex: newFakeIndex()}
+		rt := searchRuntime(&logBuf{})
+		rt.Config.SearchMinSimilarity = floor
+		w := searchWiringOver(rt, idx, embedderHandle{Embedder: &fakeEmbedder{ready: true}}, fakeTools{})
+		if _, err := w.service.SearchTools(context.Background(), "create issue", 5, []string{"gitea"}); err != nil {
+			t.Fatal(err)
+		}
+		if len(idx.floors) != 1 || idx.floors[0] != floor {
+			t.Fatalf("floor %v reached the query as %v", floor, idx.floors)
+		}
+	}
+}
+
+type floorIndex struct {
+	*fakeIndex
+	floors []float64
+}
+
+func (i *floorIndex) FTSCandidates(context.Context, string, int, []string) ([]search.Candidate, error) {
+	return []search.Candidate{}, nil
+}
+
+func (i *floorIndex) VectorCandidates(_ context.Context, _ []float32, _ int, floor float64, _ []string) ([]search.Candidate, error) {
+	i.floors = append(i.floors, floor)
+	return []search.Candidate{}, nil
+}
+
+// recv receives from ch or fails the test after a generous limit.
+func recv[T any](t *testing.T, ch <-chan T, what string) T {
+	t.Helper()
+	select {
+	case v := <-ch:
+		return v
+	case <-time.After(30 * time.Second):
+		t.Fatalf("timed out waiting for %s", what)
+		panic("unreachable")
+	}
+}

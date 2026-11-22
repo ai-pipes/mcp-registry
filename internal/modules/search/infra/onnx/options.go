@@ -2,7 +2,10 @@ package onnx
 
 // DefaultLibraryPath is where the image puts the ONNX Runtime library (the file from the npm package
 // onnxruntime-node@1.30.0). The image task owns the real location; this is the agreed default.
-const DefaultLibraryPath = "/usr/local/lib/libonnxruntime.so.1"
+// It is a variable only so that a development build can point it elsewhere without a new setting:
+// go build -tags onnx -ldflags "-X github.com/ai-pipes/mcp-registry/internal/modules/search/infra/onnx.DefaultLibraryPath=/path/to/libonnxruntime.dylib".
+// Operators have no setting for it.
+var DefaultLibraryPath = "/usr/local/lib/libonnxruntime.so.1"
 
 // Options says where the native pieces are. Plain values: the composition reads the environment.
 type Options struct {
