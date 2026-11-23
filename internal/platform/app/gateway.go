@@ -19,6 +19,7 @@ type gatewayWiring struct {
 	con     connectionsWiring
 	srch    searchWiring
 	service *gateway.Service
+	deps    gateway.Deps // what the service was built from (tests pin what is shared)
 }
 
 // newGatewayWiring builds the module over the Postgres stores, the other modules' public services
@@ -30,7 +31,7 @@ func newGatewayWiring(rt Runtime, id identityWiring, cat catalogWiring, con conn
 		panic("gateway wiring: the identity, catalog, connections and search wirings are not built")
 	}
 	stores := gwinfra.NewPg(rt.Pool)
-	svc, err := gateway.New(gateway.Deps{
+	deps := gateway.Deps{
 		CallLog:     stores.CallLog,
 		Quota:       stores.Quota,
 		Catalog:     gwinfra.NewToolCatalog(cat.service),
@@ -44,11 +45,12 @@ func newGatewayWiring(rt Runtime, id identityWiring, cat catalogWiring, con conn
 		PublicURL:        strings.TrimRight(rt.Config.PublicURL, "/"),
 		MaxResponseBytes: int64(rt.Config.UpstreamMaxResponseBytes),
 		BaseContext:      rt.CallsContext,
-	})
+	}
+	svc, err := gateway.New(deps)
 	if err != nil {
 		panic(fmt.Sprintf("gateway wiring: %v", err))
 	}
-	return gatewayWiring{rt: rt, id: id, cat: cat, con: con, srch: srch, service: svc}
+	return gatewayWiring{rt: rt, id: id, cat: cat, con: con, srch: srch, service: svc, deps: deps}
 }
 
 // module is what the gateway adds to the server: `/mcp` and `GET /api/calls` with identity's

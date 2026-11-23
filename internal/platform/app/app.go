@@ -20,6 +20,12 @@ const (
 	defaultWebRoot = "/app/web"
 	// outboxInterval is the outbox poll period (OUTBOX_INTERVAL_MS in main.ts).
 	outboxInterval = time.Second
+	// callsGrace is how long the gateway's calls in flight get to finish after a shutdown began
+	// (the listeners are closed at once); then the remaining ones are cancelled and write their
+	// `transport_error` row. Half of shutdownLimit, so the row write still fits inside it. The
+	// TypeScript server lets calls shorter than its 10 s limit finish during a deploy. Not a
+	// configuration variable.
+	callsGrace = 5 * time.Second
 	// shutdownLimit is the overall limit of a shutdown (SHUTDOWN_TIMEOUT_MS in main.ts).
 	shutdownLimit = 10 * time.Second
 	// restBodyLimit caps request bodies of everything except /mcp.
@@ -47,6 +53,7 @@ type Options struct {
 	listener        net.Listener           // used instead of listening on 0.0.0.0:Config.Port
 	modules         func(Runtime) []Module // replaces modules (a stub module); nil means modules
 	shutdownTimeout time.Duration          // replaces shutdownLimit when > 0
+	callsGrace      time.Duration          // replaces callsGrace when > 0
 }
 
 // Signal is the cancellation cause of the context given to Run when the process got a signal; its

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -17,6 +18,7 @@ import (
 	conapp "github.com/ai-pipes/mcp-registry/internal/modules/connections/app"
 	condomain "github.com/ai-pipes/mcp-registry/internal/modules/connections/domain"
 	coninfra "github.com/ai-pipes/mcp-registry/internal/modules/connections/infra"
+	gwdomain "github.com/ai-pipes/mcp-registry/internal/modules/gateway/domain"
 	idapp "github.com/ai-pipes/mcp-registry/internal/modules/identity/app"
 	"github.com/ai-pipes/mcp-registry/internal/modules/identity/domain"
 	"github.com/ai-pipes/mcp-registry/internal/platform/config"
@@ -40,8 +42,14 @@ func gatewayConfig(c *config.Config) {
 
 func newGwEnv(t *testing.T) *gwEnv {
 	t.Helper()
+	return newGwEnvWith(t, gatewayConfig, nil)
+}
+
+// newGwEnvWith starts the composed server with its configuration and options edited.
+func newGwEnvWith(t *testing.T, edit func(*config.Config), opts func(*Options)) *gwEnv {
+	t.Helper()
 	url := pgtest.StartURL(t)
-	rs := startReal(t, url, newKey(t), gatewayConfig)
+	rs := startRealOpts(t, url, newKey(t), edit, modules, opts)
 	return &gwEnv{conEnv: &conEnv{t: t, rs: rs, url: url}, tokens: map[string]string{}}
 }
 
@@ -500,12 +508,10 @@ func (h *holdConnections) Get(ctx context.Context, userID, server string) (*cond
 	return h.ConnectionStore.Get(ctx, userID, server)
 }
 
-// A call that read configuration A must never send a token issued for B to A's URL, nor to B's,
-// even when the person saved a token for B in between.
-func TestACallNeverSendsATokenIssuedForAnotherConfiguration(t *testing.T) {
-	url := pgtest.StartURL(t)
-	hold := &holdConnections{entered: make(chan struct{}), release: make(chan struct{})}
-	build := func(rt Runtime) []Module {
+// buildWithHold is the composed server's module list (without search) whose connections store is
+// held by hold.
+func buildWithHold(hold *holdConnections) func(Runtime) []Module {
+	return func(rt Runtime) []Module {
 		id := newIdentityWiring(rt)
 		cat := newCatalogWiring(rt, id)
 		stores := coninfra.NewPg(rt.Pool)
@@ -514,6 +520,14 @@ func TestACallNeverSendsATokenIssuedForAnotherConfiguration(t *testing.T) {
 		gw := newGatewayWiring(rt, id, cat, con, newSearchWiring(rt, cat))
 		return []Module{id.module(), platformModule(rt, id), cat.module(), con.module(), gw.module()}
 	}
+}
+
+// A call that read configuration A must never send a token issued for B to A's URL, nor to B's,
+// even when the person saved a token for B in between.
+func TestACallNeverSendsATokenIssuedForAnotherConfiguration(t *testing.T) {
+	url := pgtest.StartURL(t)
+	hold := &holdConnections{entered: make(chan struct{}), release: make(chan struct{})}
+	build := buildWithHold(hold)
 	rs := startRealWith(t, url, newKey(t), gatewayConfig, build)
 	g := &gwEnv{conEnv: &conEnv{t: t, rs: rs, url: url}, tokens: map[string]string{}}
 	alice := g.admin("alice")
@@ -575,37 +589,137 @@ func authsOf(calls []upstreamCall) []string {
 	return out
 }
 
-// A call blocked in the upstream when the server is told to stop is cancelled; its call-log row
-// (transport_error) is written before the pool closes, and the shutdown finishes within its limit.
-func TestAShutdownCancelsCallsInFlightAndTheirRowIsWritten(t *testing.T) {
-	g := newGwEnv(t)
+// inFlight is a server with one call blocked in the upstream, and the shutdown begun while it is.
+type inFlight struct {
+	g     *gwEnv
+	hold  chan struct{} // closing it lets the upstream answer
+	reply chan agentReply
+	exit  chan int
+}
+
+// startInFlight starts a server with the given grace, sends a call that blocks in the upstream and
+// begins the shutdown; it returns once the log says the shutdown began and the listener is closed.
+func startInFlight(t *testing.T, grace time.Duration) *inFlight {
+	t.Helper()
+	g := newGwEnvWith(t, gatewayConfig, func(o *Options) { o.callsGrace = grace })
 	alice := g.admin("alice")
 	tok := g.token("alice", domain.RoleAdmin)
 	up := newMCPFake(t, "slow")
 	g.register(alice, "slowsrv", up, map[string]any{"kind": "none"}, "", 0)
-	up.setCall(func(upstreamCall) callAnswer { return callAnswer{Hold: make(chan struct{})} }) // never released
-
-	done := make(chan agentReply, 1)
-	go func() {
-		done <- mcpCallTool(t, g.rs.base, tok, "slowsrv.slow", `{"q":"ARG-MARKER-shutdown"}`)
-	}()
+	f := &inFlight{g: g, hold: make(chan struct{}), reply: make(chan agentReply, 1), exit: make(chan int, 1)}
+	up.setCall(func(upstreamCall) callAnswer {
+		a := okAnswer("RESULT-MARKER-slow")
+		a.Hold = f.hold
+		return a
+	})
+	t.Cleanup(func() {
+		select {
+		case <-f.hold:
+		default:
+			close(f.hold)
+		}
+	})
+	go func() { f.reply <- mcpCallTool(t, g.rs.base, tok, "slowsrv.slow", `{"q":"ARG-MARKER-shutdown"}`) }()
 	await(t, up.callArrived, "the call to reach the upstream")
+	go func() { f.exit <- g.rs.stop("SIGTERM") }()
+	g.rs.waitFor("shutting down")
+	// The listener closes at once, long before the grace ends.
+	addr := strings.TrimPrefix(g.rs.base, "http://")
+	deadline := time.Now().Add(waitLimit)
+	for {
+		c, err := net.DialTimeout("tcp", addr, time.Second)
+		if err != nil {
+			break
+		}
+		_ = c.Close()
+		if time.Now().After(deadline) {
+			t.Fatal("the listener is still open after the shutdown began")
+		}
+		time.Sleep(10 * time.Millisecond) //nolint:forbidigo // polling a socket that has no event to wait on
+	}
+	return f
+}
 
-	if code := g.rs.stop("SIGTERM"); code != 0 {
-		t.Fatalf("exit %d; log:\n%s", code, g.rs.logs.String())
+// A call that finishes within the grace gets its normal answer and an `ok` row; the shutdown then
+// completes cleanly (the grace is far longer than the test: nothing is cancelled).
+func TestACallThatFinishesWithinTheGraceIsAnsweredNormally(t *testing.T) {
+	f := startInFlight(t, time.Minute)
+	select {
+	case r := <-f.reply:
+		t.Fatalf("the call answered before it was released: %+v", r)
+	default:
 	}
-	if len(g.rs.logs.find(t, "shutdown timed out")) != 0 || len(g.rs.logs.find(t, "shutdown failed")) != 0 {
-		t.Fatalf("the shutdown did not go cleanly:\n%s", g.rs.logs.String())
+	close(f.hold)
+	got := await(t, f.reply, "the agent's answer")
+	if got.Status != 200 || got.IsError || got.Text != "RESULT-MARKER-slow" {
+		t.Fatalf("%+v", got)
 	}
-	got := await(t, done, "the agent's answer")
+	if code := await(t, f.exit, "the exit"); code != 0 {
+		t.Fatalf("exit %d; log:\n%s", code, f.g.rs.logs.String())
+	}
+	if f.g.calls("slowsrv", "ok") != 1 || f.g.calls("slowsrv", "transport_error") != 0 {
+		t.Fatalf("rows: ok %d, transport_error %d", f.g.calls("slowsrv", "ok"), f.g.calls("slowsrv", "transport_error"))
+	}
+	if len(f.g.rs.logs.find(t, "mcp tool failed")) != 0 || len(f.g.rs.logs.find(t, "shutdown timed out")) != 0 {
+		t.Fatalf("error records:\n%s", f.g.rs.logs.String())
+	}
+}
+
+// A call still running when the grace ends is cancelled and writes `transport_error` before the
+// pool closes, inside the overall shutdown limit.
+func TestACallStillRunningAtTheEndOfTheGraceIsCancelledAndItsRowIsWritten(t *testing.T) {
+	f := startInFlight(t, 300*time.Millisecond)
+	got := await(t, f.reply, "the agent's answer")
 	if got.Status != 200 || !got.IsError {
 		t.Fatalf("the agent got %+v", got)
 	}
-	if n := g.calls("slowsrv", "transport_error"); n != 1 {
-		t.Fatalf("transport_error rows after the shutdown: %d\n%s", n, g.rs.logs.String())
+	if code := await(t, f.exit, "the exit"); code != 0 {
+		t.Fatalf("exit %d; log:\n%s", code, f.g.rs.logs.String())
 	}
-	if strings.Contains(g.rs.logs.String(), "ARG-MARKER-shutdown") {
+	if len(f.g.rs.logs.find(t, "shutdown timed out")) != 0 || len(f.g.rs.logs.find(t, "shutdown failed")) != 0 {
+		t.Fatalf("the shutdown did not go cleanly:\n%s", f.g.rs.logs.String())
+	}
+	if n := f.g.calls("slowsrv", "transport_error"); n != 1 {
+		t.Fatalf("transport_error rows after the shutdown: %d\n%s", n, f.g.rs.logs.String())
+	}
+	if strings.Contains(f.g.rs.logs.String(), "ARG-MARKER-shutdown") {
 		t.Fatal("an argument is in the log")
+	}
+}
+
+// A request that arrives after the shutdown began is refused by the closed listener; it is never
+// answered `Internal error.` because of the shutdown.
+func TestARequestAfterTheShutdownBeganIsRefusedByTheClosedListener(t *testing.T) {
+	f := startInFlight(t, time.Minute)
+	req, err := http.NewRequest("POST", f.g.rs.base+"/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"ping"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Transport: &http.Transport{DisableKeepAlives: true}, Timeout: 5 * time.Second}
+	if res, err := client.Do(req); err == nil {
+		raw, _ := io.ReadAll(res.Body)
+		_ = res.Body.Close()
+		t.Fatalf("a request after the shutdown began was answered: %d %s", res.StatusCode, raw)
+	}
+	close(f.hold)
+	await(t, f.reply, "the agent's answer")
+	if code := await(t, f.exit, "the exit"); code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	if len(f.g.rs.logs.find(t, "mcp tool failed")) != 0 {
+		t.Fatal("an error record for a call cut by the shutdown")
+	}
+}
+
+// With nothing in flight the shutdown is not held back by the grace.
+func TestAShutdownWithNoCallsInFlightIsNotDelayedByTheGrace(t *testing.T) {
+	g := newGwEnvWith(t, gatewayConfig, func(o *Options) { o.callsGrace = time.Minute })
+	started := time.Now()
+	if code := g.rs.stop("SIGTERM"); code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	if took := time.Since(started); took > 5*time.Second {
+		t.Fatalf("the shutdown took %v with nothing in flight", took)
 	}
 }
 
@@ -635,5 +749,149 @@ func TestTheRetentionJobRunsAtStart(t *testing.T) {
 	}
 	if n := queryInt(t, url, `select count(*)::int from gateway.calls where server = 'fresh'`) + queryInt(t, url, `select count(*)::int from gateway.quota where server = 'fresh'`); n != 2 {
 		t.Fatalf("the fresh rows: %d", n)
+	}
+}
+
+// The server's configuration changes between the upstream's 401 and the forced resolve: the person's
+// refresh token is sent to neither the old nor the new token endpoint, the call is not retried
+// anywhere, and the stored connection is untouched.
+func TestAConfigurationChangedBetweenThe401AndTheForcedResolveSendsNothing(t *testing.T) {
+	url := pgtest.StartURL(t)
+	hold := &holdConnections{entered: make(chan struct{}), release: make(chan struct{})}
+	rs := startRealWith(t, url, newKey(t), gatewayConfig, buildWithHold(hold))
+	g := &gwEnv{conEnv: &conEnv{t: t, rs: rs, url: url}, tokens: map[string]string{}}
+	alice := g.admin("alice")
+	tok := g.token("alice", domain.RoleAdmin)
+	old, moved, up := g.provider("old401"), g.provider("moved401"), newMCPFake(t, "echo")
+	g.oauthReady(alice, "mv401", old, up, 5)
+	// The 401 arrives, and the next read of the person's connection (the forced resolve) is held.
+	up.setCall(func(upstreamCall) callAnswer {
+		hold.arm.Store(true)
+		return callAnswer{Status: 401}
+	})
+	refreshes, before := old.count("/token", "refresh_token"), g.snapshot("mv401")
+
+	done := make(chan agentReply, 1)
+	go func() { done <- mcpCallTool(t, rs.base, tok, "mv401.echo", `{}`) }()
+	await(t, hold.entered, "the forced resolve to read the connection")
+	next := oauthAuth(old)
+	next["oauth"].(map[string]any)["tokenUrl"] = moved.endpoint("/token")
+	if status, _, raw := alice.do("PUT", "/api/servers/mv401", serverBody("mv401", up.url(), next)); status != 200 {
+		t.Fatalf("move the token endpoint: %d %s", status, raw)
+	}
+	close(hold.release)
+	got := await(t, done, "the call to finish")
+
+	if !got.IsError || got.Text != "mv401 is unavailable." {
+		t.Fatalf("%+v", got)
+	}
+	if moved.total() != 0 || old.count("/token", "refresh_token") != refreshes {
+		t.Fatalf("a refresh token was sent: new endpoint %d requests, old endpoint %d refreshes (was %d)", moved.total(), old.count("/token", "refresh_token"), refreshes)
+	}
+	if n := len(up.seenCalls()); n != 1 {
+		t.Fatalf("the upstream saw %d calls, want 1 (no retry)", n)
+	}
+	if g.snapshot("mv401") != before {
+		t.Fatal("the stored connection changed")
+	}
+	if g.calls("mv401", "transport_error") != 1 || g.quota("mv401") != 1 {
+		t.Fatalf("transport_error rows %d, quota %d", g.calls("mv401", "transport_error"), g.quota("mv401"))
+	}
+}
+
+// MCP_MAX_BODY_BYTES is the /mcp limit on both sides, and the REST limit stays 1 MiB.
+func TestTheMCPBodyLimitIsTheConfiguredOneAndTheRESTLimitStaysOneMiB(t *testing.T) {
+	const limit = 2 << 20
+	g := newGwEnvWith(t, func(c *config.Config) { gatewayConfig(c); c.MCPMaxBodyBytes = limit }, nil)
+	tok := g.token("alice", domain.RoleAdmin)
+	padded := func(n int) string {
+		const msg = `{"jsonrpc":"2.0","id":1,"method":"ping"}`
+		return strings.Repeat(" ", n-len(msg)) + msg
+	}
+	mcp := func(n int) int {
+		status, _, _ := call(t, "POST", g.rs.base+"/mcp", "", padded(n), "Authorization", "Bearer "+tok, "Content-Type", "application/json", "Accept", "application/json, text/event-stream")
+		return status
+	}
+	for n, want := range map[int]int{limit: 200, limit + 1: 413, 3 << 19: 200} {
+		if got := mcp(n); got != want {
+			t.Errorf("/mcp with %d bytes: %d, want %d", n, got, want)
+		}
+	}
+	rest := func(n int) int {
+		status, _, _ := call(t, "POST", g.rs.base+"/api/auth/link", "", padded(n))
+		return status
+	}
+	if got := rest(1 << 20); got == 413 {
+		t.Errorf("REST with exactly 1 MiB: %d", got)
+	}
+	for _, n := range []int{1<<20 + 1, 3 << 19} {
+		if got := rest(n); got != 413 {
+			t.Errorf("REST with %d bytes: %d, want 413 (the /mcp limit must not widen it)", n, got)
+		}
+	}
+}
+
+// CALL_LOG_RETENTION_DAYS decides what the job at start deletes.
+func TestTheRetentionJobUsesTheConfiguredDays(t *testing.T) {
+	url := pgtest.StartURL(t)
+	key := newKey(t)
+	first := startReal(t, url, key, gatewayConfig)
+	if code := first.stop("SIGTERM"); code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	const user = "11111111-1111-4111-8111-111111111111"
+	exec(t, url, `insert into gateway.calls (user_id, server, tool, started_at, duration_ms, outcome) values
+		($1, 'two-days', 't', now() - interval '2 days', 1, 'ok'), ($1, 'half-day', 't', now() - interval '12 hours', 1, 'ok')`, user)
+	again := startReal(t, url, key, func(c *config.Config) { gatewayConfig(c); c.CallLogRetentionDays = 1 })
+	again.waitFor("gateway retention: done")
+	if n := queryInt(t, url, `select count(*)::int from gateway.calls where server = 'two-days'`); n != 0 {
+		t.Fatal("the row older than the configured day is still there")
+	}
+	if n := queryInt(t, url, `select count(*)::int from gateway.calls where server = 'half-day'`); n != 1 {
+		t.Fatal("the row inside the configured day was deleted")
+	}
+}
+
+// UPSTREAM_MAX_RESPONSE_BYTES limits what call_tool accepts.
+func TestAnUpstreamAnswerOverTheConfiguredLimitIsRefusedWithThatSize(t *testing.T) {
+	const limit = 65536
+	g := newGwEnvWith(t, func(c *config.Config) { gatewayConfig(c); c.UpstreamMaxResponseBytes = limit }, nil)
+	alice := g.admin("alice")
+	tok := g.token("alice", domain.RoleAdmin)
+	up := newMCPFake(t, "big")
+	g.register(alice, "bigsrv", up, map[string]any{"kind": "none"}, "", 0)
+	big := strings.Repeat("x", 3*limit/2)
+	up.setCall(func(upstreamCall) callAnswer { return okAnswer(big) })
+	got := g.callTool(tok, "bigsrv.big", `{}`)
+	if want := gwdomain.TextTooLarge("bigsrv", limit); !got.IsError || got.Text != want {
+		t.Fatalf("%q, want %q", got.Text, want)
+	}
+	if g.calls("bigsrv", "transport_error") != 1 {
+		t.Fatal("no transport_error row")
+	}
+	// Under the limit the same server answers.
+	up.setCall(func(upstreamCall) callAnswer { return okAnswer("small") })
+	if got := g.callTool(tok, "bigsrv.big", `{}`); got.IsError || got.Text != "small" {
+		t.Fatalf("%+v", got)
+	}
+}
+
+// One validator serves the process: a schema that cannot be compiled is warned about once, however
+// many calls use it (a validator per call would warn every time).
+func TestTheArgumentValidatorIsOneForTheWholeProcess(t *testing.T) {
+	g := newGwEnv(t)
+	alice := g.admin("alice")
+	tok := g.token("alice", domain.RoleAdmin)
+	up := newMCPFake(t, "odd")
+	up.schema = `{"type":"object","properties":{"a":{"$ref":"https://other.example/schema.json"}}}`
+	serve(up, "RESULT-MARKER-odd")
+	g.register(alice, "oddsrv", up, map[string]any{"kind": "none"}, "", 0)
+	for range 3 {
+		if got := g.callTool(tok, "oddsrv.odd", `{}`); got.IsError {
+			t.Fatalf("%+v", got)
+		}
+	}
+	if n := len(g.rs.logs.find(t, "gateway: tool input schema not compiled, not validating")); n != 1 {
+		t.Fatalf("%d warnings for one schema over three calls, want 1", n)
 	}
 }

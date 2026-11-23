@@ -663,6 +663,25 @@ func TestShutdownCancelsACallInFlightAndStillWritesTheRow(t *testing.T) {
 	}
 }
 
+// A base context that is already done cancels the call's context before anything runs (not a
+// few microseconds later from another goroutine).
+func TestACallStartedAfterTheBaseContextEndedIsCancelledBeforeItRuns(t *testing.T) {
+	h := newHarness()
+	base, shutdown := context.WithCancel(context.Background())
+	shutdown()
+	h.rebuild()
+	h.d.BaseContext = base
+	for range 200 {
+		_, _ = h.call(context.Background(), "gitea.create_issue", `{}`)
+		h.cat.mu.Lock()
+		err := h.cat.toolCtxErr
+		h.cat.mu.Unlock()
+		if err == nil {
+			t.Fatal("the first step of the call ran on a context that was not yet cancelled")
+		}
+	}
+}
+
 func TestStartedAtAndDurationAreMillisecondsAndNeverNegative(t *testing.T) {
 	h := newHarness()
 	h.clock = &stepClock{t: epoch.Add(123456789 * time.Nanosecond), steps: []time.Duration{-5 * time.Second}}

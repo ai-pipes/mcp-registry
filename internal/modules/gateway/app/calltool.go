@@ -83,6 +83,10 @@ func detach(req, base context.Context) (context.Context, context.CancelFunc) {
 		return ctx, cancel
 	}
 	stop := context.AfterFunc(base, cancel)
+	if base.Err() != nil {
+		// AfterFunc would cancel from its own goroutine, a moment after the call has started.
+		cancel()
+	}
 	return ctx, func() { stop(); cancel() }
 }
 

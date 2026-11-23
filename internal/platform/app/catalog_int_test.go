@@ -31,6 +31,7 @@ type mcpFake struct {
 
 	mu      sync.Mutex
 	tools   []string
+	schema  string // the inputSchema of every tool; empty means {"type":"object"}
 	suffix  string // appended to every description: a change the sync must notice
 	down    bool
 	reject  bool // answer every request 401
@@ -118,7 +119,10 @@ func (f *mcpFake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_ = json.Unmarshal(body, &in)
 	f.mu.Lock()
 	down, hold, tools, suffix, reject := f.down, f.hold, slices.Clone(f.tools), f.suffix, f.reject
-	callFn := f.call
+	callFn, schema := f.call, f.schema
+	if schema == "" {
+		schema = `{"type":"object"}`
+	}
 	if in.Method == "tools/call" {
 		f.calls = append(f.calls, upstreamCall{Auth: r.Header.Get("Authorization"), Name: in.Params.Name, Args: string(in.Params.Arguments)})
 	}
@@ -156,7 +160,7 @@ func (f *mcpFake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		parts := make([]string, len(tools))
 		for i, n := range tools {
-			parts[i] = fmt.Sprintf(`{"name":%q,"description":"the %s tool%s","inputSchema":{"type":"object"}}`, n, n, suffix)
+			parts[i] = fmt.Sprintf(`{"name":%q,"description":"the %s tool%s","inputSchema":%s}`, n, n, suffix, schema)
 		}
 		reply(`{"tools":[` + strings.Join(parts, ",") + `]}`)
 	case "tools/call":

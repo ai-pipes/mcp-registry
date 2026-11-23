@@ -26,11 +26,13 @@ type fakeCatalog struct {
 	serverErr   error
 	secretErr   error
 	onServerFor func()
+	toolCtxErr  error // ctx.Err() as ToolFor saw it on its last call
 }
 
-func (c *fakeCatalog) ToolFor(_ context.Context, _ app.Principal, ref string) (catalog.ToolView, bool, error) {
+func (c *fakeCatalog) ToolFor(ctx context.Context, _ app.Principal, ref string) (catalog.ToolView, bool, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.toolCtxErr = ctx.Err()
 	if c.toolErr != nil {
 		return catalog.ToolView{}, false, c.toolErr
 	}
