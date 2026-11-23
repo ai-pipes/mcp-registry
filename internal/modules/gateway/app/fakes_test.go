@@ -226,9 +226,24 @@ func (u *fakeUpstream) CallTool(ctx context.Context, target kernel.UpstreamTarge
 	return step.result, step.err
 }
 
-type equalSecrets struct{}
+// equalSecrets compares plainly and counts its calls.
+type equalSecrets struct {
+	mu    sync.Mutex
+	calls int
+}
 
-func (equalSecrets) Equal(a, b string) bool { return a == b }
+func (e *equalSecrets) Equal(a, b string) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.calls++
+	return a == b
+}
+
+func (e *equalSecrets) count() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.calls
+}
 
 type logRecord struct {
 	msg  string
@@ -281,6 +296,7 @@ type harness struct {
 	quota *fakeQuota
 	up    *fakeUpstream
 	lg    *fakeLogger
+	sec   *equalSecrets
 	clock kernel.Clock
 	d     app.Deps
 	alice app.Principal
@@ -297,6 +313,7 @@ func newHarness() *harness {
 		quota: &fakeQuota{},
 		up:    &fakeUpstream{},
 		lg:    &fakeLogger{},
+		sec:   &equalSecrets{},
 		clock: kernel.FixedClock{T: epoch},
 		alice: identity.Principal{UserID: "u-alice", Role: identity.RoleMember, Via: identity.ViaToken, TokenID: "t-1"},
 	}
@@ -309,7 +326,7 @@ func newHarness() *harness {
 func (h *harness) rebuild() {
 	h.d = app.Deps{
 		Catalog: h.cat, Credentials: h.creds, Validator: h.val, CallLog: h.log, Quota: h.quota,
-		Upstream: h.up, Clock: h.clock, Logger: h.lg, Secrets: equalSecrets{},
+		Upstream: h.up, Clock: h.clock, Logger: h.lg, Secrets: h.sec,
 		PublicURL: "https://mcp.example.com/", MaxResponseBytes: 20 << 20,
 	}
 }

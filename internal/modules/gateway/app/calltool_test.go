@@ -3,6 +3,7 @@ package app_test
 import (
 	"context"
 	"errors"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -80,8 +81,8 @@ func TestNoArgumentsMeansAnEmptyObjectForTheValidator(t *testing.T) {
 	if _, err := h.call(context.Background(), "gitea.create_issue", ""); err != nil {
 		t.Fatal(err)
 	}
-	if h.val.seen[0] != "{}" {
-		t.Fatalf("validator saw %q", h.val.seen[0])
+	if h.val.seen[0] != "{}" || h.up.calls[0].args != "{}" {
+		t.Fatalf("validator saw %q, upstream %q", h.val.seen[0], h.up.calls[0].args)
 	}
 }
 
@@ -419,8 +420,15 @@ func TestA401OnOAuthRefreshesOnceAndRetriesWithTheNewSecret(t *testing.T) {
 	if h.up.calls[0].target.Headers["Authorization"] != "Bearer old" || h.up.calls[1].target.Headers["Authorization"] != "Bearer new" {
 		t.Fatalf("headers %v %v", h.up.calls[0].target.Headers["Authorization"], h.up.calls[1].target.Headers["Authorization"])
 	}
-	if len(h.creds.calls) != 2 || h.creds.calls[0].force || !h.creds.calls[1].force || h.creds.calls[1].target.Slug != "gitea" {
+	// Both resolves carry the whole target the gateway read, not just its slug.
+	if len(h.creds.calls) != 2 || h.creds.calls[0].force || !h.creds.calls[1].force {
 		t.Fatalf("resolves %+v", h.creds.calls)
+	}
+	if want := *h.cat.servers["gitea"]; !reflect.DeepEqual(h.creds.calls[0].target, want) || !reflect.DeepEqual(h.creds.calls[1].target, want) {
+		t.Fatalf("targets %+v / %+v, want %+v", h.creds.calls[0].target, h.creds.calls[1].target, want)
+	}
+	if h.sec.count() != 1 {
+		t.Fatalf("the secrets comparer was consulted %d times, want once on the forced path", h.sec.count())
 	}
 	if len(h.quota.requests) != 1 || len(h.creds.expired) != 0 {
 		t.Fatal("the retry spends no second unit and expires nothing")
@@ -641,8 +649,13 @@ func TestShutdownCancelsACallInFlightAndStillWritesTheRow(t *testing.T) {
 	}()
 	<-started
 	shutdown()
-	if err := <-done; err == nil {
-		t.Fatal("want the cancellation as an error (Internal error. at the edge)")
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("want the cancellation as an error (Internal error. at the edge)")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the call in flight was not cancelled by BaseContext")
 	}
 	h.wantOneRow(t, domain.OutcomeTransportError)
 	if h.log.ctxErr != nil {

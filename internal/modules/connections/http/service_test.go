@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -102,6 +103,29 @@ func TestServiceResolveCredential(t *testing.T) {
 	got, err = svc.ResolveWithoutSending(ctx, connections.ResolveQuery{UserID: "alice", Server: "tracker"})
 	if err != nil || got.Failure != connections.FailureExpired {
 		t.Fatalf("changed configuration: %v %v", got, err)
+	}
+}
+
+// The method the gateway uses: the secret goes only to the configuration the caller read. A stale
+// target gets `unavailable` and nothing is handed out, stored or expired.
+func TestServiceResolveForSendingIsPinnedToTheTarget(t *testing.T) {
+	e := newEnv(t)
+	e.seedPAT("alice", "tracker", "pat-1")
+	svc := e.service(t)
+	current := catalog.ServerCallTarget{Slug: "tracker", Name: "Tracker", URL: "https://tracker.example.com/mcp", Auth: catalog.AuthMode{Kind: catalog.AuthPATUser}}
+	got, err := svc.ResolveForSending(ctx, "alice", current, false)
+	if err != nil || !got.Ok() || got.Secret != "pat-1" {
+		t.Fatalf("current target: %v %v", got, err)
+	}
+	before := e.store.rows["alice\x00tracker"]
+	stale := current
+	stale.URL = "https://elsewhere.example.com/mcp"
+	got, err = svc.ResolveForSending(ctx, "alice", stale, false)
+	if err != nil || got != (connections.CredentialResult{Failure: connections.FailureUnavailable}) {
+		t.Fatalf("stale target: %v %v", got, err)
+	}
+	if !reflect.DeepEqual(before, e.store.rows["alice\x00tracker"]) {
+		t.Fatal("the stored connection changed")
 	}
 }
 
