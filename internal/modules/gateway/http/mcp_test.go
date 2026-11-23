@@ -152,7 +152,7 @@ func TestJSONRPCErrorsCarryTheDocumentedCodes(t *testing.T) {
 		{"invalid JSON", "{", -32700, 400, "Parse error: Invalid JSON"},
 		{"empty body", "", -32700, 400, "Parse error: Invalid JSON"},
 		{"not a JSON-RPC message", `{"hello":1}`, -32600, 400, "Bad Request: the request body is not a valid JSON-RPC message"},
-		{"an empty batch", `[]`, -32600, 400, "Bad Request: the request body is not a valid JSON-RPC message"},
+		{"an empty batch", `[]`, -32600, 400, "Bad Request: empty JSON-RPC batch"},
 		{"tools/call without a name", rpcBody(2, "tools/call", map[string]any{"arguments": map[string]any{}}), -32602, 200, ""},
 		{"tools/call with arguments that are not an object", rpcBody(2, "tools/call", map[string]any{"name": "list_servers", "arguments": []int{1}}), -32602, 200, ""},
 	} {
@@ -570,8 +570,9 @@ func TestTheSDKClientSeesTheSameSurfaceAsTheWire(t *testing.T) {
 func TestTheModernEnvelopeIsCheckedAgainstTheHeaders(t *testing.T) {
 	e := newEnv(t)
 	envelope := map[string]any{"_meta": map[string]any{
-		"io.modelcontextprotocol/protocolVersion": "2026-07-28",
-		"io.modelcontextprotocol/clientInfo":      map[string]any{"name": "x", "version": "1"},
+		"io.modelcontextprotocol/protocolVersion":    "2026-07-28",
+		"io.modelcontextprotocol/clientInfo":         map[string]any{"name": "x", "version": "1"},
+		"io.modelcontextprotocol/clientCapabilities": map[string]any{},
 	}}
 	withName := func(name string) map[string]any {
 		p := map[string]any{"name": name, "arguments": map[string]any{}}
@@ -589,16 +590,16 @@ func TestTheModernEnvelopeIsCheckedAgainstTheHeaders(t *testing.T) {
 		code   int
 	}{
 		{"discover", rpcBody(1, "server/discover", envelope), append(slices.Clone(modern), "Mcp-Method: server/discover"), 200, 0},
-		{"list", rpcBody(1, "tools/list", envelope), modern, 200, 0},
+		{"list", rpcBody(1, "tools/list", envelope), append(slices.Clone(modern), "Mcp-Method: tools/list"), 200, 0},
 		{"call", rpcBody(1, "tools/call", withName("list_servers")), append(slices.Clone(modern), "Mcp-Method: tools/call", "Mcp-Name: list_servers"), 200, 0},
-		{"no header: the envelope decides", rpcBody(1, "tools/list", envelope), nil, 200, 0},
+		{"no headers: the standard headers are required", rpcBody(1, "tools/list", envelope), nil, 400, -32020},
 		{"method mismatch", rpcBody(1, "tools/list", envelope), append(slices.Clone(modern), "Mcp-Method: tools/call"), 400, -32020},
-		{"name mismatch", rpcBody(1, "tools/call", withName("list_servers")), append(slices.Clone(modern), "Mcp-Name: call_tool"), 400, -32020},
-		{"version mismatch", rpcBody(1, "tools/list", envelope), []string{"MCP-Protocol-Version: 2025-11-25"}, 400, -32020},
-		{"an unsupported modern revision", rpcBody(1, "tools/list", map[string]any{"_meta": map[string]any{"io.modelcontextprotocol/protocolVersion": "2099-01-01"}}), nil, 400, -32022},
+		{"name mismatch", rpcBody(1, "tools/call", withName("list_servers")), append(slices.Clone(modern), "Mcp-Method: tools/call", "Mcp-Name: call_tool"), 400, -32020},
+		{"version mismatch", rpcBody(1, "tools/list", envelope), []string{"MCP-Protocol-Version: 2025-11-25", "Mcp-Method: tools/list"}, 400, -32020},
+		{"an unsupported modern revision", rpcBody(1, "tools/list", map[string]any{"_meta": map[string]any{"io.modelcontextprotocol/protocolVersion": "2099-01-01", "io.modelcontextprotocol/clientCapabilities": map[string]any{}}}), nil, 400, -32022},
 		{"an envelope claim that is not a string", rpcBody(1, "tools/list", map[string]any{"_meta": map[string]any{"io.modelcontextprotocol/protocolVersion": 5}}), nil, 400, -32602},
-		{"ping is not a method of the revision", rpcBody(1, "ping", envelope), modern, 200, -32601},
-		{"initialize is not a method of the revision", rpcBody(1, "initialize", envelope), modern, 200, -32601},
+		{"ping is not a method of the revision", rpcBody(1, "ping", envelope), append(slices.Clone(modern), "Mcp-Method: ping"), 200, -32601},
+		{"initialize is not a method of the revision", rpcBody(1, "initialize", envelope), append(slices.Clone(modern), "Mcp-Method: initialize"), 200, -32601},
 		{"a batch with an envelope", "[" + rpcBody(1, "tools/list", envelope) + "]", nil, 400, -32600},
 	} {
 		r := e.post(t, aliceToken, c.body, c.hdr...)

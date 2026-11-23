@@ -60,10 +60,18 @@ const (
 	msgUnsupportedMedia = "Unsupported Media Type: Content-Type must be application/json"
 	msgParseError       = "Parse error: Invalid JSON"
 	msgNotJSONRPC       = "Bad Request: the request body is not a valid JSON-RPC message"
-	msgNoModernBatch    = "Bad Request: JSON-RPC batches are not supported by this endpoint"
+	msgEmptyBatch       = "Bad Request: empty JSON-RPC batch"
+	msgInvalidInBatch   = "Bad Request: JSON-RPC batch contains an invalid message"
+	msgModernInBatch    = "Bad Request: JSON-RPC batches may not contain requests for protocol revision 2026-07-28 or later"
+	msgOneInitialize    = "Invalid Request: Only one initialization request is allowed"
 	msgMethodNotFound   = "Method not found"
 	msgInvalidParams    = "Invalid params"
 )
+
+// maxBatch is the reference's MAX_BATCH_SIZE: a JSON-RPC array of more messages is refused.
+const maxBatch = 100
+
+var msgBatchTooLarge = "Invalid Request: Batch must not exceed " + strconv.Itoa(maxBatch) + " messages"
 
 // endpoint serves the JSON-RPC of /mcp for the principal the bearer guard stored.
 type endpoint struct {
@@ -81,58 +89,14 @@ type rpcErr struct {
 	Data    any    `json:"data,omitempty"`
 }
 
-// message is one decoded JSON-RPC message. ID is nil when absent and "null" when null.
-type message struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      json.RawMessage `json:"id"`
-	Method  *string         `json:"method"`
-	Params  json.RawMessage `json:"params"`
-	Result  json.RawMessage `json:"result"`
-	Error   json.RawMessage `json:"error"`
-}
-
-func (m message) isRequest() bool {
-	return m.JSONRPC == "2.0" && m.Method != nil && validID(m.ID)
-}
-
-func (m message) isNotification() bool { return m.JSONRPC == "2.0" && m.Method != nil && m.ID == nil }
-
-func (m message) isResponse() bool {
-	return m.JSONRPC == "2.0" && m.Method == nil && validID(m.ID) && (m.Result != nil || m.Error != nil)
-}
-
-// wellFormed reports a request, a notification or a response.
-func (m message) wellFormed() bool { return m.isRequest() || m.isNotification() || m.isResponse() }
-
-func validID(id json.RawMessage) bool {
-	id = bytes.TrimSpace(id)
-	return len(id) > 0 && (id[0] == '"' || id[0] == '-' || (id[0] >= '0' && id[0] <= '9'))
-}
-
-// claim is the protocol version a request's params._meta claims: present reports the key, ok that
-// it is a string.
-func (m message) claim() (version string, present, ok bool) {
-	var p struct {
-		Meta map[string]json.RawMessage `json:"_meta"`
-	}
-	if json.Unmarshal(m.Params, &p) != nil || p.Meta == nil {
-		return "", false, false
-	}
-	raw, present := p.Meta[claimKey]
-	if !present {
-		return "", false, false
-	}
-	return version, true, json.Unmarshal(raw, &version) == nil && !bytes.Equal(bytes.TrimSpace(raw), []byte("null"))
-}
-
+// ServeHTTP decides in the reference's order (createMcpHandler's handle, then the classifier,
+// then serveModern or the legacy transport's handlePostRequest): the HTTP method, Content-Type,
+// the body (its size, then JSON), the classification of the JSON-RPC message(s), then the checks
+// of the era.
 func (h *endpoint) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", "POST")
 		writeTransportError(w, http.StatusMethodNotAllowed, codeServerError, msgMethodNotAllowed)
-		return
-	}
-	if accept := strings.Join(r.Header.Values("Accept"), ","); !strings.Contains(accept, "application/json") || !strings.Contains(accept, "text/event-stream") {
-		writeTransportError(w, http.StatusNotAcceptable, codeServerError, msgNotAcceptable)
 		return
 	}
 	if mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err != nil || mt != "application/json" {
@@ -155,25 +119,22 @@ func (h *endpoint) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteError(w, "limit_exceeded", "request body is too large")
 			return
 		}
-		writeTransportError(w, http.StatusBadRequest, codeParseError, msgParseError)
-		return
-	}
-	raw = bytes.TrimSpace(raw)
-	if len(raw) == 0 || !json.Valid(raw) {
-		writeTransportError(w, http.StatusBadRequest, codeParseError, msgParseError)
-		return
+		raw = nil // an unreadable body is answered like an invalid one
 	}
 	x := &exchange{h: h, w: w, r: r, p: p, headerVersion: strings.TrimSpace(r.Header.Get("MCP-Protocol-Version"))}
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || !json.Valid(raw) {
+		// No JSON body: the legacy transport answers, Accept first.
+		if x.acceptable() {
+			writeTransportError(w, http.StatusBadRequest, codeParseError, msgParseError)
+		}
+		return
+	}
 	if raw[0] == '[' {
 		x.batch(raw)
 		return
 	}
-	var m message
-	if json.Unmarshal(raw, &m) != nil {
-		writeTransportError(w, http.StatusBadRequest, codeInvalidRequest, msgNotJSONRPC)
-		return
-	}
-	x.single(m)
+	x.single(parseMessage(raw))
 }
 
 // exchange is one HTTP request of /mcp.
@@ -185,144 +146,308 @@ type exchange struct {
 	headerVersion string
 }
 
-// reject answers a request the classification refuses: the status, a JSON-RPC error with the
-// request's id (null when there is none).
+// reject answers with the status and a JSON-RPC error carrying id ("null" when nil).
 func (x *exchange) reject(status int, id json.RawMessage, e rpcErr) {
 	writeJSON(x.w, status, errorBody(id, e))
 }
 
+// acceptable is the legacy transport's Accept check: both types must be named; otherwise the 406
+// is written and false returned.
+func (x *exchange) acceptable() bool {
+	accept := strings.Join(x.r.Header.Values("Accept"), ",")
+	if strings.Contains(accept, "application/json") && strings.Contains(accept, "text/event-stream") {
+		return true
+	}
+	writeTransportError(x.w, http.StatusNotAcceptable, codeServerError, msgNotAcceptable)
+	return false
+}
+
+// header is a request header with surrounding blanks removed; present is false when it is absent
+// or empty.
+func (x *exchange) header(name string) (value string, present bool) {
+	v := strings.TrimSpace(x.r.Header.Get(name))
+	return v, v != ""
+}
+
+// headerMismatch and unsupportedRevision are error data in the reference's key order.
+type headerMismatch struct {
+	Header string `json:"header"`
+	Body   string `json:"body"`
+}
+
+type unsupportedRevision struct {
+	Supported []string `json:"supported"`
+	Requested string   `json:"requested"`
+}
+
+func mismatch(header, what string) rpcErr {
+	return rpcErr{
+		Code: codeHeaderMismatch, Message: "Bad Request: the request headers and body disagree: " + what,
+		Data: map[string]headerMismatch{"mismatch": {header, what}},
+	}
+}
+
+// single classifies one message (classifyRequestBody / classifyNotificationBody) and serves it in
+// its era.
 func (x *exchange) single(m message) {
-	switch {
-	case m.isResponse():
+	headerModern := x.headerVersion != "" && isModern(x.headerVersion)
+	switch m.kind {
+	case kindInvalid:
+		x.reject(http.StatusBadRequest, m.echo, rpcErr{Code: codeInvalidRequest, Message: msgNotJSONRPC})
+	case kindResponse:
+		x.legacy(m)
+	case kindRequest:
+		switch {
+		case m.method == "initialize" && !m.validModernClaim():
+			if headerModern {
+				x.reject(http.StatusBadRequest, m.echo, mismatch(x.headerVersion, "an initialize request (legacy handshake) was sent with a modern MCP-Protocol-Version header"))
+				return
+			}
+			x.legacy(m)
+		case m.hasClaim():
+			if issues := envelopeIssues(m.meta); len(issues) > 0 {
+				x.reject(http.StatusBadRequest, m.echo, rpcErr{
+					Code:    codeInvalidParams,
+					Message: "Invalid _meta envelope for protocol revision " + modernRevision + ": " + issues[0].Key + ": " + issues[0].Problem,
+					Data:    map[string]any{"envelope": issues[0]},
+				})
+				return
+			}
+			claimed, _ := m.claimVersion()
+			if x.headerVersion != "" && x.headerVersion != claimed {
+				x.reject(http.StatusBadRequest, m.echo, mismatch(x.headerVersion, "the body envelope names protocol version "+claimed+" but the MCP-Protocol-Version header names "+x.headerVersion))
+				return
+			}
+			if mm, ok := x.header("Mcp-Method"); ok && mm != m.method {
+				x.reject(http.StatusBadRequest, m.echo, mismatch(mm, "the body names method "+m.method+" but the Mcp-Method header names "+mm))
+				return
+			}
+			x.modern(m, claimed)
+		case headerModern:
+			missing := []string{"_meta"}
+			if m.meta != nil {
+				missing = nil
+				for _, is := range envelopeIssues(m.meta) {
+					if is.Problem == "missing" {
+						missing = append(missing, is.Key)
+					}
+				}
+				if len(missing) == 0 {
+					missing = []string{claimKey}
+				}
+			}
+			x.reject(http.StatusBadRequest, m.echo, rpcErr{
+				Code: codeInvalidParams,
+				Message: "Invalid params: the MCP-Protocol-Version header names protocol revision " + x.headerVersion +
+					", but the request is missing the required per-request envelope key(s): " + strings.Join(missing, ", "),
+				Data: map[string]any{"envelope": map[string]any{"missing": missing}},
+			})
+		default:
+			x.legacy(m)
+		}
+	case kindNotification:
+		switch {
+		case m.hasClaim():
+			claimed, ok := m.claimVersion()
+			if !ok {
+				problem := "expected a protocol version string"
+				for _, is := range envelopeIssues(m.meta) {
+					if is.Key == claimKey {
+						problem = is.Problem
+						break
+					}
+				}
+				issue := envelopeIssue{claimKey, problem}
+				x.reject(http.StatusBadRequest, nullID, rpcErr{
+					Code: codeInvalidParams, Message: "Invalid _meta envelope for protocol revision " + modernRevision + ": " + claimKey + ": " + problem,
+					Data: map[string]any{"envelope": issue},
+				})
+				return
+			}
+			if x.headerVersion != "" && x.headerVersion != claimed {
+				x.reject(http.StatusBadRequest, nullID, mismatch(x.headerVersion, "the notification envelope names protocol version "+claimed+" but the MCP-Protocol-Version header names "+x.headerVersion))
+				return
+			}
+			if mm, ok := x.header("Mcp-Method"); ok && isModern(claimed) && mm != m.method {
+				x.reject(http.StatusBadRequest, nullID, mismatch(mm, "the notification body names method "+m.method+" but the Mcp-Method header names "+mm))
+				return
+			}
+			x.modern(m, claimed)
+		case headerModern:
+			if mm, ok := x.header("Mcp-Method"); ok && mm != m.method {
+				x.reject(http.StatusBadRequest, nullID, mismatch(mm, "the notification body names method "+m.method+" but the Mcp-Method header names "+mm))
+				return
+			}
+			x.modern(m, x.headerVersion)
+		default:
+			x.legacy(m)
+		}
+	}
+}
+
+// modern is serveModern: the claimed revision must be one this server speaks, a request must carry
+// the standard headers (validateStandardRequestHeaders); a notification is accepted, a request
+// answered with the revision's fields.
+func (x *exchange) modern(m message, revision string) {
+	if revision != modernRevision {
+		requested := revision
+		if requested == "" {
+			requested = "unknown"
+		}
+		x.reject(http.StatusBadRequest, m.echo, rpcErr{
+			Code: codeUnsupportedRevn, Message: "Unsupported protocol version: " + requested,
+			Data: unsupportedRevision{[]string{modernRevision}, requested},
+		})
+		return
+	}
+	if m.kind == kindNotification {
 		x.w.WriteHeader(http.StatusAccepted)
 		return
-	case !m.wellFormed():
-		x.reject(http.StatusBadRequest, nil, rpcErr{Code: codeInvalidRequest, Message: msgNotJSONRPC})
+	}
+	if !x.standardHeaders(m, revision) {
 		return
 	}
-	method := *m.Method
-	claimed, hasClaim, claimOK := m.claim()
-	headerModern := x.headerVersion == modernRevision
-	if hasClaim {
-		if e, status := x.checkClaim(m, method, claimed, claimOK); e != nil {
-			x.reject(status, m.ID, *e)
-			return
+	x.answer(x.modernResult(m), m.id)
+}
+
+// standardHeaders refuses a modern request without MCP-Protocol-Version or Mcp-Method, or whose
+// Mcp-Name (for tools/call) is missing, undecodable or not params.name.
+func (x *exchange) standardHeaders(m message, revision string) bool {
+	if _, ok := x.header("MCP-Protocol-Version"); !ok {
+		x.reject(http.StatusBadRequest, m.echo, mismatch("(missing)", "the body envelope names protocol version "+revision+" but the required MCP-Protocol-Version header is absent"))
+		return false
+	}
+	if _, ok := x.header("Mcp-Method"); !ok {
+		x.reject(http.StatusBadRequest, m.echo, mismatch("(missing)", "the body names method "+m.method+" but the required Mcp-Method header is absent"))
+		return false
+	}
+	if m.method != "tools/call" {
+		return true
+	}
+	name, hasName := m.nameOf()
+	header, present := x.header("Mcp-Name")
+	if !present {
+		if hasName {
+			x.reject(http.StatusBadRequest, m.echo, mismatch("(missing)", `the body carries params.name="`+name+`" but the required Mcp-Name header is absent`))
+			return false
 		}
-		if m.isNotification() {
-			x.w.WriteHeader(http.StatusAccepted)
-			return
-		}
-		x.answer(x.modern(m, method), m.ID)
+		return true
+	}
+	decoded, ok := decodeMcpParam(header)
+	if !ok {
+		x.reject(http.StatusBadRequest, m.echo, mismatch(header, "the Mcp-Name header carries an invalid Base64 sentinel value"))
+		return false
+	}
+	if hasName && decoded != name {
+		x.reject(http.StatusBadRequest, m.echo, mismatch(header, `the body carries params.name="`+name+`" but the Mcp-Name header names "`+decoded+`"`))
+		return false
+	}
+	return true
+}
+
+// legacy is the legacy transport for one message: Accept, then (except for initialize) the
+// MCP-Protocol-Version header; a notification or a response is accepted, a request answered.
+func (x *exchange) legacy(m message) {
+	if !x.acceptable() {
 		return
 	}
-	if headerModern {
-		if method == "initialize" {
-			x.reject(http.StatusBadRequest, m.ID, mismatch("an initialize request (legacy handshake) was sent with a modern MCP-Protocol-Version header"))
-			return
-		}
-		if m.isNotification() {
-			x.w.WriteHeader(http.StatusAccepted)
-			return
-		}
-		x.reject(http.StatusBadRequest, m.ID, rpcErr{Code: codeInvalidParams, Message: "Invalid params: the MCP-Protocol-Version header names protocol revision " + modernRevision +
-			", but the request is missing the required per-request envelope key(s): " + claimKey})
+	if (m.kind != kindRequest || m.method != "initialize") && !x.classicHeaderOK() {
 		return
 	}
-	if m.isNotification() {
+	if m.kind != kindRequest {
 		x.w.WriteHeader(http.StatusAccepted)
 		return
 	}
-	if method != "initialize" && !x.classicHeaderOK() {
-		return
-	}
-	x.answer(x.classic(m, method), m.ID)
+	x.answer(x.classic(m), m.id)
 }
 
-// checkClaim validates the envelope claim against the headers; a non-nil error is the refusal.
-func (x *exchange) checkClaim(m message, method, claimed string, ok bool) (*rpcErr, int) {
-	switch {
-	case !ok:
-		return &rpcErr{Code: codeInvalidParams, Message: "Invalid _meta envelope for protocol revision " + modernRevision + ": " + claimKey + ": expected a protocol version string"}, http.StatusBadRequest
-	case x.headerVersion != "" && x.headerVersion != claimed:
-		e := mismatch("the body envelope names protocol version " + claimed + " but the MCP-Protocol-Version header names " + x.headerVersion)
-		return &e, http.StatusBadRequest
-	case x.headerPresent("Mcp-Method") && strings.TrimSpace(x.r.Header.Get("Mcp-Method")) != method:
-		e := mismatch("the body names method " + method + " but the Mcp-Method header names " + strings.TrimSpace(x.r.Header.Get("Mcp-Method")))
-		return &e, http.StatusBadRequest
-	case claimed != modernRevision:
-		return &rpcErr{
-			Code:    codeUnsupportedRevn,
-			Message: "Unsupported protocol version: " + claimed + " (supported versions: " + modernRevision + ")",
-			Data:    map[string]any{"supported": []string{modernRevision}, "requested": claimed},
-		}, http.StatusBadRequest
-	}
-	if method == "tools/call" && x.headerPresent("Mcp-Name") {
-		var p struct {
-			Name string `json:"name"`
-		}
-		_ = json.Unmarshal(m.Params, &p)
-		if name := strings.TrimSpace(x.r.Header.Get("Mcp-Name")); name != p.Name {
-			e := mismatch("the body names " + p.Name + " but the Mcp-Name header names " + name)
-			return &e, http.StatusBadRequest
-		}
-	}
-	return nil, 0
-}
-
-func (x *exchange) headerPresent(name string) bool {
-	_, ok := x.r.Header[http.CanonicalHeaderKey(name)]
-	return ok
-}
-
-func mismatch(what string) rpcErr {
-	return rpcErr{Code: codeHeaderMismatch, Message: "Bad Request: the request headers and body disagree: " + what}
-}
-
-// classicHeaderOK refuses a classic request whose MCP-Protocol-Version names no classic revision.
+// classicHeaderOK is the legacy transport's validateProtocolVersion: the header, when sent, must
+// name a classic revision; otherwise the 400 is written and false returned.
 func (x *exchange) classicHeaderOK() bool {
 	if x.headerVersion == "" || slices.Contains(headerRevisions, x.headerVersion) {
 		return true
 	}
-	x.reject(http.StatusBadRequest, nil, rpcErr{Code: codeServerError, Message: "Bad Request: Unsupported protocol version: " + x.headerVersion +
-		" (supported versions: " + strings.Join(headerRevisions, ", ") + ")"})
+	writeTransportError(x.w, http.StatusBadRequest, codeServerError, "Bad Request: Unsupported protocol version: "+x.headerVersion+
+		" (supported versions: "+strings.Join(headerRevisions, ", ")+")")
 	return false
 }
 
-// batch serves a JSON-RPC array of the classic era: each request answered in order, nothing for
-// notifications and posted responses.
+// batch serves a JSON-RPC array. classifyBatch judges the elements in order (a modern claim, then
+// the shape); the cap of maxBatch messages is counted while the elements are read, so a larger
+// array is refused after reading at most maxBatch+1 of them, never decoded whole. Then the legacy
+// transport: Accept, the cap, one initialize alone, the header (unless it is initialize), and the
+// requests answered in order (nothing for notifications and responses).
 func (x *exchange) batch(raw []byte) {
-	var items []json.RawMessage
-	if json.Unmarshal(raw, &items) != nil || len(items) == 0 {
-		x.reject(http.StatusBadRequest, nil, rpcErr{Code: codeInvalidRequest, Message: msgNotJSONRPC})
-		return
-	}
-	msgs := make([]message, len(items))
-	hasInitialize := false
-	for i, it := range items {
-		if json.Unmarshal(it, &msgs[i]) != nil || !msgs[i].wellFormed() {
-			x.reject(http.StatusBadRequest, nil, rpcErr{Code: codeInvalidRequest, Message: msgNotJSONRPC})
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	_, _ = dec.Token() // the '[' of valid JSON
+	msgs := make([]message, 0, 8)
+	overCap := false
+	for dec.More() {
+		if len(msgs) == maxBatch {
+			overCap = true
+			break
+		}
+		var el json.RawMessage
+		if dec.Decode(&el) != nil {
+			x.reject(http.StatusBadRequest, nil, rpcErr{Code: codeInvalidRequest, Message: msgInvalidInBatch})
 			return
 		}
-		if _, hasClaim, _ := msgs[i].claim(); hasClaim || x.headerVersion == modernRevision {
-			x.reject(http.StatusBadRequest, nil, rpcErr{Code: codeInvalidRequest, Message: msgNoModernBatch})
+		m := parseMessage(el)
+		if m.hasClaim() {
+			x.reject(http.StatusBadRequest, nil, rpcErr{Code: codeInvalidRequest, Message: msgModernInBatch})
 			return
 		}
-		hasInitialize = hasInitialize || (msgs[i].Method != nil && *msgs[i].Method == "initialize")
+		if m.kind == kindInvalid {
+			x.reject(http.StatusBadRequest, nil, rpcErr{Code: codeInvalidRequest, Message: msgInvalidInBatch})
+			return
+		}
+		msgs = append(msgs, m)
 	}
-	if !hasInitialize && !x.classicHeaderOK() {
+	if len(msgs) == 0 {
+		x.reject(http.StatusBadRequest, nil, rpcErr{Code: codeInvalidRequest, Message: msgEmptyBatch})
 		return
 	}
-	var answers [][]byte
+	if !x.acceptable() {
+		return
+	}
+	if overCap {
+		writeTransportError(x.w, http.StatusBadRequest, codeInvalidRequest, msgBatchTooLarge)
+		return
+	}
+	initialize, requests := false, 0
 	for _, m := range msgs {
-		if m.isRequest() {
-			answers = append(answers, answerBody(x.classic(m, *m.Method), m.ID))
+		initialize = initialize || (m.kind == kindRequest && m.method == "initialize")
+		if m.kind == kindRequest {
+			requests++
 		}
 	}
-	if len(answers) == 0 {
+	if initialize && len(msgs) > 1 {
+		writeTransportError(x.w, http.StatusBadRequest, codeInvalidRequest, msgOneInitialize)
+		return
+	}
+	if !initialize && !x.classicHeaderOK() {
+		return
+	}
+	if requests == 0 {
 		x.w.WriteHeader(http.StatusAccepted)
 		return
 	}
-	writeJSON(x.w, http.StatusOK, append(append([]byte("["), bytes.Join(answers, []byte(","))...), ']'))
+	// The answers are written once, into the one buffer that becomes the body.
+	var b bytes.Buffer
+	b.WriteByte('[')
+	first := true
+	for _, m := range msgs {
+		if m.kind != kindRequest {
+			continue
+		}
+		if !first {
+			b.WriteByte(',')
+		}
+		first = false
+		writeAnswer(&b, x.classic(m), m.id)
+	}
+	b.WriteByte(']')
+	writeJSON(x.w, http.StatusOK, b.Bytes())
 }
 
 // outcome is the result object (raw JSON) or the error of one request.
@@ -332,27 +457,29 @@ type outcome struct {
 }
 
 func (x *exchange) answer(o outcome, id json.RawMessage) {
-	writeJSON(x.w, http.StatusOK, answerBody(o, id))
+	var b bytes.Buffer
+	writeAnswer(&b, o, id)
+	writeJSON(x.w, http.StatusOK, b.Bytes())
 }
 
-func answerBody(o outcome, id json.RawMessage) []byte {
+// writeAnswer writes the response to a request: its result or its error, with its id.
+func writeAnswer(b *bytes.Buffer, o outcome, id json.RawMessage) {
 	if o.err != nil {
-		return errorBody(id, *o.err)
+		b.Write(errorBody(id, *o.err))
+		return
 	}
-	var b bytes.Buffer
 	b.WriteString(`{"jsonrpc":"2.0","id":`)
-	b.Write(bytes.TrimSpace(id))
+	b.Write(id)
 	b.WriteString(`,"result":`)
 	b.Write(o.result)
 	b.WriteByte('}')
-	return b.Bytes()
 }
 
 func errorBody(id json.RawMessage, e rpcErr) []byte {
 	errJSON, _ := marshalJS(e) // ints, strings and string slices always encode
 	idJSON := []byte("null")
-	if validID(id) {
-		idJSON = bytes.TrimSpace(id)
+	if len(id) > 0 {
+		idJSON = id
 	}
 	var b bytes.Buffer
 	b.WriteString(`{"jsonrpc":"2.0","error":`)
@@ -364,13 +491,13 @@ func errorBody(id json.RawMessage, e rpcErr) []byte {
 }
 
 // classic dispatches a request of the 2025 revisions.
-func (x *exchange) classic(m message, method string) outcome {
-	switch method {
+func (x *exchange) classic(m message) outcome {
+	switch m.method {
 	case "initialize":
 		var p struct {
 			ProtocolVersion any `json:"protocolVersion"`
 		}
-		_ = json.Unmarshal(m.Params, &p)
+		_ = json.Unmarshal(m.params, &p)
 		version := latestClassic
 		if v, ok := p.ProtocolVersion.(string); ok && slices.Contains(classicRevisions, v) {
 			version = v
@@ -386,9 +513,10 @@ func (x *exchange) classic(m message, method string) outcome {
 	return outcome{err: &rpcErr{Code: codeMethodNotFound, Message: msgMethodNotFound}}
 }
 
-// modern dispatches a request of the 2026-07-28 revision; every result carries resultType and the
+// modernResult dispatches a request of the 2026-07-28 revision; every result carries resultType and the
 // server info in _meta.
-func (x *exchange) modern(m message, method string) outcome {
+func (x *exchange) modernResult(m message) outcome {
+	method := m.method
 	var o outcome
 	switch method {
 	case "server/discover":

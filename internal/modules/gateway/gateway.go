@@ -3,6 +3,11 @@
 // log for administrators and the retention of the gateway's history. The MCP layer and the REST
 // route of the call log (the http subpackage) and the composition use the module only through
 // this package.
+//
+// This package's tests live in gateway/http (service_test.go): its ports name the catalog's,
+// connections' and identity's types, and the architecture rule for the root package
+// (.go-arch-lint.yml, which also checks test files) forbids the root and its tests to import
+// other modules.
 package gateway
 
 import (

@@ -55,7 +55,7 @@ func (x *exchange) toolsCall(m message) outcome {
 		Name      *string         `json:"name"`
 		Arguments json.RawMessage `json:"arguments"`
 	}
-	if json.Unmarshal(m.Params, &p) != nil || p.Name == nil {
+	if json.Unmarshal(m.params, &p) != nil || p.Name == nil {
 		return outcome{err: &rpcErr{Code: codeInvalidParams, Message: msgInvalidParams}}
 	}
 	var args map[string]json.RawMessage
