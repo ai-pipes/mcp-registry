@@ -193,17 +193,14 @@ type lockEnv struct {
 func renewUnderLock(ctx context.Context, d Deps, in renewal) (CredentialResult, error) {
 	var secret ClientSecret
 	if in.cfg.OAuth != nil {
+		// One read of the server judges both the secret and whether it still goes where this
+		// configuration sends it: a server moved since is unavailable, nothing is stored or sent.
+		var moved bool
 		var err error
-		if secret, err = d.Servers.ClientSecret(ctx, in.cfg.Slug); err != nil {
+		if secret, moved, err = d.Servers.ClientSecretFor(ctx, in.cfg); err != nil {
 			return CredentialResult{}, fmt.Errorf("connections: read the OAuth client secret of %q: %w", in.cfg.Slug, err)
 		}
-		// The secret was read after the configuration: if the server changed in between, the new
-		// secret must not go with the old configuration's token URL. Nothing is stored or sent.
-		again, err := d.Servers.Config(ctx, in.cfg.Slug)
-		if err != nil {
-			return CredentialResult{}, err
-		}
-		if again == nil || fingerprint(*again) != in.config {
+		if moved {
 			return failed(FailureUnavailable), nil
 		}
 	}

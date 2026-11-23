@@ -94,14 +94,14 @@ func TestResolveRefreshesAheadAndStoresSealed(t *testing.T) {
 func TestResolveSequenceConfigBeforeLockProviderInsideAuditAfter(t *testing.T) {
 	h := newHarness(t)
 
-	// success: config read, then the secret, the config read again (it must not have moved), then the lock with the provider call and the write
+	// success: config read, then the secret (one read judges it and its destination), then the lock with the provider call and the write
 	h.seedOAuth(tp(at(-1000)), "R1", "alice")
 	h.j.reset()
 	h.oauth.next = app.TokenSet{AccessToken: "A2", RefreshToken: "R2", ExpiresAt: tp(at(3_600_000))}
 	if r, err := h.resolve("alice", "gitea"); err != nil || r.Failure != "" {
 		t.Fatal(r.Failure, err)
 	}
-	want := []string{"store.get", "servers.config", "servers.client_secret", "servers.config", "lock.begin", "oauth.refresh", "lock.write", "lock.end"}
+	want := []string{"store.get", "servers.config", "servers.client_secret", "lock.begin", "oauth.refresh", "lock.write", "lock.end"}
 	if got := h.j.all(); !slices.Equal(got, want) {
 		t.Fatalf("success sequence:\n got %v\nwant %v", got, want)
 	}
@@ -115,7 +115,7 @@ func TestResolveSequenceConfigBeforeLockProviderInsideAuditAfter(t *testing.T) {
 	if r, err := h.resolve("alice", "gitea"); err != nil || r.Failure != app.FailureExpired {
 		t.Fatal(r.Failure, err)
 	}
-	want = []string{"store.get", "servers.config", "servers.client_secret", "servers.config", "lock.begin", "oauth.refresh", "lock.write", "lock.end", "audit:connection.expired"}
+	want = []string{"store.get", "servers.config", "servers.client_secret", "lock.begin", "oauth.refresh", "lock.write", "lock.end", "audit:connection.expired"}
 	if got := h.j.all(); !slices.Equal(got, want) {
 		t.Fatalf("rejected sequence:\n got %v\nwant %v", got, want)
 	}
@@ -130,7 +130,7 @@ func TestResolveSequenceConfigBeforeLockProviderInsideAuditAfter(t *testing.T) {
 	if r, err := h.resolve("alice", "gitea"); err != nil || r.Failure != app.FailureExpired {
 		t.Fatal(r.Failure, err)
 	}
-	want = []string{"store.get", "servers.config", "servers.client_secret", "servers.config", "lock.begin", "lock.write", "lock.end", "audit:connection.expired"}
+	want = []string{"store.get", "servers.config", "servers.client_secret", "lock.begin", "lock.write", "lock.end", "audit:connection.expired"}
 	if got := h.j.all(); !slices.Equal(got, want) {
 		t.Fatalf("config-changed sequence:\n got %v\nwant %v", got, want)
 	}

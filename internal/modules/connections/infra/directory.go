@@ -12,7 +12,7 @@ import (
 type CatalogAPI interface {
 	ListServersFor(ctx context.Context, p catalog.Principal) ([]catalog.MemberServerView, error)
 	GetServerForUpstream(ctx context.Context, slug string) (*catalog.ServerCallTarget, error)
-	GetServerSecret(ctx context.Context, slug string) (secret string, ok bool, err error)
+	GetServerSecretFor(ctx context.Context, target catalog.ServerCallTarget) (string, catalog.SecretLookup, error)
 }
 
 // serverDirectory is app.ServerDirectory over the catalog's public queries only
@@ -64,18 +64,25 @@ func (d *serverDirectory) PersonalServersFor(ctx context.Context, p app.Principa
 	return out, nil
 }
 
-// ClientSecret is the server's OAuth client secret, opened by the catalog (any server status); the
-// zero value when none is set. An error carries a fixed text: the catalog's own error is dropped.
-func (d *serverDirectory) ClientSecret(ctx context.Context, slug string) (app.ClientSecret, error) {
-	secret, ok, err := d.catalog.GetServerSecret(ctx, slug)
+// ClientSecretFor is the server's OAuth client secret for the configuration the caller read, from
+// ONE read of the server by the catalog (any server status): moved when the secret no longer goes
+// where cfg sends it, the zero value when none is set. An error carries a fixed text: the catalog's
+// own error is dropped.
+func (d *serverDirectory) ClientSecretFor(ctx context.Context, cfg app.ServerConfig) (app.ClientSecret, bool, error) {
+	target := catalog.ServerCallTarget{Slug: cfg.Slug, URL: cfg.URL, Auth: catalog.AuthMode{Kind: cfg.AuthKind, OAuth: cfg.OAuth}}
+	secret, lookup, err := d.catalog.GetServerSecretFor(ctx, target)
 	if err != nil {
 		if ctx.Err() != nil {
-			return app.ClientSecret{}, ctx.Err()
+			return app.ClientSecret{}, false, ctx.Err()
 		}
-		return app.ClientSecret{}, errSecretUnreadable
+		return app.ClientSecret{}, false, errSecretUnreadable
 	}
-	if !ok {
-		return app.ClientSecret{}, nil
+	switch lookup {
+	case catalog.SecretFound:
+		return app.NewClientSecret(secret), false, nil
+	case catalog.SecretNotSet:
+		return app.ClientSecret{}, false, nil
+	default:
+		return app.ClientSecret{}, true, nil
 	}
-	return app.NewClientSecret(secret), nil
 }

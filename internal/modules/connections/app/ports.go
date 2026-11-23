@@ -179,16 +179,21 @@ type PersonalServer struct {
 }
 
 // ServerDirectory is read access to the catalog, implemented over its root package
-// (catalog.Service.ListServersFor, GetServerForUpstream, GetServerSecret).
+// (catalog.Service.ListServersFor, GetServerForUpstream, GetServerSecretFor).
 type ServerDirectory interface {
 	// PersonalServersFor is the active oauth_user and pat_user servers the person may use,
 	// ordered by slug (an admin may use any active one).
 	PersonalServersFor(ctx context.Context, p Principal) ([]PersonalServer, error)
 	// Config is the configuration of an active server; nil when unknown or disabled.
 	Config(ctx context.Context, slug string) (*ServerConfig, error)
-	// ClientSecret is the server's OAuth client secret, opened; the zero value when unset (any
-	// server status). An error means no key opens it. It never leaves the module.
-	ClientSecret(ctx context.Context, slug string) (ClientSecret, error)
+	// ClientSecretFor is the server's OAuth client secret, opened, for a caller that holds cfg read
+	// earlier: ONE read of the server judges both whether the secret still goes where cfg sends
+	// it and what it is, so a server that was changed and changed back can never hand over a
+	// secret that belongs to another destination. moved is true when the server is gone or no
+	// longer sends its secret where cfg would (another auth kind, token URL, revoke URL or client
+	// ID); nothing is opened then. The zero secret and moved false mean none is set (any server
+	// status). An error means no key opens it. It never leaves the module.
+	ClientSecretFor(ctx context.Context, cfg ServerConfig) (secret ClientSecret, moved bool, err error)
 }
 
 // ConnectionKey names a stored connection.

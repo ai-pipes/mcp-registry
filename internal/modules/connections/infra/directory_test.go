@@ -16,7 +16,9 @@ type fakeCatalog struct {
 	views    []catalog.MemberServerView
 	targets  map[string]*catalog.ServerCallTarget
 	secrets  map[string]string
+	moved    map[string]bool
 	secretEr error
+	targetOf []catalog.ServerCallTarget
 	calls    []string
 	listErr  error
 	asked    app.Principal
@@ -33,12 +35,19 @@ func (f *fakeCatalog) GetServerForUpstream(_ context.Context, slug string) (*cat
 	return f.targets[slug], nil
 }
 
-func (f *fakeCatalog) GetServerSecret(_ context.Context, slug string) (string, bool, error) {
+func (f *fakeCatalog) GetServerSecretFor(_ context.Context, t catalog.ServerCallTarget) (string, catalog.SecretLookup, error) {
+	f.targetOf = append(f.targetOf, t)
 	if f.secretEr != nil {
-		return "", false, f.secretEr
+		return "", "", f.secretEr
 	}
-	v, ok := f.secrets[slug]
-	return v, ok, nil
+	if f.moved[t.Slug] {
+		return "", catalog.SecretMoved, nil
+	}
+	v, ok := f.secrets[t.Slug]
+	if !ok {
+		return "", catalog.SecretNotSet, nil
+	}
+	return v, catalog.SecretFound, nil
 }
 
 func oauthTarget(slug string) *catalog.ServerCallTarget {
@@ -126,18 +135,27 @@ func TestPersonalServersForKeepsOrderAndDropsOthers(t *testing.T) {
 	}
 }
 
-func TestClientSecretZeroWhenUnsetAndErrorsNeverCarryIt(t *testing.T) {
-	f := &fakeCatalog{secrets: map[string]string{"gitea": "SECRETMARK"}}
+func TestClientSecretForZeroWhenUnsetMovedAndErrorsNeverCarryIt(t *testing.T) {
+	f := &fakeCatalog{secrets: map[string]string{"gitea": "SECRETMARK"}, moved: map[string]bool{"gone": true}}
 	d := NewServerDirectory(f)
-	s, err := d.ClientSecret(context.Background(), "gitea")
-	if v, ok := s.Value(); err != nil || !ok || v != "SECRETMARK" {
-		t.Fatalf("%v %v", ok, err)
+	cfg := func(slug string) app.ServerConfig { return app.ServerConfigOf(*oauthTarget(slug)) }
+	s, moved, err := d.ClientSecretFor(context.Background(), cfg("gitea"))
+	if v, ok := s.Value(); err != nil || moved || !ok || v != "SECRETMARK" {
+		t.Fatalf("%v %v %v", ok, moved, err)
 	}
-	if s, err := d.ClientSecret(context.Background(), "yt"); err != nil || s != (app.ClientSecret{}) {
-		t.Fatalf("unset must be the zero value: %v %v", s, err)
+	// the catalog is asked with the configuration the caller holds, once
+	if len(f.targetOf) != 1 || f.targetOf[0].Slug != "gitea" || f.targetOf[0].URL != "https://Up.example/mcp?x=1" ||
+		f.targetOf[0].Auth.Kind != catalog.AuthOAuthUser || f.targetOf[0].Auth.OAuth == nil || f.targetOf[0].Auth.OAuth.TokenURL != "https://idp/t" {
+		t.Fatalf("target %+v", f.targetOf)
+	}
+	if s, moved, err := d.ClientSecretFor(context.Background(), cfg("yt")); err != nil || moved || s != (app.ClientSecret{}) {
+		t.Fatalf("unset must be the zero value, not moved: %v %v %v", s, moved, err)
+	}
+	if s, moved, err := d.ClientSecretFor(context.Background(), cfg("gone")); err != nil || !moved || s != (app.ClientSecret{}) {
+		t.Fatalf("moved must carry no secret: %v %v %v", s, moved, err)
 	}
 	f.secretEr = fmt.Errorf("cannot open SECRETMARK with this key")
-	_, err = d.ClientSecret(context.Background(), "gitea")
+	_, _, err = d.ClientSecretFor(context.Background(), cfg("gitea"))
 	if err == nil {
 		t.Fatal("no error")
 	}

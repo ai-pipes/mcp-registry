@@ -115,15 +115,14 @@ func CompleteConnect(ctx context.Context, d Deps, c CompleteConnectCommand) (Con
 	if cfg.OAuth == nil {
 		return ConnectResult{}, domain.ErrNotFound(pending.Server())
 	}
-	secret, err := d.Servers.ClientSecret(ctx, pending.Server())
+	// One read of the server judges the secret and its destination: if the server was moved since
+	// the configuration was read, neither the code nor a new secret goes to the old token URL
+	// (refused like any configuration change).
+	secret, moved, err := d.Servers.ClientSecretFor(ctx, cfg)
 	if err != nil {
 		return ConnectResult{}, fmt.Errorf("connections: read the OAuth client secret of %q: %w", pending.Server(), err)
 	}
-	// The secret was read after the configuration: if the server changed in between, neither the
-	// code nor the new secret goes to the old token URL (refused like any configuration change).
-	if again, err := d.Servers.Config(ctx, pending.Server()); err != nil {
-		return ConnectResult{}, err
-	} else if again == nil || fingerprint(*again) != issuedFor {
+	if moved {
 		return ConnectResult{}, domain.ErrInvalidState()
 	}
 	tokens, err := d.OAuth.ExchangeCode(ctx, *cfg.OAuth, secret, ExchangeInput{Code: c.Code, CodeVerifier: pending.CodeVerifier(), RedirectURI: d.RedirectURI})
@@ -265,17 +264,13 @@ func Disconnect(ctx context.Context, d Deps, c DisconnectCommand) error {
 	if !removed.MayRevokeAt(cfg.OAuth.RevokeURL) {
 		return nil
 	}
-	secret, err := d.Servers.ClientSecret(ctx, c.Server)
+	// One read of the server judges the secret and its destination: a server moved since gets no
+	// revoke. The row is deleted already; nothing is sent.
+	secret, moved, err := d.Servers.ClientSecretFor(ctx, *cfg)
 	if err != nil {
 		return fmt.Errorf("connections: read the OAuth client secret of %q: %w", c.Server, err)
 	}
-	// The secret was read after the configuration: if the server changed in between, the new
-	// secret must not go to the old revoke URL. The row is deleted already; nothing is sent.
-	again, err := d.Servers.Config(ctx, c.Server)
-	if err != nil {
-		return err
-	}
-	if again == nil || again.OAuth == nil || !removed.IssuedFor(fingerprint(*again)) || !removed.MayRevokeAt(again.OAuth.RevokeURL) {
+	if moved {
 		return nil
 	}
 	sealed := removed.RefreshToken()
@@ -287,6 +282,6 @@ func Disconnect(ctx context.Context, d Deps, c DisconnectCommand) error {
 		return err
 	}
 	// The local credentials are gone already; the upstream token runs out on its own.
-	_ = d.OAuth.Revoke(ctx, *again.OAuth, secret, token)
+	_ = d.OAuth.Revoke(ctx, *cfg.OAuth, secret, token)
 	return nil
 }
