@@ -86,27 +86,24 @@ compat-image-go:
 # Milestone 2 (identity) added the scenarios that need people, sign-in, sessions and tokens but no
 # /mcp and no catalog. Milestone 3 (catalog) added the scenarios of the catalog REST and of the
 # commands create-server and sync, and TestPlatformBearerNeverOpensTheWebAPI; the three steps of
-# TestCLICreateUser that listed /api/servers run again. Left out because they cannot run at all yet:
-#   - TestConfigNetworkAndRetention, TestConfigSecretsFromFiles: their cleanup demands that the
-#     scenario's MCP ledger saw an answer (milestone 6), whatever subtests are skipped.
-#   - TestUpgradeKeepsEverything, TestGatewayAuditAPI, TestConfigModelDirMissing and every
-#     connections, gateway, MCP scenario and the operator commands rotate-secrets-key and
-#     reset-key-check (milestones 5 to 7).
+# TestCLICreateUser that listed /api/servers run again.
 # Milestone 4 (search) added the scenarios that judge the index, the stored vectors and the reindex
-# command without /mcp: TestSearchStoredVectors (the milestone's judge: every stored vector equals
-# the reference image's on the same machine), TestCLIReindexEmpty, TestConfigOpenAICompatibleEmbedder,
-# TestConfigModelDirMissing, and TestCatalogSearch with its /mcp subtests skipped (what stays: "the
-# index follows the catalog", "a change of the server is reindexed", the reindex command). Not
-# added: TestSearchReadyBeforeServing (its decided branch compares a search made at once with a
-# settled one: /mcp, milestone 6) and TestUpgradeKeepsEverything (search through /mcp, 6).
-# Milestone 5 (connections) added the connections scenarios, whose people no longer open an MCP
-# session at creation (the helper does it on first use), so their REST, SQL and fake-provider
-# subtests are judged: the connect flow, the callback refusals, the start refusals, PAT storage and
-# refusals, the personal list, the web API rules, the effect of a configuration change on the revoke
-# URL, disconnect with failing revoke endpoints and the administrator's sync (the judge of
-# resolveCredential before call_tool); the personal-auth sync step of TestCLIServers; and the
-# hand-over of connections between the images (TestPlatformStartsOnReferenceDatabase and
-# TestPlatformReverseHandOver). Their subtests that call a tool are skipped (milestone 6, below).
+# command: TestSearchStoredVectors (the milestone's judge: every stored vector equals the reference
+# image's on the same machine), TestCLIReindexEmpty, TestConfigOpenAICompatibleEmbedder,
+# TestConfigModelDirMissing, TestSearchFailedReembedding, TestSearchStaleRemoval and TestCatalogSearch.
+# Milestone 5 (connections) added the connections scenarios, the personal-auth sync step of
+# TestCLIServers and the hand-over of connections between the images (TestPlatformStartsOnReferenceDatabase
+# and TestPlatformReverseHandOver).
+# Milestone 6 (the gateway) added the scenarios that judge /mcp, call_tool and the call log:
+# TestMCPProtocolClassic, TestMCPSDKClient, TestMCPSurface, TestMCPGuards, TestMCPMetaTools,
+# TestGatewayCall, TestGatewayFaults, TestGatewayCallsAPI and TestGatewayAuditAPI; the credentials
+# through call_tool (TestConnectionsRefresh, TestConnectionsRefreshFailures, TestConnectionsSingleFlight,
+# TestConnectionsUpstreamRejectsTheToken); TestSearchReadyBeforeServing (the decided ready-before-serving
+# branch: a search made at once after a restart equals the settled one); TestConfigNetworkAndRetention
+# and TestConfigSecretsFromFiles (their cleanup demands that the scenario's MCP ledger saw an answer);
+# and TestUpgradeKeepsEverything (the Go image on both sides is a restart test; its TypeScript-to-Go leg
+# runs when COMPAT_UPGRADE_FROM names the old image). Still left out: TestCLIKeys (rotate-secrets-key
+# and reset-key-check, milestone 7).
 COMPAT_GO_TESTS := TestConfigRefused TestPlatformStartsOnReferenceDatabase TestPlatformReverseHandOver \
 	TestPlatformWithoutPeople TestPlatformMigrationsAndKeyCheck TestPlatformStaticFilesAndSPA \
 	TestIdentityOIDC TestIdentityOIDCFailedCallbackAudit TestIdentityOIDCProviderDownAtStart \
@@ -122,127 +119,24 @@ COMPAT_GO_TESTS := TestConfigRefused TestPlatformStartsOnReferenceDatabase TestP
 	TestConnectionsConnectFlow TestConnectionsConnectCallbackRefusals TestConnectionsStartRefusals \
 	TestConnectionsPAT TestConnectionsArePersonal TestConnectionsWebAPIRules TestConnectionsConfigChange \
 	TestConnectionsDisconnectIgnoresRevokeFailures TestConnectionsAdminSync \
-	TestConnectionsConfigChangeBySync
+	TestConnectionsConfigChangeBySync \
+	TestMCPProtocolClassic TestMCPSDKClient TestMCPSurface TestMCPGuards TestMCPMetaTools \
+	TestGatewayCall TestGatewayFaults TestGatewayCallsAPI TestGatewayAuditAPI \
+	TestConnectionsRefresh TestConnectionsRefreshFailures TestConnectionsSingleFlight \
+	TestConnectionsUpstreamRejectsTheToken TestSearchReadyBeforeServing \
+	TestConfigNetworkAndRetention TestConfigSecretsFromFiles TestUpgradeKeepsEverything
 
 # Subtests of the scenarios above that need a later milestone, as a go test -skip expression: one
 # entry per line below, joined with `|` (slash-separated regular expressions per level; spaces of a
 # subtest name are underscores). Parent tests are never skipped by an entry with more levels than
-# they have, and an entry with fewer levels than a subtest's name skips that subtest too, which is
-# how the names with a slash or with parentheses are matched by a prefix of their first level
-# (a subtest name containing slashes has more levels: go test reads each slash as a level
-# separator). Every entry names the milestone whose work removes it:
+# they have, and an entry with fewer levels than a subtest's name skips that subtest too. Every entry
+# names the milestone whose work removes it:
 #   milestone 7 (the operator CLI)
 #   - TestPlatformMigrationsAndKeyCheck, "the old key alone: healthy, one warning;
 #     rotate-secrets-key re-seals the check": runs the command rotate-secrets-key.
-#   milestone 6 (the /mcp route; the token check of identity is ready but not wired before)
-#   - TestPlatformStaticFilesAndSPA, "/api, /mcp and /healthz are never the shell": also asks /mcp
-#     (401 and a bearer-token error); its /api half is identity's, but the subtest is one.
-#   - TestPlatformSecurityHeaders, "mcp 401" and "foreign host on mcp": requests to /mcp.
-#   - TestIdentityOIDCProviderDownAtStart, "the server works without the provider: health, MCP
-#     with a token": a token opens /mcp.
-#   - TestIdentityNoOIDC: "an sk_ token: shape, stored only as SHA-256, listed without its value,
-#     works on /mcp", "a revoked token is refused; ...", "disabling a person ends their sessions,
-#     tokens and links at once; ...", "control: with a trusted proxy a changing X-Forwarded-For is
-#     a new client each time", "the 11th failed link attempt within a minute from one address is
-#     429 with Retry-After" (its last assertion is a bad token on /mcp; TestIdentityDefaultRateLimits
-#     covers the 11th attempt's 429, its Retry-After: 60 and that a valid code still works, but NOT
-#     the 12th attempt's Retry-After range nor the rightmost X-Forwarded-For rule, which are judged
-#     only once this subtest runs) and "the 31st failed token check within a minute from one
-#     address is 429; a valid token still works": each uses a token on /mcp.
-#   - TestIdentityDefaultRateLimits, "the 31st failed token check is 429 whatever X-Forwarded-For
-#     says; a valid token still works": failed token checks on /mcp.
-#   - TestCLICreateToken, "the token opens /mcp; a changed token does not" and "a second token for
-#     the same person is another token that works too".
-#   milestone 6 also (the catalog scenarios of milestone 3 reach it)
-#   - TestCatalogServers, "admin routes refuse members before the body is read", its subtest
-#     "GET calls" and "anonymous GET calls" (GET /api/calls, the call log; every other route is
-#     judged);
-#     "upstream calls": a tool call through /mcp.
-#   - TestPlatformBearerNeverOpensTheWebAPI, "the same token opens /mcp (control)" and "a bad token
-#     on /mcp is 401 with a challenge"; the loop over /api paths in its body runs.
-#   milestone 5 (connections) is done: the personal-auth sync step of TestCLIServers runs, and so do
-#   the connections scenarios that need only REST, SQL and the fake provider (see below).
-#   milestone 6 also (the search scenarios reach it; their SQL and CLI steps are judged)
-#   - TestCatalogSearch: every subtest that asks search_tools, describe_tool, list_servers or
-#     call_tool: "the recorded queries" (also the rankings against the reference image),
-#     "searching every usable server ...", "limit is respected", "the servers filter applies before
-#     the limit", "an unknown server and an empty filter are refused", "list_servers and
-#     describe_tool" (also connections, 5), "hiding, removing and changing a tool ...", "a disabled
-#     server leaves the index ...", "names with dots and dashes ..." and "access by groups".
-#   - TestSearchStoredVectors, "SEARCH_MIN_SIMILARITY sets the floor of vector candidates".
-#   - TestCLIServers, "reindex rebuilds the search index ...": its three nested searches ("search
-#     finds ..."); the reindex itself, the digests and the wording are judged.
-#   - TestConfigOpenAICompatibleEmbedder, "a query is embedded with the query: prefix ..." and the
-#     nested "text search over MCP ..." of "with the embedder down ..."; TestConfigModelDirMissing,
-#     its nested "text search over MCP ...".
-#   milestone 6 also (the connections scenarios call a tool or list_servers through /mcp). The helper
-#   connNewPerson opens a person's MCP session on first use, so every other step of these scenarios
-#   is judged. TestConnectionsRefresh, TestConnectionsRefreshFailures, TestConnectionsSingleFlight
-#   and TestConnectionsUpstreamRejectsTheToken are left out whole: every subtest of them is driven
-#   by call_tool (refresh, refusals, outages, concurrent calls, a 401 from the upstream). The
-#   refresh and the rest of resolveCredential are judged meanwhile by TestConnectionsAdminSync (a
-#   sync resolves the credential), the hand-over of a connection between the images and the
-#   integration tests of internal/modules/connections and internal/platform/app.
-#   - TestConnectionsConnectFlow, "the connection serves calls ..." and "a disconnected person no
-#     longer gets calls through" (the text of a call after the disconnect).
-#   - TestConnectionsPAT, "a stored token reaches the upstream ...", "a new token replaces the old
-#     one", "the upstream rejecting the token expires the connection ..." and "an unconnected person
-#     is told where to connect ..." (each ends in call_tool).
-#   - TestConnectionsArePersonal, "a person without a connection is told to connect ...", "each call
-#     carries the caller's own token", "one person's expiry, refresh and disconnect do not touch the
-#     other" and "the agent learns each person's connection state ..." (list_servers).
-#   - TestConnectionsConfigChange: the four "a changed <field> expires the connection ...", "after a
-#     changed upstream URL a reconnect works ..." and "other scopes or a changed or removed revoke
-#     URL ...": each makes a call after the change; what the change does to the status, the audit
-#     and the tokens is judged meanwhile by the integration tests of the module.
+# Milestone 6 removed every other entry: the /mcp route, call_tool and the call log are ported.
 COMPAT_GO_SKIP_ENTRIES := \
-	^TestPlatformMigrationsAndKeyCheck$$/^the_old_key_alone:_healthy,_one_warning;_rotate-secrets-key_re-seals_the_check$$ \
-	^TestPlatformStaticFilesAndSPA$$/^$$/^api,_$$/^mcp_and_$$/^healthz_are_never_the_shell$$ \
-	^TestPlatformSecurityHeaders$$/^mcp_401$$ \
-	^TestPlatformSecurityHeaders$$/^foreign_host_on_mcp$$ \
-	^TestIdentityOIDCProviderDownAtStart$$/^the_server_works_without_the_provider:_health,_MCP_with_a_token$$ \
-	^TestIdentityNoOIDC$$/^an_sk__token:_shape, \
-	^TestIdentityNoOIDC$$/^a_revoked_token_is_refused; \
-	^TestIdentityNoOIDC$$/^disabling_a_person_ends_their_sessions,_tokens_and_links_at_once; \
-	^TestIdentityNoOIDC$$/^control:_with_a_trusted_proxy_a_changing_X-Forwarded-For \
-	^TestIdentityNoOIDC$$/^the_11th_failed_link_attempt_within_a_minute \
-	^TestIdentityNoOIDC$$/^the_31st_failed_token_check_within_a_minute \
-	^TestIdentityDefaultRateLimits$$/^the_31st_failed_token_check_is_429 \
-	^TestCLICreateToken$$/^the_token_opens_ \
-	^TestCLICreateToken$$/^a_second_token_for_the_same_person_is_another_token_that_works_too$$ \
-	^TestCatalogServers$$/^admin_routes_refuse_members_before_the_body_is_read$$/^GET_calls$$ \
-	^TestCatalogServers$$/^admin_routes_refuse_members_before_the_body_is_read$$/^anonymous_GET_calls$$ \
-	^TestCatalogServers$$/^upstream_calls$$ \
-	^TestPlatformBearerNeverOpensTheWebAPI$$/^the_same_token_opens_ \
-	^TestPlatformBearerNeverOpensTheWebAPI$$/^a_bad_token_on_ \
-	^TestCatalogSearch$$/^the_recorded_queries$$ \
-	^TestCatalogSearch$$/^searching_every_usable_server_ \
-	^TestCatalogSearch$$/^limit_is_respected$$ \
-	^TestCatalogSearch$$/^the_servers_filter_applies_before_the_limit$$ \
-	^TestCatalogSearch$$/^an_unknown_server_and_an_empty_filter_are_refused$$ \
-	^TestCatalogSearch$$/^list_servers_and_describe_tool$$ \
-	^TestCatalogSearch$$/^hiding, \
-	^TestCatalogSearch$$/^a_disabled_server_leaves_the_index; \
-	^TestCatalogSearch$$/^names_with_dots_and_dashes_ \
-	^TestCatalogSearch$$/^access_by_groups$$ \
-	^TestSearchStoredVectors$$/^SEARCH_MIN_SIMILARITY_ \
-	^TestCLIServers$$/^reindex_rebuilds_.*$$/^search_ \
-	^TestConfigOpenAICompatibleEmbedder$$/^a_query_is_embedded_ \
-	^TestConfigOpenAICompatibleEmbedder$$/^with_the_embedder_down_.*$$/^text_search_over_MCP_ \
-	^TestConfigModelDirMissing$$/^text_search_over_MCP_ \
-	^TestConnectionsConnectFlow$$/^the_connection_serves_calls_ \
-	^TestConnectionsConnectFlow$$/^a_disconnected_person_no_longer_gets_calls_through$$ \
-	^TestConnectionsPAT$$/^a_stored_token_reaches_the_upstream_ \
-	^TestConnectionsPAT$$/^a_new_token_replaces_the_old_one$$ \
-	^TestConnectionsPAT$$/^the_upstream_rejecting_the_token_ \
-	^TestConnectionsPAT$$/^an_unconnected_person_is_told_where_to_connect, \
-	^TestConnectionsArePersonal$$/^a_person_without_a_connection_is_told_ \
-	^TestConnectionsArePersonal$$/^each_call_carries_the_caller \
-	^TestConnectionsArePersonal$$/^one_person \
-	^TestConnectionsArePersonal$$/^the_agent_learns_each_person \
-	^TestConnectionsConfigChange$$/^a_changed_ \
-	^TestConnectionsConfigChange$$/^after_a_changed_upstream_URL_ \
-	^TestConnectionsConfigChange$$/^other_scopes_or_a_changed_
+	^TestPlatformMigrationsAndKeyCheck$$/^the_old_key_alone:_healthy,_one_warning;_rotate-secrets-key_re-seals_the_check$$
 
 space := $(subst ,, )
 COMPAT_GO_SKIP := $(subst $(space),|,$(strip $(COMPAT_GO_SKIP_ENTRIES)))
@@ -251,14 +145,11 @@ COMPAT_GO_RUN := ^($(subst $(space),|,$(strip $(COMPAT_GO_TESTS))))$$
 # The deviations (compat/harness/deviations.go) whose decided behaviour the Go server has, for
 # compat-go and e2e-flows-go: config-errors (milestone 1), audit-login-via, create-user-keeps-role
 # and oidc-binding-kept (milestone 2), create-server-sync-exit (milestone 3), reindex-wording
-# and vector-kept-on-failed-reembedding and stale-removal-rechecks-catalog (milestone 4; their
-# scenarios, TestSearchFailedReembedding and TestSearchStaleRemoval, need no /mcp) and oauth-state-kept
-# (milestone 5; its scenario, TestConnectionsConnectCallbackRefusals, runs on REST and the fake
-# provider). Left out, each until the milestone that implements it: token-429-retry-after and
-# request-id-on-refusals (the /mcp route, milestone 6),
-# ready-before-serving (its scenario compares a search made at once with a settled one, so it needs
-# /mcp, milestone 6; the Go server already loads the model before it listens).
-COMPAT_GO_FIXED := config-errors,audit-login-via,create-user-keeps-role,oidc-binding-kept,create-server-sync-exit,reindex-wording,vector-kept-on-failed-reembedding,stale-removal-rechecks-catalog,oauth-state-kept
+# and vector-kept-on-failed-reembedding and stale-removal-rechecks-catalog (milestone 4),
+# oauth-state-kept (milestone 5), and request-id-on-refusals, token-429-retry-after and
+# ready-before-serving (milestone 6: the /mcp route, its token check and the search made at once
+# after a start). All twelve.
+COMPAT_GO_FIXED := config-errors,audit-login-via,create-user-keeps-role,oidc-binding-kept,create-server-sync-exit,reindex-wording,vector-kept-on-failed-reembedding,stale-removal-rechecks-catalog,oauth-state-kept,request-id-on-refusals,token-429-retry-after,ready-before-serving
 
 # The suite against the Go image. The reference image (mcp-registry:compat-ts) must exist as well:
 # some scenarios compare with it on the same machine, and the new-database scenario starts from it.
@@ -272,7 +163,7 @@ compat-go:
 	if [ "$$listed" != "$(words $(COMPAT_GO_TESTS))" ]; then \
 		echo "compat-go: the pattern '$(COMPAT_GO_RUN)' matches $$listed scenario(s), COMPAT_GO_TESTS names $(words $(COMPAT_GO_TESTS)): $(COMPAT_GO_TESTS)"; exit 1; fi
 	COMPAT_IMAGE=mcp-registry:compat-go COMPAT_CLI=mcp-registry COMPAT_FIXED=$(COMPAT_GO_FIXED) \
-		go test -tags compat -count=1 -p 1 -timeout 30m -run '$(COMPAT_GO_RUN)' $(if $(COMPAT_GO_SKIP),-skip '$(COMPAT_GO_SKIP)') $(COMPAT_ARGS) ./compat/
+		go test -tags compat -count=1 -p 1 -timeout 45m -run '$(COMPAT_GO_RUN)' $(if $(COMPAT_GO_SKIP),-skip '$(COMPAT_GO_SKIP)') $(COMPAT_ARGS) ./compat/
 
 # COMPAT_ARGS adds go test arguments, e.g. make compat COMPAT_ARGS='-run ^TestPlatform' (the -run
 # patterns per area are in CONTRIBUTING.md). Nothing here sets COMPAT_REFERENCE: it matters only
@@ -296,17 +187,16 @@ compat:
 e2e-flows:
 	go test -tags "compat e2e" -count=1 -timeout 30m -v -run '^(TestBrowserFlows|TestControl)' ./compat/e2e/
 
-# The browser flows that need only identity, the catalog and connections, against the Go image (build
-# it with compat-image-go; the reference image must exist too, as for compat-go). The flows that wait
-# for a later milestone are not selected, each named here with it:
-#   03-tokens (the token opens /mcp, 6), 09-permissions (a call through /mcp and the call log, 6).
-# TestControlOperationsAgainstARealStack is not run for the same reason (it uses /mcp, 6); the control
-# API's other tests are image independent and run in e2e-flows. Same guard, same specs, only the
-# selection differs: the arguments go through E2E_PLAYWRIGHT_ARGS, which refuses the ways to run
-# fewer tests silently. An E2E_PLAYWRIGHT_ARGS given on the make command line replaces the list.
+# All twelve browser flows against the Go image (build it with compat-image-go; the reference image
+# must exist too, as for compat-go): identity, the catalog, connections, and since milestone 6 the
+# token on /mcp (03-tokens) and a call through /mcp with the call log (09-permissions).
+# TestControlOperationsAgainstARealStack is not run: the control API's tests are image independent and
+# run in e2e-flows. Same guard, same specs: the arguments go through E2E_PLAYWRIGHT_ARGS, which refuses
+# the ways to run fewer tests silently. An E2E_PLAYWRIGHT_ARGS given on the make command line replaces
+# the list.
 E2E_GO_SPECS := 00-guard-selftest.spec.ts 01-first-start-link.spec.ts 02-oidc-login.spec.ts \
-	04-create-server.spec.ts 05-form-errors.spec.ts 06-hide-tool.spec.ts 07-edit-conflict.spec.ts \
-	08-connect.spec.ts 08b-connect-cross-site.spec.ts 10-disable-person.spec.ts 11-session-expiry.spec.ts \
+	03-tokens.spec.ts 04-create-server.spec.ts 05-form-errors.spec.ts 06-hide-tool.spec.ts 07-edit-conflict.spec.ts \
+	08-connect.spec.ts 08b-connect-cross-site.spec.ts 09-permissions.spec.ts 10-disable-person.spec.ts 11-session-expiry.spec.ts \
 	12-direct-links.spec.ts
 e2e-flows-go:
 	@docker image inspect mcp-registry:compat-go >/dev/null 2>&1 || { echo "e2e-flows-go: the image mcp-registry:compat-go is missing: run make compat-image-go"; exit 1; }

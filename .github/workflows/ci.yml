@@ -181,7 +181,9 @@ jobs:
           retention-days: 7
 
   # The Go server (Dockerfile target go) under the compat suite: the scenarios of the milestone pattern
-  # (COMPAT_GO_TESTS and COMPAT_GO_SKIP in the Makefile). The reference image is built too: the scenarios start from it or
+  # (COMPAT_GO_TESTS and COMPAT_GO_SKIP in the Makefile: since milestone 6 the whole suite but TestCLIKeys and
+  # the one key-rotation subtest, milestone 7; the upgrade scenario is a restart test here, its TypeScript-to-Go
+  # leg is milestone 8). The reference image is built too: the scenarios start from it or
   # compare with it. On both architectures, each building both images natively on its own runner:
   # TestSearchStoredVectors compares the stored vectors with the reference's on the same machine, and
   # they must be equal on arm64 and on amd64. Not a required check.
@@ -260,8 +262,8 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-  # The browser flows that need only identity, the catalog and connections (make e2e-flows-go lists them and names
-  # the milestone each skipped flow waits for) against the Go image. Not a required check; arm64 only.
+  # All twelve browser flows against the Go image (make e2e-flows-go lists them; since milestone 6 the token on /mcp
+  # and the call through /mcp with the call log are included). Not a required check; arm64 only.
   e2e-flows-go:
     needs: [go]
     runs-on: ubuntu-24.04-arm
