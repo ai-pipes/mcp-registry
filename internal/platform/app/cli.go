@@ -25,21 +25,6 @@ var usageOrder = []string{
 	"rotate-secrets-key", "reset-key-check",
 }
 
-// pendingUsage is the usage entry of each reference command the Go server does not implement yet
-// (apps/server/src/platform/cli-commands.ts, with this image's name); a milestone that registers
-// the command sets CLICommand.Usage and the entry here goes.
-var pendingUsage = map[string]string{
-	"rotate-secrets-key": `  rotate-secrets-key
-      Re-seal every stored secret (server secrets and people's tokens) from SECRETS_KEY_OLD
-      to SECRETS_KEY. Safe to repeat.
-`,
-	"reset-key-check": `  reset-key-check --yes
-      Remove the stored key check, so the next start records the configured SECRETS_KEY. Use it
-      only after restoring the right key, or when the key is lost for good (stored server secrets
-      and personal connections then stay unreadable and must be entered again).
-`,
-}
-
 // usageFor is the usage text of the registered commands: a header, then each command's Usage entry
 // in usageOrder. With no command at all it is the text of the server before the operator commands
 // arrived.
@@ -50,13 +35,9 @@ func usageFor(cmds map[string]CLICommand) string {
 	}
 	var b strings.Builder
 	b.WriteString("Usage: mcp-registry <command>\n       mcp-registry --version\n       mcp-registry (the server starts)\n\n")
-	// Every command of the reference is named, also those whose milestone has not come: the
-	// compatibility suite expects the whole list. A registered command's own Usage wins.
 	for _, n := range usageOrder {
-		if c, ok := cmds[n]; ok && c.Usage != "" {
+		if c, ok := cmds[n]; ok {
 			b.WriteString(c.Usage)
-		} else {
-			b.WriteString(pendingUsage[n])
 		}
 	}
 	var rest []string

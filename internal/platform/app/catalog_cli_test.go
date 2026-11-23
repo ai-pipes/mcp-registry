@@ -359,12 +359,6 @@ func TestTheServerCommandsAreRegisteredWithTheirGuards(t *testing.T) {
 	if len(guards) != 2 || guards["create-server"] != GuardRefuse || guards["sync"] != GuardWarn {
 		t.Errorf("%v", guards)
 	}
-	if _, left := pendingUsage["create-server"]; left {
-		t.Error("create-server is implemented: its pending usage entry goes")
-	}
-	if _, left := pendingUsage["sync"]; left {
-		t.Error("sync is implemented: its pending usage entry goes")
-	}
 }
 
 func TestOnlyARealTerminalGetsTheNoEchoReader(t *testing.T) {
