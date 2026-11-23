@@ -85,12 +85,12 @@ func TestNewRefusesMissingDependencies(t *testing.T) {
 func TestServiceResolveCredential(t *testing.T) {
 	e := newEnv(t)
 	svc := e.service(t)
-	got, err := svc.ResolveCredential(ctx, connections.ResolveQuery{UserID: "alice", Server: "tracker"})
+	got, err := svc.ResolveWithoutSending(ctx, connections.ResolveQuery{UserID: "alice", Server: "tracker"})
 	if err != nil || got != (connections.CredentialResult{Failure: connections.FailureNeedsConnection}) {
 		t.Fatalf("never connected: %v %v", got, err)
 	}
 	e.seedPAT("alice", "tracker", "pat-1")
-	got, err = svc.ResolveCredential(ctx, connections.ResolveQuery{UserID: "alice", Server: "tracker"})
+	got, err = svc.ResolveWithoutSending(ctx, connections.ResolveQuery{UserID: "alice", Server: "tracker"})
 	if err != nil || !got.Ok() || got.Secret != "pat-1" {
 		t.Fatalf("stored PAT: %v %v", got, err)
 	}
@@ -99,7 +99,7 @@ func TestServiceResolveCredential(t *testing.T) {
 	}
 	// A secret issued for another configuration of the server is never handed out.
 	e.dir.servers[1].Config.URL = "https://elsewhere.example.com/mcp"
-	got, err = svc.ResolveCredential(ctx, connections.ResolveQuery{UserID: "alice", Server: "tracker"})
+	got, err = svc.ResolveWithoutSending(ctx, connections.ResolveQuery{UserID: "alice", Server: "tracker"})
 	if err != nil || got.Failure != connections.FailureExpired {
 		t.Fatalf("changed configuration: %v %v", got, err)
 	}
@@ -120,7 +120,7 @@ func TestServiceResolveCredentialOfAnOAuthConnection(t *testing.T) {
 		e := newEnv(t)
 		e.seedOAuth("alice", c.expiresIn)
 		e.oauth.refreshErr = c.err
-		got, err := e.service(t).ResolveCredential(ctx, connections.ResolveQuery{UserID: "alice", Server: "gitea"})
+		got, err := e.service(t).ResolveWithoutSending(ctx, connections.ResolveQuery{UserID: "alice", Server: "gitea"})
 		if err != nil || got != c.want {
 			t.Errorf("%s: %v %v, want %v", c.name, got, err, c.want)
 		}
@@ -135,7 +135,7 @@ func TestOneSingleFlightIsSharedByAllCallers(t *testing.T) {
 
 	results := make(chan connections.CredentialResult, 2)
 	run := func() {
-		got, err := svc.ResolveCredential(ctx, connections.ResolveQuery{UserID: "alice", Server: "gitea"})
+		got, err := svc.ResolveWithoutSending(ctx, connections.ResolveQuery{UserID: "alice", Server: "gitea"})
 		if err != nil {
 			t.Error(err)
 		}
@@ -190,7 +190,7 @@ func TestServiceMarkExpired(t *testing.T) {
 	if e.store.rows["alice\x00tracker"].Status != domain.StatusExpired {
 		t.Fatal("not expired")
 	}
-	got, _ := svc.ResolveCredential(ctx, connections.ResolveQuery{UserID: "alice", Server: "tracker"})
+	got, _ := svc.ResolveWithoutSending(ctx, connections.ResolveQuery{UserID: "alice", Server: "tracker"})
 	if got.Failure != connections.FailureExpired {
 		t.Fatalf("got %v", got)
 	}

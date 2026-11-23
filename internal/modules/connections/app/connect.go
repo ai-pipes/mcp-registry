@@ -287,6 +287,6 @@ func Disconnect(ctx context.Context, d Deps, c DisconnectCommand) error {
 		return err
 	}
 	// The local credentials are gone already; the upstream token runs out on its own.
-	_ = d.OAuth.Revoke(ctx, *cfg.OAuth, secret, token)
+	_ = d.OAuth.Revoke(ctx, *again.OAuth, secret, token)
 	return nil
 }

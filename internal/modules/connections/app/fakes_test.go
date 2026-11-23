@@ -479,6 +479,7 @@ type fakeOAuth struct {
 	exchangeCalls []exchangeCall
 	revokeCalls   []string
 	revokeSecrets []string
+	revokeConfigs []catalog.OAuthClientConfig
 
 	// refreshFn, when set, answers refresh calls; otherwise `next` does.
 	refreshFn func(c context.Context, refreshToken string) (app.TokenSet, error)
@@ -550,7 +551,7 @@ func (o *fakeOAuth) Refresh(c context.Context, _ catalog.OAuthClientConfig, _ ap
 	return next, nil
 }
 
-func (o *fakeOAuth) Revoke(c context.Context, _ catalog.OAuthClientConfig, secret app.ClientSecret, token string) error {
+func (o *fakeOAuth) Revoke(c context.Context, cfg catalog.OAuthClientConfig, secret app.ClientSecret, token string) error {
 	o.v.check(c, "oauth.revoke")
 	o.j.add("oauth.revoke")
 	sv, _ := secret.Value()
@@ -558,6 +559,7 @@ func (o *fakeOAuth) Revoke(c context.Context, _ catalog.OAuthClientConfig, secre
 	defer o.mu.Unlock()
 	o.revokeCalls = append(o.revokeCalls, token)
 	o.revokeSecrets = append(o.revokeSecrets, sv)
+	o.revokeConfigs = append(o.revokeConfigs, cfg)
 	return o.revokeErr
 }
 
@@ -823,11 +825,11 @@ func failureOf(r app.CredentialResult, err error) string {
 }
 
 func (h *harness) resolve(user, server string) (app.CredentialResult, error) {
-	return app.ResolveCredential(ctx, h.d, app.ResolveQuery{UserID: user, Server: server})
+	return app.ResolveWithoutSending(ctx, h.d, app.ResolveQuery{UserID: user, Server: server})
 }
 
 func (h *harness) resolveForced(user, server string) (app.CredentialResult, error) {
-	return app.ResolveCredential(ctx, h.d, app.ResolveQuery{UserID: user, Server: server, ForceRefresh: true})
+	return app.ResolveWithoutSending(ctx, h.d, app.ResolveQuery{UserID: user, Server: server, ForceRefresh: true})
 }
 
 func (h *harness) noLockViolations() {

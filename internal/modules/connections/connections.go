@@ -54,7 +54,7 @@ type (
 	CredentialResult = app.CredentialResult
 	// CredentialFailure is why there is no usable personal secret.
 	CredentialFailure = app.CredentialFailure
-	// ResolveQuery asks for a person's secret for a server.
+	// ResolveQuery names a person's secret for a server (without the configuration it is sent to).
 	ResolveQuery = app.ResolveQuery
 	// MarkExpiredCommand names a connection upstream rejected.
 	MarkExpiredCommand = app.MarkExpiredCommand
@@ -83,9 +83,9 @@ const (
 // ServerCallTarget is the catalog's description of a server to call.
 type ServerCallTarget = app.ServerCallTarget
 
-// ServerConfigOf is the configuration of a catalog server as the module fingerprints it: a caller
-// that is about to send a resolved secret to a server sets ResolveQuery.Expect to it, built from the
-// catalog target it read. It is the one mapping from a target to the fingerprint input.
+// ServerConfigOf is the configuration of a catalog server as the module fingerprints it: the one
+// mapping from a target to the fingerprint input (ResolveForSending applies it to the target it is
+// given).
 func ServerConfigOf(t ServerCallTarget) ServerConfig { return app.ServerConfigOf(t) }
 
 // NewClientSecret is a client secret (a public client is the zero ClientSecret).
@@ -93,7 +93,7 @@ func NewClientSecret(v string) ClientSecret { return app.NewClientSecret(v) }
 
 // Service is the module's surface for the other modules, the CLI and the scheduler. It holds the
 // dependencies privately and exactly ONE single flight, shared by every caller of
-// ResolveCredential, so that one person's renewals for one server are joined in this process
+// ResolveForSending, so that one person's renewals for one server are joined in this process
 // whoever asks (the gateway, the catalog's synchronisation). Build it once with New and share it;
 // it is safe for concurrent use as far as its ports are.
 type Service struct{ d app.Deps }
@@ -128,14 +128,25 @@ func New(d Deps) (*Service, error) {
 // routes are built from them, so that every path of the process shares that one flight.
 func (s *Service) Deps() Deps { return s.d }
 
-// ResolveCredential is the person's upstream secret for a server: the OAuth access token or the
-// PAT, raw, refreshed ahead of expiry or when ForceRefresh is set (the gateway sets it after an
-// upstream 401). A secret issued for another configuration of the server is never handed out: the
-// connection expires instead. The answers a caller acts on are CredentialFailure values with a nil
-// error (needs_connection, expired, unavailable); the error is for unexpected failures. A caller
-// whose ctx ends while it waits for a renewal returns ctx.Err() and the renewal goes on without it.
-func (s *Service) ResolveCredential(ctx context.Context, q ResolveQuery) (CredentialResult, error) {
-	return app.ResolveCredential(ctx, s.d, q)
+// ResolveForSending is the person's upstream secret for the server, to be sent to it: the OAuth
+// access token or the PAT, raw, refreshed ahead of expiry or when forceRefresh is set (the gateway
+// sets it after an upstream 401). The target is the catalog's description of the server as the
+// caller read it; it is required, so a call that hands a secret out cannot be written without the
+// configuration the secret goes to. When the server is configured differently now the answer is
+// `unavailable` and nothing is opened, stored, sent or audited. A secret issued for another
+// configuration of the server is never handed out either: the connection expires instead. The
+// answers a caller acts on are CredentialFailure values with a nil error (needs_connection,
+// expired, unavailable); the error is for unexpected failures. A caller whose ctx ends while it
+// waits for a renewal returns ctx.Err() and the renewal goes on without it.
+func (s *Service) ResolveForSending(ctx context.Context, userID string, target ServerCallTarget, forceRefresh bool) (CredentialResult, error) {
+	return app.ResolveForSending(ctx, s.d, app.ResolveQuery{UserID: userID, ForceRefresh: forceRefresh}, app.ServerConfigOf(target))
+}
+
+// ResolveWithoutSending is the person's secret for a caller that sends it nowhere (it only asks
+// whether the person has one). It is the explicitly named path without the target's configuration;
+// every caller that sends the secret to a server uses ResolveForSending.
+func (s *Service) ResolveWithoutSending(ctx context.Context, q ResolveQuery) (CredentialResult, error) {
+	return app.ResolveWithoutSending(ctx, s.d, q)
 }
 
 // MarkExpired turns a ready connection expired because upstream rejected its credential (the

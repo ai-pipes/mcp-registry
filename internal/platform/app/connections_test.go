@@ -266,21 +266,27 @@ func TestBindingTwiceOrToNothingIsRefused(t *testing.T) {
 type fakeResolver struct {
 	res connections.CredentialResult
 	err error
-	got []connections.ResolveQuery
 }
 
-func (f fakeResolver) ResolveCredential(context.Context, connections.ResolveQuery) (connections.CredentialResult, error) {
+func (f fakeResolver) ResolveForSending(context.Context, string, connections.ServerCallTarget, bool) (connections.CredentialResult, error) {
 	return f.res, f.err
+}
+
+// sendAsk is one ResolveForSending call as the adapter made it.
+type sendAsk struct {
+	userID       string
+	target       connections.ServerCallTarget
+	forceRefresh bool
 }
 
 type recordingResolver struct {
 	fakeResolver
-	asked *[]connections.ResolveQuery
+	asked *[]sendAsk
 }
 
-func (r recordingResolver) ResolveCredential(ctx context.Context, q connections.ResolveQuery) (connections.CredentialResult, error) {
-	*r.asked = append(*r.asked, q)
-	return r.fakeResolver.ResolveCredential(ctx, q)
+func (r recordingResolver) ResolveForSending(ctx context.Context, userID string, target connections.ServerCallTarget, forceRefresh bool) (connections.CredentialResult, error) {
+	*r.asked = append(*r.asked, sendAsk{userID, target, forceRefresh})
+	return r.fakeResolver.ResolveForSending(ctx, userID, target, forceRefresh)
 }
 
 // The mapping of what connections answers to what the catalog stores (SyncOwner.failureOf then
@@ -299,7 +305,7 @@ func TestSyncCredentialsMapConnectionsAnswersToTheCatalogsFailures(t *testing.T)
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			var asked []connections.ResolveQuery
+			var asked []sendAsk
 			l := &lateSyncCredentials{}
 			l.bind(recordingResolver{fakeResolver: fakeResolver{res: c.res}, asked: &asked})
 			got, err := l.PersonalSecret(context.Background(), catalog.ServerCallTarget{Slug: "gitea"}, "u1")
@@ -307,9 +313,9 @@ func TestSyncCredentialsMapConnectionsAnswersToTheCatalogsFailures(t *testing.T)
 				t.Fatalf("got %+v, %v; want %+v", got, err, c.want)
 			}
 			// No forced refresh in a synchronisation: the reference does not ask for one.
-			want := connections.ServerConfigOf(catalog.ServerCallTarget{Slug: "gitea"})
-			if len(asked) != 1 || asked[0].UserID != "u1" || asked[0].Server != "gitea" || asked[0].ForceRefresh ||
-				asked[0].Expect == nil || !reflect.DeepEqual(*asked[0].Expect, want) {
+			// The target the sync read is what the secret is checked against.
+			if len(asked) != 1 || asked[0].userID != "u1" || asked[0].forceRefresh ||
+				!reflect.DeepEqual(asked[0].target, catalog.ServerCallTarget{Slug: "gitea"}) {
 				t.Fatalf("asked %+v", asked)
 			}
 		})

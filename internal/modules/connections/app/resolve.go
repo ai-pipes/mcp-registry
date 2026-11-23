@@ -15,7 +15,7 @@ import (
 // CredentialFailure is why there is no usable personal secret.
 type CredentialFailure string
 
-// The failures of ResolveCredential.
+// The failures of ResolveForSending.
 const (
 	// FailureNeedsConnection: never connected, or the server is gone (or disabled).
 	FailureNeedsConnection CredentialFailure = "needs_connection"
@@ -76,21 +76,45 @@ func openToken(box kernel.SecretBox, sealed domain.Sealed) (string, error) {
 	return plain, nil
 }
 
-// ResolveQuery asks for a person's secret for a server. ForceRefresh is set when upstream rejected
-// the access token just handed out.
+// ResolveQuery names a person's secret for a server. ForceRefresh is set when upstream rejected
+// the access token just handed out. It carries no expectation of the server's configuration: that
+// is the separate argument of ResolveForSending, so that a caller about to send the secret
+// somewhere cannot leave it out.
 type ResolveQuery struct {
 	UserID       string
 	Server       string
 	ForceRefresh bool
-	// Expect, when set, is the configuration the caller is going to send the secret to (read from
-	// the catalog earlier). When its fingerprint differs from the configuration this call loads,
-	// the caller's view is stale and the answer is `unavailable` (retry later): nothing is opened,
-	// stored, expired, sent or audited. Nil keeps the old behaviour (the current configuration is
-	// the one the secret is checked against).
-	Expect *ServerConfig
 }
 
-// ResolveCredential is the person's upstream secret for the server: the OAuth access token or the
+// errNoDestination answers ResolveForSending called with the zero ServerConfig: a programming error
+// in the caller, refused before anything is read.
+var errNoDestination = errors.New("connections: ResolveForSending needs the configuration of the server the secret is sent to")
+
+// ResolveForSending is the person's upstream secret for the server, to be SENT to the server whose
+// configuration `to` is (read from the catalog earlier: ServerConfigOf of the target). The
+// configuration is a required argument, so a call that hands a secret out cannot be written
+// without it. When its fingerprint differs from the configuration this call loads, the caller's
+// view is stale and the answer is `unavailable` (retry later): nothing is opened, stored, expired,
+// sent or audited. The server is to.Slug (q.Server is ignored).
+//
+// The rest is as ResolveWithoutSending.
+func ResolveForSending(ctx context.Context, d Deps, q ResolveQuery, to ServerConfig) (CredentialResult, error) {
+	if to.Slug == "" {
+		return CredentialResult{}, errNoDestination
+	}
+	q.Server = to.Slug
+	return resolve(ctx, d, q, &to)
+}
+
+// ResolveWithoutSending is ResolveCredential for a caller that sends the secret nowhere (it only
+// asks whether the person has one). It is the explicitly named path without an expectation: the
+// secret is checked against the configuration loaded now, which the caller does not know. A caller
+// that sends the result to a server uses ResolveForSending.
+func ResolveWithoutSending(ctx context.Context, d Deps, q ResolveQuery) (CredentialResult, error) {
+	return resolve(ctx, d, q, nil)
+}
+
+// resolve is the person's upstream secret for the server: the OAuth access token or the
 // PAT, raw. It refreshes ahead of expiry or when ForceRefresh. One refresh per (person, server)
 // at a time: in this process by the single flight, across processes by the connection lock, where
 // the decision is taken again on the locked row (another process's fresh token is reused, even for
@@ -104,7 +128,7 @@ type ResolveQuery struct {
 // The error is for unexpected failures (a store, a stored token no key opens, the audit log); the
 // answers a caller acts on are CredentialFailure values with a nil error. A caller whose ctx ends
 // while it waits for a renewal returns ctx.Err() and the renewal goes on without it.
-func ResolveCredential(ctx context.Context, d Deps, q ResolveQuery) (CredentialResult, error) {
+func resolve(ctx context.Context, d Deps, q ResolveQuery, expect *ServerConfig) (CredentialResult, error) {
 	seen, err := d.Connections.Get(ctx, q.UserID, q.Server)
 	if err != nil {
 		return CredentialResult{}, err
@@ -122,7 +146,7 @@ func ResolveCredential(ctx context.Context, d Deps, q ResolveQuery) (CredentialR
 	fp := fingerprint(*cfg)
 	// Before any secret is opened or any renewal starts, and per caller (not inside the shared
 	// work): a caller that read another configuration never receives a secret meant for this one.
-	if q.Expect != nil && fingerprint(*q.Expect) != fp {
+	if expect != nil && fingerprint(*expect) != fp {
 		return failed(FailureUnavailable), nil
 	}
 	switch plan := seen.CredentialPlan(d.Clock.Now(), domain.PlanOptions{ForceRefresh: q.ForceRefresh, Config: fp}); plan.Action {

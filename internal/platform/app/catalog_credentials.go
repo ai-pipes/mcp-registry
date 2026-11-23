@@ -14,7 +14,7 @@ import (
 // credentialResolver is what the adapter needs of the connections service
 // (*connections.Service).
 type credentialResolver interface {
-	ResolveCredential(ctx context.Context, q connections.ResolveQuery) (connections.CredentialResult, error)
+	ResolveForSending(ctx context.Context, userID string, target connections.ServerCallTarget, forceRefresh bool) (connections.CredentialResult, error)
 }
 
 // errCredentialsNotBound answers a personal-credential request made before the connections
@@ -63,7 +63,7 @@ func (c *lateSyncCredentials) IsActiveAdmin(ctx context.Context, userID string) 
 	return c.identity.IsUserActiveAdmin(ctx, userID)
 }
 
-// PersonalSecret is ResolveCredential for that person and server: a secret, or one of the three
+// PersonalSecret is ResolveForSending for that person and server: a secret, or one of the three
 // failures the catalog maps to its own (needs_connection and expired both to "an administrator
 // needs to connect this server", unavailable to "the OAuth provider is unavailable"; unavailable
 // is also what connections answers when the target this sync read no longer matches the server).
@@ -74,8 +74,7 @@ func (c *lateSyncCredentials) PersonalSecret(ctx context.Context, server catalog
 	}
 	// The secret goes to the target this sync read earlier: connections hands it out only while the
 	// server is still configured as that target says (else `unavailable`, retry later).
-	expect := connections.ServerConfigOf(server)
-	res, err := r.ResolveCredential(ctx, connections.ResolveQuery{UserID: userID, Server: server.Slug, Expect: &expect})
+	res, err := r.ResolveForSending(ctx, userID, server, false)
 	if err != nil {
 		return catalog.PersonalCredential{}, err
 	}
