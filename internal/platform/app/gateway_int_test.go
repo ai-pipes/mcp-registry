@@ -15,6 +15,9 @@ import (
 	"testing"
 	"time"
 
+	catapp "github.com/ai-pipes/mcp-registry/internal/modules/catalog/app"
+	catdomain "github.com/ai-pipes/mcp-registry/internal/modules/catalog/domain"
+	catinfra "github.com/ai-pipes/mcp-registry/internal/modules/catalog/infra"
 	conapp "github.com/ai-pipes/mcp-registry/internal/modules/connections/app"
 	condomain "github.com/ai-pipes/mcp-registry/internal/modules/connections/domain"
 	coninfra "github.com/ai-pipes/mcp-registry/internal/modules/connections/infra"
@@ -23,6 +26,7 @@ import (
 	"github.com/ai-pipes/mcp-registry/internal/modules/identity/domain"
 	"github.com/ai-pipes/mcp-registry/internal/platform/config"
 	"github.com/ai-pipes/mcp-registry/internal/platform/pgtest"
+	"github.com/ai-pipes/mcp-registry/internal/platform/upstream"
 )
 
 // gwEnv is the scenario kit of the gateway on the composed server: people with `sk_` tokens, the
@@ -519,6 +523,89 @@ func buildWithHold(hold *holdConnections) func(Runtime) []Module {
 		con := connectionsWiringOver(rt, id, cat, hold, stores.Pending)
 		gw := newGatewayWiring(rt, id, cat, con, newSearchWiring(rt, cat))
 		return []Module{id.module(), platformModule(rt, id), cat.module(), con.module(), gw.module()}
+	}
+}
+
+// holdServerRead pauses ONE read of a server row: the at-th FindBySlug of slug after arming. For a
+// call_tool on a shared_secret server the reads are the tool (1), the call target (2) and the
+// secret (3), so at = 3 is the window between the target and the secret.
+type holdServerRead struct {
+	catapp.ServerRepository
+	slug    string
+	at      int32
+	arm     atomic.Bool
+	reads   atomic.Int32
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (h *holdServerRead) FindBySlug(ctx context.Context, slug string) (*catdomain.Server, error) {
+	if slug == h.slug && h.arm.Load() && h.reads.Add(1) == h.at {
+		h.entered <- struct{}{}
+		<-h.release
+	}
+	return h.ServerRepository.FindBySlug(ctx, slug)
+}
+
+// buildWithServerHold is the composed server's module list (without search) whose catalog reads
+// servers through hold.
+func buildWithServerHold(hold *holdServerRead) func(Runtime) []Module {
+	return func(rt Runtime) []Module {
+		id := newIdentityWiring(rt)
+		repos := catinfra.NewPg(rt.Pool)
+		hold.ServerRepository = repos.Servers
+		repos.Servers = hold
+		cat := catalogWiringOver(rt, id, repos, upstream.New(upstream.Options{}))
+		con := newConnectionsWiring(rt, id, cat)
+		gw := newGatewayWiring(rt, id, cat, con, newSearchWiring(rt, cat))
+		return []Module{id.module(), platformModule(rt, id), cat.module(), con.module(), gw.module()}
+	}
+}
+
+// An admin moves a shared_secret server to B (the key is cleared) and sets B's key while a call
+// that read A is between reading the target and reading the secret: B's key is sent neither to A
+// nor anywhere else, no quota is spent, and the next call goes to B with B's key.
+func TestASharedSecretIsNeverSentToTheURLOfAnotherConfiguration(t *testing.T) {
+	url := pgtest.StartURL(t)
+	hold := &holdServerRead{slug: "keyed", at: 3, entered: make(chan struct{}), release: make(chan struct{})}
+	rs := startRealWith(t, url, newKey(t), gatewayConfig, buildWithServerHold(hold))
+	g := &gwEnv{conEnv: &conEnv{t: t, rs: rs, url: url}, tokens: map[string]string{}}
+	alice := g.admin("alice")
+	tok := g.token("alice", domain.RoleAdmin)
+	upA, upB := newMCPFake(t, "alpha"), newMCPFake(t, "alpha")
+	serve(upA, "RESULT-MARKER-A")
+	serve(upB, "RESULT-MARKER-B")
+	const keyA, keyB = "SHARED-MARKER-A", "SHARED-MARKER-B"
+	auth := map[string]any{"kind": "shared_secret", "header": "Authorization", "template": "Key {secret}"}
+	g.register(alice, "keyed", upA, auth, keyA, 5)
+
+	hold.arm.Store(true)
+	done := make(chan agentReply, 1)
+	go func() { done <- mcpCallTool(t, rs.base, tok, "keyed.alpha", `{}`) }()
+	await(t, hold.entered, "the call to read the server secret")
+	moved := serverBody("keyed", upB.url(), auth)
+	moved["dailyLimit"] = 5
+	if status, _, raw := alice.do("PUT", "/api/servers/keyed", moved); status != 200 {
+		t.Fatalf("move: %d %s", status, raw)
+	}
+	if status, _, raw := alice.do("PUT", "/api/servers/keyed/secret", map[string]any{"secret": keyB}); status != 204 {
+		t.Fatalf("set B's key: %d %s", status, raw)
+	}
+	close(hold.release)
+	got := await(t, done, "the call to finish")
+
+	if len(upA.seenCalls()) != 0 || len(upB.seenCalls()) != 0 {
+		t.Fatalf("a key was sent: A saw %v, B saw %v", authsOf(upA.seenCalls()), authsOf(upB.seenCalls()))
+	}
+	if !got.IsError || got.Text != "keyed is unavailable." {
+		t.Fatalf("the call that read A: %+v", got)
+	}
+	if g.calls("keyed", "transport_error") != 1 || g.quota("keyed") != 0 {
+		t.Fatalf("transport_error rows %d, quota %d", g.calls("keyed", "transport_error"), g.quota("keyed"))
+	}
+	hold.arm.Store(false)
+	if got := g.callTool(tok, "keyed.alpha", `{}`); got.IsError || lastOf(authsOf(upB.seenCalls())) != "Key "+keyB || len(upA.seenCalls()) != 0 {
+		t.Fatalf("against B: %+v, B saw %v", got, authsOf(upB.seenCalls()))
 	}
 }
 

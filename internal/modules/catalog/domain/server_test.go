@@ -722,3 +722,29 @@ func TestSecretKeepsOnTemplateAndHeaderChange(t *testing.T) {
 		t.Fatal(cleared, err)
 	}
 }
+
+// SecretGoesTo answers, for a caller holding a configuration read earlier, whether the stored
+// secret belongs to it: the same rule that clears the secret on an edit.
+func TestSecretGoesTo(t *testing.T) {
+	s := withSecret(t, shared)
+	if !s.SecretGoesTo(s.URL(), s.Auth()) {
+		t.Fatal("its own configuration")
+	}
+	if !s.SecretGoesTo(s.URL(), sharedMode("X-Other", "other {secret}")) {
+		t.Fatal("header and template do not move a shared secret")
+	}
+	if s.SecretGoesTo("https://elsewhere.example/mcp", s.Auth()) || s.SecretGoesTo(s.URL()+"/", s.Auth()) {
+		t.Fatal("another URL (plain string comparison) is another destination")
+	}
+	if s.SecretGoesTo(s.URL(), domain.AuthMode{Kind: domain.AuthPATUser, Header: "A", Template: "{secret}"}) {
+		t.Fatal("another auth kind is another destination")
+	}
+	o := withSecret(t, oauthOf(nil, true))
+	if !o.SecretGoesTo("https://another-upstream.example/mcp", oauthOf(func(c *domain.OAuthClientConfig) { c.Scopes = []string{"x"} }, true)) {
+		t.Fatal("the upstream URL and scopes of oauth_user do not move the client secret")
+	}
+	if o.SecretGoesTo(o.URL(), oauthOf(func(c *domain.OAuthClientConfig) { c.ClientID = "client-2" }, true)) ||
+		o.SecretGoesTo(o.URL(), oauthOf(nil, false)) {
+		t.Fatal("client ID and revoke URL move the client secret")
+	}
+}

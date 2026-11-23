@@ -18,15 +18,19 @@ import (
 )
 
 type fakeCatalog struct {
-	mu          sync.Mutex
-	tools       map[string]catalog.ToolView
-	servers     map[string]*catalog.ServerCallTarget
-	secrets     map[string]string
-	toolErr     error
-	serverErr   error
-	secretErr   error
-	onServerFor func()
-	toolCtxErr  error // ctx.Err() as ToolFor saw it on its last call
+	mu        sync.Mutex
+	tools     map[string]catalog.ToolView
+	servers   map[string]*catalog.ServerCallTarget
+	secrets   map[string]string
+	toolErr   error
+	serverErr error
+	secretErr error
+	// secretLookup, when set, is answered by ServerSecret without a secret.
+	secretLookup catalog.SecretLookup
+	onServerFor  func()
+	// onSecret runs before the secret is read (an admin editing the server between the reads).
+	onSecret   func()
+	toolCtxErr error // ctx.Err() as ToolFor saw it on its last call
 }
 
 func (c *fakeCatalog) ToolFor(ctx context.Context, _ app.Principal, ref string) (catalog.ToolView, bool, error) {
@@ -52,14 +56,29 @@ func (c *fakeCatalog) ServerFor(_ context.Context, slug string) (*catalog.Server
 	return c.servers[slug], nil
 }
 
-func (c *fakeCatalog) ServerSecret(_ context.Context, slug string) (string, bool, error) {
+// ServerSecret models one read of the stored row: the secret is handed out only while the row's
+// destination (auth kind, and the URL for shared_secret) is the target's.
+func (c *fakeCatalog) ServerSecret(_ context.Context, target catalog.ServerCallTarget) (string, catalog.SecretLookup, error) {
+	if c.onSecret != nil {
+		c.onSecret()
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.secretErr != nil {
-		return "", false, c.secretErr
+		return "", "", c.secretErr
 	}
-	s, ok := c.secrets[slug]
-	return s, ok, nil
+	if c.secretLookup != "" {
+		return "", c.secretLookup, nil
+	}
+	row := c.servers[target.Slug]
+	if row == nil || row.Auth.Kind != target.Auth.Kind || (row.Auth.Kind == catalog.AuthSharedSecret && row.URL != target.URL) {
+		return "", catalog.SecretMoved, nil
+	}
+	s, ok := c.secrets[target.Slug]
+	if !ok {
+		return "", catalog.SecretNotSet, nil
+	}
+	return s, catalog.SecretFound, nil
 }
 
 type resolveCall struct {

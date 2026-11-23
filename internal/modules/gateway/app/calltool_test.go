@@ -216,6 +216,62 @@ func TestAnEmptySharedSecretIsUsed(t *testing.T) {
 	}
 }
 
+// An admin moves a shared_secret server to another URL (the stored key is cleared) and sets a new
+// key between the gateway's read of the target and its read of the secret: the new key must not
+// reach the old URL. Nothing is sent, no quota is spent, the answer is the unavailable text.
+func TestASharedSecretIsNotSentWithAConfigurationItDoesNotBelongTo(t *testing.T) {
+	cases := []struct {
+		name string
+		edit func(*catalog.ServerCallTarget)
+	}{
+		{"another URL", func(s *catalog.ServerCallTarget) { s.URL = "https://moved.example.com/mcp" }},
+		{"another auth kind", func(s *catalog.ServerCallTarget) { s.Auth = patAuth }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness()
+			s := h.cat.servers["gitea"]
+			s.Auth, s.DailyLimit = sharedAuth, ip(5)
+			h.cat.secrets["gitea"] = "old-key"
+			h.cat.onSecret = func() {
+				h.cat.mu.Lock()
+				defer h.cat.mu.Unlock()
+				edited := *h.cat.servers["gitea"]
+				tc.edit(&edited)
+				h.cat.servers["gitea"] = &edited
+				h.cat.secrets["gitea"] = "new-key"
+			}
+			res, err := h.call(context.Background(), "gitea.create_issue", `{}`)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, c := range h.up.calls {
+				t.Errorf("upstream called at %s, carrying the new key: %v", c.target.URL, c.target.Headers["X-API-Key"] == "key new-key")
+			}
+			wantText(t, res, "Gitea is unavailable.")
+			h.wantOneRow(t, domain.OutcomeTransportError)
+			if len(h.quota.requests) != 0 || len(h.creds.calls) != 0 {
+				t.Fatal("quota spent or a personal credential asked for")
+			}
+		})
+	}
+}
+
+// A lookup the gateway does not know is never guessed at: an error, nothing sent, no quota.
+func TestAnUnknownSecretLookupIsAnError(t *testing.T) {
+	h := newHarness()
+	s := h.cat.servers["gitea"]
+	s.Auth, s.DailyLimit = sharedAuth, ip(5)
+	h.cat.secretLookup = "later"
+	if _, err := h.call(context.Background(), "gitea.create_issue", `{}`); err == nil {
+		t.Fatal("an unknown lookup must be an error")
+	}
+	h.wantOneRow(t, domain.OutcomeTransportError)
+	if len(h.up.calls) != 0 || len(h.quota.requests) != 0 {
+		t.Fatal("upstream or quota touched")
+	}
+}
+
 func TestPersonalCredentialFailures(t *testing.T) {
 	cases := []struct {
 		failure connections.CredentialFailure

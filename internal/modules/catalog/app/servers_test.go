@@ -516,6 +516,97 @@ func TestUpstreamQueries(t *testing.T) {
 	})
 }
 
+// GetServerSecretFor hands the secret out only with the configuration it belongs to: the caller's
+// target and the secret are judged against ONE read of the server.
+func TestGetServerSecretFor(t *testing.T) {
+	t.Run("the secret of the caller's configuration", func(t *testing.T) {
+		h := newHarness()
+		h.mustCreate(t, "shared", ptr("k1"), func(f *app.ServerFields) { f.Auth = authShared })
+		target, _ := app.GetServerForUpstream(ctx, h.deps, "shared")
+		got, found, err := app.GetServerSecretFor(ctx, h.deps, *target)
+		if err != nil || found != app.SecretFound || got != "k1" {
+			t.Fatalf("%q %v %v", got, found, err)
+		}
+	})
+
+	t.Run("an admin moved the server and set a new key after the target was read: moved, no secret", func(t *testing.T) {
+		h := newHarness()
+		h.mustCreate(t, "shared", ptr("k1"), func(f *app.ServerFields) { f.Auth = authShared })
+		target, _ := app.GetServerForUpstream(ctx, h.deps, "shared")
+		if _, err := app.UpdateServer(ctx, h.deps, app.UpdateServerCommand{Principal: admin, Slug: "shared", Fields: fields(func(f *app.ServerFields) {
+			f.Auth, f.URL = authShared, "https://moved.example.com/mcp"
+		})}); err != nil {
+			t.Fatal(err)
+		}
+		if err := app.SetSecret(ctx, h.deps, app.SetSecretCommand{Principal: admin, Slug: "shared", Secret: ptr("k2")}); err != nil {
+			t.Fatal(err)
+		}
+		got, found, err := app.GetServerSecretFor(ctx, h.deps, *target)
+		if err != nil || found != app.SecretMoved || got != "" {
+			t.Fatalf("%q %v %v", got, found, err)
+		}
+		fresh, _ := app.GetServerForUpstream(ctx, h.deps, "shared")
+		if got, found, err := app.GetServerSecretFor(ctx, h.deps, *fresh); err != nil || found != app.SecretFound || got != "k2" {
+			t.Fatalf("fresh target: %q %v %v", got, found, err)
+		}
+	})
+
+	t.Run("and back to the old URL: the key set for it belongs to it again", func(t *testing.T) {
+		h := newHarness()
+		h.mustCreate(t, "shared", ptr("k1"), func(f *app.ServerFields) { f.Auth = authShared })
+		target, _ := app.GetServerForUpstream(ctx, h.deps, "shared")
+		for _, step := range []struct{ url, key string }{{"https://moved.example.com/mcp", "k2"}, {target.URL, "k3"}} {
+			if _, err := app.UpdateServer(ctx, h.deps, app.UpdateServerCommand{Principal: admin, Slug: "shared", Fields: fields(func(f *app.ServerFields) {
+				f.Auth, f.URL = authShared, step.url
+			})}); err != nil {
+				t.Fatal(err)
+			}
+			if err := app.SetSecret(ctx, h.deps, app.SetSecretCommand{Principal: admin, Slug: "shared", Secret: ptr(step.key)}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if got, found, err := app.GetServerSecretFor(ctx, h.deps, *target); err != nil || found != app.SecretFound || got != "k3" {
+			t.Fatalf("%q %v %v", got, found, err)
+		}
+	})
+
+	t.Run("another auth kind is moved; header and template are not", func(t *testing.T) {
+		h := newHarness()
+		h.mustCreate(t, "shared", ptr("k1"), func(f *app.ServerFields) { f.Auth = authShared })
+		target, _ := app.GetServerForUpstream(ctx, h.deps, "shared")
+		other := *target
+		other.Auth = authPAT
+		if _, found, _ := app.GetServerSecretFor(ctx, h.deps, other); found != app.SecretMoved {
+			t.Fatalf("another kind: %v", found)
+		}
+		other.Auth = domain.AuthMode{Kind: domain.AuthSharedSecret, Header: "X-Other", Template: "k {secret}"}
+		if got, found, _ := app.GetServerSecretFor(ctx, h.deps, other); found != app.SecretFound || got != "k1" {
+			t.Fatalf("header and template: %q %v", got, found)
+		}
+	})
+
+	t.Run("no secret set is not_set; an unknown server is moved; an unreadable secret is an error", func(t *testing.T) {
+		h := newHarness()
+		h.mustCreate(t, "bare", nil, func(f *app.ServerFields) { f.Auth = authShared })
+		target, _ := app.GetServerForUpstream(ctx, h.deps, "bare")
+		if _, found, err := app.GetServerSecretFor(ctx, h.deps, *target); err != nil || found != app.SecretNotSet {
+			t.Fatalf("%v %v", found, err)
+		}
+		gone := *target
+		gone.Slug = "zz"
+		if _, found, err := app.GetServerSecretFor(ctx, h.deps, gone); err != nil || found != app.SecretMoved {
+			t.Fatalf("%v %v", found, err)
+		}
+		h.mustCreate(t, "shared", ptr("k"), func(f *app.ServerFields) { f.Auth = authShared })
+		shared, _ := app.GetServerForUpstream(ctx, h.deps, "shared")
+		deps := h.deps
+		deps.Box = fakeBox{id: "other"}
+		if _, _, err := app.GetServerSecretFor(ctx, deps, *shared); err == nil {
+			t.Fatal("a secret no key opens must be an error")
+		}
+	})
+}
+
 func TestRepositoryErrorsPropagate(t *testing.T) {
 	h := newHarness()
 	h.mustCreate(t, "gitea", nil)
@@ -543,6 +634,9 @@ func TestRepositoryErrorsPropagate(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 	if _, _, err := app.GetServerSecret(ctx, h.deps, "gitea"); err != boom {
+		t.Fatalf("err = %v", err)
+	}
+	if _, _, err := app.GetServerSecretFor(ctx, h.deps, app.ServerCallTarget{Slug: "gitea"}); err != boom {
 		t.Fatalf("err = %v", err)
 	}
 }

@@ -25,9 +25,11 @@ type ToolCatalog interface {
 	ToolFor(ctx context.Context, p Principal, ref string) (tool catalog.ToolView, ok bool, err error)
 	// ServerFor is the active server's call target, nil when unknown or disabled.
 	ServerFor(ctx context.Context, slug string) (*catalog.ServerCallTarget, error)
-	// ServerSecret is the server's decrypted shared secret; ok is false when none is set (an empty
-	// secret that is set is returned as such).
-	ServerSecret(ctx context.Context, slug string) (secret string, ok bool, err error)
+	// ServerSecret is the server's decrypted shared secret for the target the caller read
+	// (catalog.Service.GetServerSecretFor): SecretFound only while the secret belongs to that
+	// target's configuration (an empty secret that is set is returned as such), SecretNotSet when
+	// none is set, SecretMoved when the server no longer sends its secret where the target would.
+	ServerSecret(ctx context.Context, target catalog.ServerCallTarget) (secret string, found catalog.SecretLookup, err error)
 }
 
 // PersonalCredentials is the person's own secret for a server. *connections.Service implements

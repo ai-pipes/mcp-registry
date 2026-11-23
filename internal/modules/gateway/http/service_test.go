@@ -29,7 +29,9 @@ func (stubCatalog) ServerFor(context.Context, string) (*catalog.ServerCallTarget
 	return nil, nil
 }
 
-func (stubCatalog) ServerSecret(context.Context, string) (string, bool, error) { return "", false, nil }
+func (stubCatalog) ServerSecret(context.Context, catalog.ServerCallTarget) (string, catalog.SecretLookup, error) {
+	return "", catalog.SecretNotSet, nil
+}
 
 type stubCreds struct{}
 

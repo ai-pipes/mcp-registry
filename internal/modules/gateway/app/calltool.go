@@ -172,15 +172,25 @@ func secretFor(ctx context.Context, d Deps, server *catalog.ServerCallTarget, us
 	case catalog.SourceNone:
 		return "", nil, nil
 	case catalog.SourceServerSecret:
-		secret, ok, err := d.Catalog.ServerSecret(ctx, server.Slug)
+		// The secret comes with the configuration it belongs to: one that was moved (another URL or
+		// auth kind) after the target was read is never sent to the target's URL.
+		secret, found, err := d.Catalog.ServerSecret(ctx, *server)
 		if err != nil {
 			return "", nil, err
 		}
-		if !ok {
+		switch found {
+		case catalog.SecretFound:
+			return secret, nil, nil
+		case catalog.SecretNotSet:
 			e := failed(domain.OutcomeTransportError, domain.TextRejected(server.Name))
 			return "", &e, nil
+		case catalog.SecretMoved:
+			// Lost the configuration race, as a personal credential does (unavailable).
+			e := failed(domain.OutcomeTransportError, domain.TextTransport(server.Name))
+			return "", &e, nil
+		default:
+			return "", nil, fmt.Errorf("gateway: unknown secret lookup %q", string(found))
 		}
-		return secret, nil, nil
 	}
 	r, err := d.Credentials.ResolveForSending(ctx, userID, *server, forceRefresh)
 	if err != nil {

@@ -16,8 +16,9 @@ type fakeCatalog struct {
 	view    catalog.ToolView
 	target  *catalog.ServerCallTarget
 	secret  string
-	has     bool
+	found   catalog.SecretLookup
 	secErr  error
+	asked   *catalog.ServerCallTarget // the target GetServerSecretFor was given
 }
 
 func (f fakeCatalog) GetToolFor(context.Context, catalog.Principal, string) (catalog.ToolView, error) {
@@ -28,8 +29,11 @@ func (f fakeCatalog) GetServerForUpstream(context.Context, string) (*catalog.Ser
 	return f.target, nil
 }
 
-func (f fakeCatalog) GetServerSecret(context.Context, string) (string, bool, error) {
-	return f.secret, f.has, f.secErr
+func (f fakeCatalog) GetServerSecretFor(_ context.Context, target catalog.ServerCallTarget) (string, catalog.SecretLookup, error) {
+	if f.asked != nil {
+		*f.asked = target
+	}
+	return f.secret, f.found, f.secErr
 }
 
 func TestToolForMapsBusinessRefusalsToNotFoundAndKeepsUnexpectedErrors(t *testing.T) {
@@ -62,21 +66,23 @@ func TestToolForMapsBusinessRefusalsToNotFoundAndKeepsUnexpectedErrors(t *testin
 
 func TestServerForAndSecretPassThrough(t *testing.T) {
 	target := &catalog.ServerCallTarget{Slug: "gitea"}
-	c := toolCatalog{api: fakeCatalog{target: target, secret: "", has: true}}
+	c := toolCatalog{api: fakeCatalog{target: target}}
 	got, err := c.ServerFor(context.Background(), "gitea")
 	if err != nil || got != target {
 		t.Fatalf("%v %v", got, err)
 	}
-	secret, ok, err := c.ServerSecret(context.Background(), "gitea")
-	if err != nil || !ok || secret != "" {
-		t.Fatalf("an empty secret that is set stays set: %q %v %v", secret, ok, err)
+	var asked catalog.ServerCallTarget
+	c = toolCatalog{api: fakeCatalog{secret: "", found: catalog.SecretFound, asked: &asked}}
+	secret, found, err := c.ServerSecret(context.Background(), *target)
+	if err != nil || found != catalog.SecretFound || secret != "" || asked != *target {
+		t.Fatalf("an empty secret that is set stays set, for the target given: %q %v %v %+v", secret, found, err, asked)
 	}
-	none := toolCatalog{api: fakeCatalog{}}
-	if _, ok, _ := none.ServerSecret(context.Background(), "gitea"); ok {
-		t.Fatal("no secret set")
+	moved := toolCatalog{api: fakeCatalog{found: catalog.SecretMoved}}
+	if _, found, _ := moved.ServerSecret(context.Background(), *target); found != catalog.SecretMoved {
+		t.Fatal("moved passes through")
 	}
 	boom := errors.New("key mismatch")
-	if _, _, err := (toolCatalog{api: fakeCatalog{secErr: boom}}).ServerSecret(context.Background(), "gitea"); !errors.Is(err, boom) {
+	if _, _, err := (toolCatalog{api: fakeCatalog{secErr: boom}}).ServerSecret(context.Background(), *target); !errors.Is(err, boom) {
 		t.Fatal(err)
 	}
 }
