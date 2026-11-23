@@ -125,9 +125,19 @@ type fakeGateway struct {
 	rows     []gateway.CallRecord
 	listErr  error
 	echoArgs bool
+	// onCall, when set, runs before the n-th call (1-based) is recorded, outside the lock.
+	onCall  func(ctx context.Context, n int)
+	started int
 }
 
-func (f *fakeGateway) CallTool(_ context.Context, c gateway.CallToolCommand) (gateway.ToolResult, error) {
+func (f *fakeGateway) CallTool(ctx context.Context, c gateway.CallToolCommand) (gateway.ToolResult, error) {
+	f.mu.Lock()
+	f.started++
+	n, hook := f.started, f.onCall
+	f.mu.Unlock()
+	if hook != nil {
+		hook(ctx, n)
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, c)
@@ -242,6 +252,7 @@ type env struct {
 	con       *fakeConnections
 	search    *fakeSearch
 	gw        *fakeGateway
+	srv       *http.Server
 	logs      *bytes.Buffer
 	logMu     *sync.Mutex
 }
@@ -301,6 +312,7 @@ func newEnv(t *testing.T, allowedHosts ...string) *env {
 	)
 	router := httpx.NewRouter(routes, prefixes, httpx.NotFound())
 	srv := &http.Server{Handler: httpx.LargeBodyLimit(testLimit)(router), ReadHeaderTimeout: 10 * time.Second}
+	e.srv = srv
 	go func() { _ = srv.Serve(ln) }()
 	t.Cleanup(func() { _ = srv.Close() })
 	return e

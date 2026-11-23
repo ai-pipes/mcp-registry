@@ -642,18 +642,24 @@ func TestShutdownCancelsACallInFlightAndStillWritesTheRow(t *testing.T) {
 		<-c.Done()
 		return c.Err()
 	}}}
-	done := make(chan error, 1)
+	type answer struct {
+		res domain.ToolResult
+		err error
+	}
+	done := make(chan answer, 1)
 	go func() {
-		_, err := app.CallTool(context.Background(), h.d, app.CallToolCommand{Principal: h.alice, Ref: "gitea.create_issue", Arguments: []byte(`{}`)})
-		done <- err
+		res, err := app.CallTool(context.Background(), h.d, app.CallToolCommand{Principal: h.alice, Ref: "gitea.create_issue", Arguments: []byte(`{}`)})
+		done <- answer{res, err}
 	}()
 	<-started
 	shutdown()
 	select {
-	case err := <-done:
-		if err == nil {
-			t.Fatal("want the cancellation as an error (Internal error. at the edge)")
+	case a := <-done:
+		// The call was cut by the shutdown: the server's transport text, not Internal error.
+		if a.err != nil {
+			t.Fatalf("err %v, want the transport answer", a.err)
 		}
+		wantText(t, a.res, "Gitea is unavailable.")
 	case <-time.After(10 * time.Second):
 		t.Fatal("the call in flight was not cancelled by BaseContext")
 	}
@@ -719,5 +725,29 @@ func TestConcurrentCallsDoNotMixAnswers(t *testing.T) {
 	wg.Wait()
 	if len(h.log.entries) != 20 || len(h.up.calls) != 20 {
 		t.Fatalf("rows %d calls %d", len(h.log.entries), len(h.up.calls))
+	}
+}
+
+// A panic inside the call is an unexpected failure: the row is still written (transport_error, as
+// the reference's finally records it) and the caller gets an error that does not carry the value.
+func TestAPanicInTheCallStillWritesTheRowAndIsAnError(t *testing.T) {
+	const value = "PANIC-VALUE-31337"
+	for name, setup := range map[string]func(h *harness){
+		"upstream":  func(h *harness) { h.up.steps = []upstreamStep{{wait: func(context.Context) error { panic(value) }}} },
+		"catalog":   func(h *harness) { h.cat.onServerFor = func() { panic(value) } },
+		"validator": func(h *harness) { h.val.panicWith = value },
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness()
+			setup(h)
+			res, err := h.call(context.Background(), "gitea.create_issue", `{}`)
+			if err == nil || strings.Contains(err.Error(), value) || len(res.Content) != 0 {
+				t.Fatalf("err %v, answer %s", err, res.JSON())
+			}
+			h.wantOneRow(t, domain.OutcomeTransportError)
+			if strings.Contains(h.lg.text(), value) {
+				t.Fatalf("the log carries the panic value: %s", h.lg.text())
+			}
+		})
 	}
 }

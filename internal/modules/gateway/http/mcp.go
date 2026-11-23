@@ -440,29 +440,44 @@ func (x *exchange) batch(raw []byte) {
 		x.w.WriteHeader(http.StatusAccepted)
 		return
 	}
-	// The answers are written once, into the one buffer that becomes the body.
-	// Every request runs; a request id answered already is not answered again (the reference maps
-	// answers to the stream by id, so a repeated id gets one answer, the first).
-	var b bytes.Buffer
-	b.WriteByte('[')
+	// The status is decided: the answers are written as each request is done (one element at a
+	// time, flushed), never gathered in memory. The requests run one after another; once the
+	// client has gone the rest are not run. A request id answered already is not answered again
+	// (the reference maps answers to the stream by id, so a repeated id gets one answer, the
+	// first), though its request runs.
+	ctx := x.r.Context()
+	rc := http.NewResponseController(x.w)
 	answered := map[string]bool{}
 	for _, m := range msgs {
 		if m.kind != kindRequest {
 			continue
+		}
+		if ctx.Err() != nil {
+			return
 		}
 		o := x.classic(m)
 		key := idKey(m.id)
 		if answered[key] {
 			continue
 		}
-		if len(answered) > 0 {
+		var b bytes.Buffer
+		if len(answered) == 0 {
+			x.w.Header().Set("Content-Type", "application/json")
+			x.w.WriteHeader(http.StatusOK)
+			b.WriteByte('[')
+		} else {
 			b.WriteByte(',')
 		}
 		answered[key] = true
 		writeAnswer(&b, o, m.id)
+		if _, err := x.w.Write(b.Bytes()); err != nil {
+			return
+		}
+		_ = rc.Flush()
 	}
-	b.WriteByte(']')
-	writeJSON(x.w, http.StatusOK, b.Bytes())
+	if len(answered) > 0 {
+		_, _ = x.w.Write([]byte{']'})
+	}
 }
 
 // outcome is the result object (raw JSON) or the error of one request.

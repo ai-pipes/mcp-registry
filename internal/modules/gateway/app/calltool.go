@@ -56,7 +56,7 @@ func CallTool(ctx context.Context, d Deps, c CallToolCommand) (domain.ToolResult
 		server, tool = s, t
 	}
 	outcome := domain.OutcomeTransportError
-	res, err := run(call, d, c)
+	res, err := guarded(call, d, c)
 	if err == nil {
 		outcome = res.outcome
 	}
@@ -98,6 +98,23 @@ func record(call context.Context, d Deps, e CallLogEntry) {
 	if err := d.CallLog.Record(wctx, e); err != nil {
 		d.Logger.Error("gateway: call log record failed", "err", kernel.ErrorLabel(err), "server", e.Server, "tool", e.Tool, "outcome", string(e.Outcome))
 	}
+}
+
+// errCallPanicked is the error of a call that panicked: the panic value is never kept (it could
+// quote the arguments or a result), only this fixed text and its type's name reach the log.
+type errCallPanicked struct{}
+
+func (errCallPanicked) Error() string { return "gateway: call_tool panicked" }
+
+// guarded is run with a panic turned into errCallPanicked, so that the row is written as the
+// reference's finally writes it (transport_error) and the caller answers Internal error.
+func guarded(ctx context.Context, d Deps, c CallToolCommand) (res ended, err error) {
+	defer func() {
+		if recover() != nil {
+			res, err = ended{}, errCallPanicked{}
+		}
+	}()
+	return run(ctx, d, c)
 }
 
 func run(ctx context.Context, d Deps, c CallToolCommand) (ended, error) {
@@ -196,7 +213,8 @@ func credentialFailure(d Deps, server *catalog.ServerCallTarget, f domain.Creden
 func publicURL(d Deps) string { return strings.TrimRight(d.PublicURL, "/") }
 
 // attempt is one upstream call. unauthorized is true when upstream answered 401; any other
-// upstream failure is an answer; an error that is not an upstream failure is unexpected.
+// upstream failure is an answer, and so is a call cut by the shutdown; any other error that is not
+// an upstream failure is unexpected.
 func attempt(ctx context.Context, d Deps, server *catalog.ServerCallTarget, tool string, args json.RawMessage, secret string) (res ended, unauthorized bool, err error) {
 	target := kernel.UpstreamTarget{
 		URL:              server.URL,
@@ -208,6 +226,11 @@ func attempt(ctx context.Context, d Deps, server *catalog.ServerCallTarget, tool
 	if err != nil {
 		ue, isUpstream := kernel.AsUpstreamError(err)
 		if !isUpstream {
+			if ctx.Err() != nil {
+				// The call's context is detached from the client's: only the shutdown ends it (its
+				// grace is over). The server did not answer in time: its transport text.
+				return failed(domain.OutcomeTransportError, domain.TextTransport(server.Name)), false, nil
+			}
 			return ended{}, false, err
 		}
 		if ue.Kind == kernel.UpstreamUnauthorized {
@@ -267,9 +290,10 @@ func expire(ctx context.Context, d Deps, server *catalog.ServerCallTarget, userI
 	return failed(domain.OutcomeDeniedExpired, domain.TextExpired(server.Name, publicURL(d))), nil
 }
 
-// refreshAndRetry forces one refresh. The same secret back means no refresh happened (the
-// provider is down and the unexpired token was reused): nothing is expired and upstream is not
-// asked again. A different secret is tried once; a second 401 expires the connection.
+// refreshAndRetry forces one refresh. The forced resolve returning the secret upstream just
+// rejected (see domain.RefreshedSecretSame) is answered as unavailable: nothing is expired and
+// upstream is not asked again. A different secret is tried once; a second 401 expires the
+// connection.
 func refreshAndRetry(ctx context.Context, d Deps, server *catalog.ServerCallTarget, userID, tool string, args json.RawMessage, rejected string) (ended, error) {
 	fresh, denied, err := secretFor(ctx, d, server, userID, true)
 	if err != nil {

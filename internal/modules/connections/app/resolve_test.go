@@ -288,8 +288,8 @@ func TestResolveForceRefresh(t *testing.T) {
 	gate := make(chan struct{})
 	h.oauth.gate = gate
 	h.oauth.entered = make(chan string, 4)
-	configs := make(chan struct{}, 2)
-	h.dir.onConfig = func() { configs <- struct{}{} }
+	h.dir.onConfig = nil
+	h.j.reset()
 	replica := h.replica()
 	var wg sync.WaitGroup
 	results := make([]app.CredentialResult, 2)
@@ -301,9 +301,16 @@ func TestResolveForceRefresh(t *testing.T) {
 			results[i], errs[i] = app.ResolveWithoutSending(ctx, d, app.ResolveQuery{UserID: "alice", Server: "gitea", ForceRefresh: true})
 		}()
 	}
-	<-configs
-	<-configs
+	// Both read the stored row before the first one (held in the provider call) writes A3. Each
+	// caller reads the configuration twice, so waiting on those reads would let one caller supply
+	// both; the row reads are one per caller (journalled once the snapshot is taken).
 	<-h.oauth.entered
+	for deadline := time.Now().Add(10 * time.Second); countOf(h.j.all(), "store.get") < 2; {
+		if time.Now().After(deadline) {
+			t.Fatal("the second caller never read the row")
+		}
+		runtime.Gosched()
+	}
 	close(gate)
 	wg.Wait()
 	wantOK(t, results[0], errs[0], "A3")

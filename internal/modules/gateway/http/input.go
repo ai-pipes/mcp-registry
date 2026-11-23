@@ -44,7 +44,10 @@ func invalidType(expected, received string) string {
 	return "Invalid input: expected " + expected + ", received " + received
 }
 
-// str is z.string().min(lo).max(hi) (code points); ok is false when the value is not a string.
+// str is z.string().min(lo).max(hi); ok is false when the value is not a string. Lengths are code
+// points, as zod 4.6.7 measures them ($ZodCheckMaxLength: util.codePointLength, not String.length):
+// an astral character is one. A lone surrogate escape is decoded as U+FFFD, one code point, as
+// the lone surrogate JSON.parse keeps is one for zod.
 func (is *issues) str(path string, raw json.RawMessage, lo, hi int) (string, bool) {
 	if k := kindOf(raw); k != "string" {
 		is.add(path, invalidType("string", k))

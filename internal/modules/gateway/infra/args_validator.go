@@ -120,7 +120,8 @@ func (v *ArgsValidator) Validate(ref string, schema, args json.RawMessage) app.A
 	}
 	if cycle := findRefCycle(verr); cycle {
 		// A schema that refers to itself without consuming any data cannot be applied: not enforced,
-		// never a refusal (its text would name the internal base address).
+		// never a refusal (its text would name the internal base address). checkBounds already
+		// refuses every reference cycle at compile time; this stays as a second line.
 		if e.disabled.CompareAndSwap(false, true) {
 			v.warnOnce(ref, errRefCycle)
 		}
@@ -250,6 +251,7 @@ func compile(raw json.RawMessage) (*jsonschema.Schema, error) {
 	c := jsonschema.NewCompiler()
 	c.DefaultDraft(d.draft)
 	c.AssertFormat()
+	c.UseRegexpEngine(neverCompiled)
 	// Only the formats the reference checks are checked: the library also asserts these four.
 	for _, name := range []string{"iri", "iri-reference", "period", "semver"} {
 		c.RegisterFormat(&jsonschema.Format{Name: name, Validate: func(any) error { return nil }})
@@ -257,7 +259,14 @@ func compile(raw json.RawMessage) (*jsonschema.Schema, error) {
 	if err := c.AddResource(schemaBase, doc); err != nil {
 		return nil, err
 	}
-	return c.Compile(schemaBase)
+	sch, err := c.Compile(schemaBase)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkBounds(sch); err != nil {
+		return nil, err
+	}
+	return sch, nil
 }
 
 // firstLeaf is the offence reported to the agent. The library evaluates the properties of an

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 
@@ -26,14 +27,19 @@ type metaCatalog struct {
 	closed  map[string]map[string]bool
 	listErr error
 	toolErr error
-	reads   int
-	lookups []string
+	// panicList / panicTool make the reads panic (a bug in a module read).
+	panicList, panicTool bool
+	reads                int
+	lookups              []string
 }
 
 func (c *metaCatalog) ListServersFor(_ context.Context, p app.Principal) ([]catalog.MemberServerView, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.reads++
+	if c.panicList {
+		panic("PANIC-VALUE")
+	}
 	if c.listErr != nil {
 		return nil, c.listErr
 	}
@@ -50,6 +56,9 @@ func (c *metaCatalog) GetToolFor(_ context.Context, p app.Principal, ref string)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.lookups = append(c.lookups, ref)
+	if c.panicTool {
+		panic("PANIC-VALUE")
+	}
 	if c.toolErr != nil {
 		return catalog.ToolView{}, c.toolErr
 	}
@@ -66,9 +75,13 @@ func (c *metaCatalog) GetToolFor(_ context.Context, p app.Principal, ref string)
 type metaConnections struct {
 	byUser map[string][]connections.ConnectionSummary
 	err    error
+	panics bool
 }
 
 func (f *metaConnections) ListConnections(_ context.Context, p app.Principal) ([]connections.ConnectionSummary, error) {
+	if f.panics {
+		panic("PANIC-VALUE")
+	}
 	return f.byUser[p.UserID], f.err
 }
 
@@ -269,5 +282,28 @@ func TestDescribeToolIsTheToolOrTheNotFoundTextBeforeTheServersAreRead(t *testin
 	cat.toolErr, cat.listErr = nil, errors.New("db")
 	if _, err := app.DescribeTool(t.Context(), d, alice, "plain.a.b"); err == nil {
 		t.Fatal("a failed server read is not an error")
+	}
+}
+
+// A panic in a read that runs on a goroutine of its own is the use case's ordinary error, never
+// the end of the process (net/http recovers only the handler's goroutine).
+func TestAPanicInAParallelReadIsAnError(t *testing.T) {
+	for name, broken := range map[string]func(*app.MetaDeps){
+		"servers":     func(d *app.MetaDeps) { d.Catalog.(*metaCatalog).panicList = true },
+		"connections": func(d *app.MetaDeps) { d.Connections = &metaConnections{panics: true} },
+	} {
+		t.Run(name, func(t *testing.T) {
+			d, _, _ := metaFixture()
+			broken(&d)
+			if _, err := app.ListServers(t.Context(), d, alice); err == nil || strings.Contains(err.Error(), "PANIC-VALUE") {
+				t.Fatalf("err %v", err)
+			}
+		})
+	}
+	d, cat, srch := metaFixture()
+	srch.hits = []search.ToolHit{{Ref: "personal.create", Server: "personal", Score: 0.9}}
+	cat.panicTool = true
+	if _, err := app.SearchTools(t.Context(), d, app.SearchToolsQuery{Principal: alice, Query: "q", Limit: 2}); err == nil || strings.Contains(err.Error(), "PANIC-VALUE") {
+		t.Fatalf("err %v", err)
 	}
 }

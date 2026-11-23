@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
@@ -111,8 +110,9 @@ func TestMalformedNumbersTakeTheInvalidJSONPath(t *testing.T) {
 	}
 }
 
-// Arguments over maxArgsBytes are not validated; the worst a smaller body can cost stays small.
-func TestOversizedArgumentsAreNotValidatedAndTheWorstCaseBelowIsCheap(t *testing.T) {
+// Arguments over maxArgsBytes are not validated; the worst shapes just below it still are (no
+// wall-clock assertion: the bound is what keeps one check small, see maxArgsBytes).
+func TestOversizedArgumentsAreNotValidatedAndTheWorstShapesBelowAre(t *testing.T) {
 	v, w := newValidator(t)
 	const arraySchema = `{"properties":{"a":{"type":"array","items":{"type":"integer","minimum":0}}}}`
 	const objectSchema = `{"additionalProperties":{"type":"string"}}`
@@ -140,7 +140,6 @@ func TestOversizedArgumentsAreNotValidatedAndTheWorstCaseBelowIsCheap(t *testing
 	if len(under) > maxArgsBytes {
 		t.Fatal("the test body is over the bound")
 	}
-	start := time.Now()
 	wantRefused(t, check(v, arraySchema, under), "/a/"+fmt.Sprint((maxArgsBytes-30)/2))
 	var sb strings.Builder
 	sb.WriteString(`{`)
@@ -150,14 +149,5 @@ func TestOversizedArgumentsAreNotValidatedAndTheWorstCaseBelowIsCheap(t *testing
 	sb.WriteString(`"z":"v"}`)
 	if got := check(v, objectSchema, sb.String()); !got.OK {
 		t.Fatalf("%+v", got)
-	}
-	// The bound for one validation of the worst body the bound allows: about 250 ms without
-	// -race (measured 0.17 to 0.22 s for the array); the race detector makes it several times slower.
-	limit := 250 * time.Millisecond
-	if raceEnabled {
-		limit = 2 * time.Second
-	}
-	if d := time.Since(start); d > 2*limit {
-		t.Fatalf("the two worst bodies took %s", d)
 	}
 }

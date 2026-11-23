@@ -33,8 +33,10 @@ type RefreshResult string
 const (
 	// RefreshedSecretChanged: the forced resolve returned a secret other than the rejected one.
 	RefreshedSecretChanged RefreshResult = "secret_changed"
-	// RefreshedSecretSame: it returned the very secret upstream just rejected (no refresh
-	// happened, e.g. the provider is down and the unexpired token was reused).
+	// RefreshedSecretSame: it returned the very secret upstream just rejected. Known causes: the
+	// forced resolve joined a renewal of the same person and server that was not forced and whose
+	// provider call got no answer (that renewal hands out the unexpired token), or the provider
+	// answered the refresh with the same access token.
 	RefreshedSecretSame RefreshResult = "secret_same"
 	// RefreshFailed: the forced resolve returned no secret (a credential failure).
 	RefreshFailed RefreshResult = "refresh_failed"

@@ -157,14 +157,12 @@ func TestReferenceCyclesAreNotEnforcedAndNeverNameTheBase(t *testing.T) {
 	}
 }
 
-// A recursive schema that terminates is still enforced.
-func TestRecursiveSchemasThatTerminateAreEnforced(t *testing.T) {
-	v, _ := newValidator(t)
+// A recursive schema is not enforced either, even one that terminates on every finite argument:
+// whether the recursion stays cheap cannot be told from the schema (see
+// TestASchemaWhoseReferencesFormACycleIsNotEnforced).
+func TestRecursiveSchemasAreNotEnforced(t *testing.T) {
 	const s = `{"$defs":{"node":{"type":"object","properties":{"child":{"$ref":"#/$defs/node"},"n":{"type":"number"}}}},"$ref":"#/$defs/node"}`
-	wantRefused(t, check(v, s, `{"child":{"child":{"n":"x"}}}`), "/child/child/n")
-	if got := check(v, s, `{"child":{"child":{"n":1}}}`); !got.OK {
-		t.Fatal(got)
-	}
+	wantNotEnforced(t, s, errRefCycle, `{"child":{"child":{"n":"x"}}}`, `{"child":{"child":{"n":1}}}`)
 }
 
 func nested(depth int) string {

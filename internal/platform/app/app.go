@@ -103,8 +103,10 @@ func handler(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, webRoot
 
 func isMCP(path string) bool { return path == "/mcp" || strings.HasPrefix(path, "/mcp/") }
 
-// bodyLimits caps request bodies: mcpMax (MCP_MAX_BODY_BYTES, no read deadline: uploads can be
-// large and slow) for /mcp and /mcp/..., the 1 MiB default with a read deadline for everything else.
+// bodyLimits caps request bodies: mcpMax (MCP_MAX_BODY_BYTES, httpx.LargeBodyLimit: a longer read
+// deadline, and a body without a declared length is cut while the handler reads it, so the guards
+// of /mcp answer before it is read) for /mcp and /mcp/..., the 1 MiB default with a read deadline
+// for everything else.
 func bodyLimits(mcpMax int64) httpx.Middleware {
 	return func(next http.Handler) http.Handler {
 		rest, mcp := httpx.BodyLimit(restBodyLimit)(next), httpx.LargeBodyLimit(mcpMax)(next)

@@ -225,11 +225,14 @@ func (s *fakeStore) size() int {
 
 func (s *fakeStore) Get(c context.Context, userID, server string) (*domain.Connection, error) {
 	s.v.check(c, "store.get")
-	s.j.add("store.get")
 	if s.failGet != nil {
+		s.j.add("store.get")
 		return nil, s.failGet
 	}
-	if r, ok := s.snap(userID, server); ok {
+	// Journalled once the snapshot is taken: a test that waits for the entry knows the row was read.
+	r, ok := s.snap(userID, server)
+	s.j.add("store.get")
+	if ok {
 		return domain.Restore(r), nil
 	}
 	return nil, nil

@@ -36,7 +36,7 @@ func limitServer(t *testing.T, limit int64, seen func(*http.Request, []byte)) *h
 		}
 		_, _ = w.Write([]byte(strconv.Itoa(len(b))))
 	})
-	srv := httptest.NewServer(Chain(next, newBodyLimit(limit, 0), CSRF(testOrigin)))
+	srv := httptest.NewServer(Chain(next, newBodyLimit(limit, 0, true), CSRF(testOrigin)))
 	t.Cleanup(srv.Close)
 	return srv
 }
@@ -111,7 +111,7 @@ func TestHandlersSeeTheSameBytesAfterTheReadAhead(t *testing.T) {
 // hono does nothing for GET and HEAD (they have no body there) and TRACE is a GET; every other
 // method is limited, by its declared length too.
 func TestMethodsTheTypeScriptLimiterIgnores(t *testing.T) {
-	h := Chain(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) }), newBodyLimit(100, 0))
+	h := Chain(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) }), newBodyLimit(100, 0, true))
 	for _, tc := range []struct {
 		method string
 		want   int
@@ -162,7 +162,6 @@ func TestReadDeadlineIsSetForABodyAndClearedWhenItIsRead(t *testing.T) {
 	}{
 		{"declared body", BodyLimit(100), "POST", "hello", 5, true},
 		{"chunked body", BodyLimit(100), "POST", "hello", -1, true},
-		{"large-upload limiter sets none", LargeBodyLimit(100), "POST", "hello", 5, false},
 		{"no body", BodyLimit(100), "POST", "", 0, false},
 		{"GET", BodyLimit(100), "GET", "hello", 5, false},
 	} {
@@ -225,7 +224,7 @@ func TestStalledBodyTimesOut(t *testing.T) {
 				readErr <- err
 				w.WriteHeader(408)
 			})
-			srv := httptest.NewServer(newBodyLimit(1000, 150*time.Millisecond)(next))
+			srv := httptest.NewServer(newBodyLimit(1000, 150*time.Millisecond, true)(next))
 			t.Cleanup(srv.Close)
 			rawRequest(t, srv, tc.head+tc.partial)
 			select {
@@ -254,7 +253,7 @@ func TestSlowHandlerKeepsItsContextAfterTheBody(t *testing.T) {
 		ctxErr <- r.Context().Err()
 		w.WriteHeader(204)
 	})
-	srv := httptest.NewServer(newBodyLimit(1000, timeout)(next))
+	srv := httptest.NewServer(newBodyLimit(1000, timeout, true)(next))
 	t.Cleanup(srv.Close)
 	for _, body := range []io.Reader{strings.NewReader("hello"), io.NopCloser(strings.NewReader("hello"))} {
 		res, err := srv.Client().Post(srv.URL+"/x", "text/plain", body)

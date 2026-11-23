@@ -100,6 +100,8 @@ type fakeValidator struct {
 	bad   *app.ArgsCheck
 	seen  []string
 	schem []string
+	// panicWith, when set, is the value Validate panics with.
+	panicWith string
 }
 
 func (v *fakeValidator) Validate(ref string, schema, args json.RawMessage) app.ArgsCheck {
@@ -107,6 +109,9 @@ func (v *fakeValidator) Validate(ref string, schema, args json.RawMessage) app.A
 	defer v.mu.Unlock()
 	v.seen = append(v.seen, string(args))
 	v.schem = append(v.schem, ref+"|"+string(schema))
+	if v.panicWith != "" {
+		panic(v.panicWith)
+	}
 	if v.bad != nil {
 		return *v.bad
 	}

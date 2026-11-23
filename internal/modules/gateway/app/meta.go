@@ -49,8 +49,16 @@ func usableServers(ctx context.Context, d MetaDeps, p Principal) (usable, error)
 		srvErr, connErr error
 	)
 	wg.Add(2)
-	go func() { defer wg.Done(); servers, srvErr = d.Catalog.ListServersFor(ctx, p) }()
-	go func() { defer wg.Done(); conns, connErr = listConnections(ctx, d, p) }()
+	go func() {
+		defer wg.Done()
+		defer recoverInto(&srvErr)
+		servers, srvErr = d.Catalog.ListServersFor(ctx, p)
+	}()
+	go func() {
+		defer wg.Done()
+		defer recoverInto(&connErr)
+		conns, connErr = listConnections(ctx, d, p)
+	}()
 	wg.Wait()
 	if srvErr != nil {
 		return usable{}, srvErr
@@ -172,6 +180,7 @@ func SearchTools(ctx context.Context, d MetaDeps, q SearchToolsQuery) (SearchToo
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			defer recoverInto(&errs[i])
 			tools[i], errs[i] = toolFor(ctx, d, q.Principal, hit.Ref)
 		}()
 	}
@@ -247,4 +256,18 @@ func DescribeTool(ctx context.Context, d MetaDeps, p Principal, ref string) (Des
 		Ref: t.Ref, Server: t.Server, Title: t.Title, Description: t.Description,
 		InputSchema: input, OutputSchema: t.OutputSchema, Annotations: t.Annotations, Connection: u.connectionOf(t.Server),
 	}}, nil
+}
+
+// errReadPanicked is the error of a read that panicked in one of the use cases' goroutines (where
+// net/http's recovery does not reach: the process would end). The value is never kept.
+type errReadPanicked struct{}
+
+func (errReadPanicked) Error() string { return "gateway: a read panicked" }
+
+// recoverInto, deferred in a goroutine, turns a panic into errReadPanicked in *err: the use case
+// then fails with its ordinary internal error.
+func recoverInto(err *error) {
+	if recover() != nil {
+		*err = errReadPanicked{}
+	}
 }

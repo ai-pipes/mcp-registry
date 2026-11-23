@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"reflect"
@@ -241,6 +242,10 @@ func TestARefusedToolCallIsAnIsErrorResultNamingTheField(t *testing.T) {
 		{"describe_tool", map[string]any{"tool": 5}, "tool", "tool: Invalid input: expected string, received number"},
 		{"describe_tool", map[string]any{"tool": ""}, "tool", "tool: Too small: expected string to have >=1 characters"},
 		{"describe_tool", map[string]any{"tool": strings.Repeat("t", 301)}, "tool", "tool: Too big: expected string to have <=300 characters"},
+		// zod 4.6.7 counts code points: an astral character is one.
+		{"search_tools", map[string]any{"query": strings.Repeat("😀", 501)}, "query", "query: Too big: expected string to have <=500 characters"},
+		{"describe_tool", map[string]any{"tool": strings.Repeat("😀", 301)}, "tool", "tool: Too big: expected string to have <=300 characters"},
+		{"search_tools", map[string]any{"query": "x", "servers": []string{strings.Repeat("😀", 65)}}, "servers.0", "servers.0: Too big: expected string to have <=64 characters"},
 		{"describe_tool", map[string]any{}, "tool", "tool: Invalid input: expected string, received undefined"},
 		{"call_tool", map[string]any{"tool": "a.b", "arguments": "no"}, "arguments", "arguments: Invalid input: expected record, received string"},
 		{"call_tool", map[string]any{"tool": "a.b", "arguments": []int{}}, "arguments", "arguments: Invalid input: expected record, received array"},
@@ -258,7 +263,7 @@ func TestARefusedToolCallIsAnIsErrorResultNamingTheField(t *testing.T) {
 	if n := len(e.gw.calls) + len(e.search.calls); n != 0 {
 		t.Fatalf("a refused input reached the use cases %d times", n)
 	}
-	// The boundaries are accepted, code points are counted.
+	// The boundaries are accepted, code points are counted (zod 4.6.7).
 	for _, args := range []map[string]any{{"query": "x", "limit": 25}, {"query": "x", "limit": 1}, {"query": strings.Repeat("q", 500)}, {"query": strings.Repeat("😀", 500)}, {"query": "x", "limit": 2.0}} {
 		if res := e.toolsCall(t, aliceToken, "search_tools", args); res["isError"] != nil {
 			t.Errorf("search_tools %.60v: %v", args, res)
@@ -266,6 +271,9 @@ func TestARefusedToolCallIsAnIsErrorResultNamingTheField(t *testing.T) {
 	}
 	if res := e.toolsCall(t, aliceToken, "describe_tool", map[string]any{"tool": strings.Repeat("😀", 300)}); strings.HasPrefix(resultText(res), "Input validation") {
 		t.Errorf("300 code points are refused: %v", res)
+	}
+	if res := e.toolsCall(t, aliceToken, "search_tools", map[string]any{"query": "x", "servers": []string{strings.Repeat("😀", 64)}}); strings.HasPrefix(resultText(res), "Input validation") {
+		t.Errorf("a server of 64 code points is refused: %v", res)
 	}
 }
 
@@ -390,6 +398,34 @@ func TestTheBodyLimitOfMCPIsItsOwn(t *testing.T) {
 	}
 	if r := e.post(t, aliceToken, pad(testLimit)); r.status != 200 {
 		t.Fatalf("exactly the limit: %d %.200s", r.status, r.body)
+	}
+	// A body without a declared length is not read before the guards: an anonymous one over the
+	// limit gets the bearer refusal, an authenticated one the same 413.
+	chunked := func(body string, hdr ...string) reply {
+		req, err := http.NewRequestWithContext(t.Context(), "POST", e.url+"/mcp", io.NopCloser(strings.NewReader(body)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, h := range append(append([]string{}, mcpHeaders...), hdr...) {
+			k, v, _ := strings.Cut(h, ":")
+			req.Header.Set(k, strings.TrimSpace(v))
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		b, _ := io.ReadAll(resp.Body)
+		return reply{status: resp.StatusCode, header: resp.Header, body: b}
+	}
+	if r := chunked(pad(testLimit + 1)); r.status != 401 || r.header.Get("Www-Authenticate") != "Bearer" {
+		t.Fatalf("anonymous, chunked, limit + 1: %d %.200s", r.status, r.body)
+	}
+	if r := chunked(pad(testLimit+1), "Authorization: Bearer "+aliceToken); r.status != 413 || errorCode(t, r) != "limit_exceeded|request body is too large" {
+		t.Fatalf("authenticated, chunked, limit + 1: %d %.200s", r.status, r.body)
+	}
+	if r := chunked(pad(testLimit), "Authorization: Bearer "+aliceToken); r.status != 200 {
+		t.Fatalf("authenticated, chunked, exactly the limit: %d %.200s", r.status, r.body)
 	}
 	// Arguments above the REST limit go through, as the agent sent them.
 	big := strings.Repeat("x", 600*1024)
