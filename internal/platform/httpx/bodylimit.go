@@ -13,6 +13,9 @@ const (
 	// routes only): a body trickled byte by byte would otherwise hold a goroutine and a connection
 	// for as long as the client likes.
 	bodyReadTimeout = 30 * time.Second
+	// largeBodyReadTimeout bounds the delivery of a large upload (/mcp): the 300 seconds of
+	// Node's default server.requestTimeout, which bounds the reference's whole request.
+	largeBodyReadTimeout = 300 * time.Second
 )
 
 // BodyLimit caps request bodies at limit bytes (a value below 1 means the default, 1 MiB) and
@@ -32,14 +35,20 @@ const (
 //     WriteDomainError turn into the same 413 answer.
 //
 // /mcp is not in this chain: it has its own, larger limit.
-func BodyLimit(limit int64) Middleware { return newBodyLimit(limit, bodyReadTimeout) }
+func BodyLimit(limit int64) Middleware { return newBodyLimit(limit, bodyReadTimeout, true) }
 
-// LargeBodyLimit is BodyLimit without the read deadline, for routes that carry large uploads
-// (/mcp) and may take long to deliver them.
-func LargeBodyLimit(limit int64) Middleware { return newBodyLimit(limit, 0) }
+// LargeBodyLimit is BodyLimit for routes that carry large uploads (/mcp): the delivery may take
+// up to largeBodyReadTimeout, and a body without a declared length is not read ahead (an
+// anonymous client must not make the server buffer up to the limit before the route's own
+// guards answer): it is cut at the limit while the handler reads it, which gives the handler the
+// same 413 path as a declared length. A declared length over the limit is still refused first.
+func LargeBodyLimit(limit int64) Middleware {
+	return newBodyLimit(limit, largeBodyReadTimeout, false)
+}
 
-// newBodyLimit is BodyLimit with the read deadline as a parameter (0: none); tests pass a short one.
-func newBodyLimit(limit int64, readTimeout time.Duration) Middleware {
+// newBodyLimit is BodyLimit with the read deadline (0: none; tests pass a short one) and the
+// read-ahead of a body without a declared length as parameters.
+func newBodyLimit(limit int64, readTimeout time.Duration, readAhead bool) Middleware {
 	if limit < 1 {
 		limit = defaultBodyLimit
 	}
@@ -68,7 +77,7 @@ func newBodyLimit(limit int64, readTimeout time.Duration) Middleware {
 				}
 				// A writer without deadline support (http.ErrNotSupported) is served without one.
 			}
-			if r.ContentLength < 0 {
+			if r.ContentLength < 0 && readAhead {
 				buffered, readErr := io.ReadAll(io.LimitReader(r.Body, limit+1))
 				relax()
 				if int64(len(buffered)) > limit {

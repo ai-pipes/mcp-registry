@@ -155,8 +155,8 @@ type ToolView struct {
 	Hidden       bool
 }
 
-// ServerCallTarget is what the gateway needs to call an upstream. No secret: it is read
-// separately, on demand.
+// ServerCallTarget is what the gateway needs to call an upstream. No secret: it is read on demand
+// with GetServerSecretFor, which hands it out only while it belongs to this configuration.
 type ServerCallTarget struct {
 	Slug string
 	// Name is the display name, for messages to the agent.

@@ -248,7 +248,7 @@ func TestResolveTwoProcessesTheRowLockLetsOneRefresh(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			results[i], errs[i] = app.ResolveCredential(ctx, d, app.ResolveQuery{UserID: "alice", Server: "gitea"})
+			results[i], errs[i] = app.ResolveWithoutSending(ctx, d, app.ResolveQuery{UserID: "alice", Server: "gitea"})
 		}()
 	}
 	// Both read the stored row before the first one (held in the provider call) writes. A caller
@@ -288,8 +288,8 @@ func TestResolveForceRefresh(t *testing.T) {
 	gate := make(chan struct{})
 	h.oauth.gate = gate
 	h.oauth.entered = make(chan string, 4)
-	configs := make(chan struct{}, 2)
-	h.dir.onConfig = func() { configs <- struct{}{} }
+	h.dir.onConfig = nil
+	h.j.reset()
 	replica := h.replica()
 	var wg sync.WaitGroup
 	results := make([]app.CredentialResult, 2)
@@ -298,12 +298,19 @@ func TestResolveForceRefresh(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			results[i], errs[i] = app.ResolveCredential(ctx, d, app.ResolveQuery{UserID: "alice", Server: "gitea", ForceRefresh: true})
+			results[i], errs[i] = app.ResolveWithoutSending(ctx, d, app.ResolveQuery{UserID: "alice", Server: "gitea", ForceRefresh: true})
 		}()
 	}
-	<-configs
-	<-configs
+	// Both read the stored row before the first one (held in the provider call) writes A3. Each
+	// caller reads the configuration twice, so waiting on those reads would let one caller supply
+	// both; the row reads are one per caller (journalled once the snapshot is taken).
 	<-h.oauth.entered
+	for deadline := time.Now().Add(10 * time.Second); countOf(h.j.all(), "store.get") < 2; {
+		if time.Now().After(deadline) {
+			t.Fatal("the second caller never read the row")
+		}
+		runtime.Gosched()
+	}
 	close(gate)
 	wg.Wait()
 	wantOK(t, results[0], errs[0], "A3")
@@ -721,7 +728,7 @@ func TestResolveCancelledCallerReturnsWhileTheRefreshCompletes(t *testing.T) {
 	cctx, cancel := context.WithCancel(ctx)
 	returned := make(chan error, 1)
 	go func() {
-		_, err := app.ResolveCredential(cctx, h.d, app.ResolveQuery{UserID: "alice", Server: "gitea"})
+		_, err := app.ResolveWithoutSending(cctx, h.d, app.ResolveQuery{UserID: "alice", Server: "gitea"})
 		returned <- err
 	}()
 	<-h.oauth.entered // the refresh is under way, started by the caller above
@@ -786,7 +793,7 @@ func bothInFlight(t *testing.T, h *harness, a, b app.ResolveQuery) (string, stri
 	for i, q := range []app.ResolveQuery{a, b} {
 		ch[i] = make(chan out, 1)
 		go func() {
-			r, err := app.ResolveCredential(ctx, h.d, q)
+			r, err := app.ResolveWithoutSending(ctx, h.d, q)
 			ch[i] <- out{r, err}
 		}()
 	}

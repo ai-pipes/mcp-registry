@@ -14,7 +14,7 @@
 #                           other modules
 #   no-inward-infra         domain and app never import infra, http or platform
 #   deps-only-in-infra      pgx, go-oidc and x/oauth2 only in infra (and platform); the MCP SDK also
-#                           in http; x/term only in the composition (platform); the local embedder's
+#                           in http; the JSON Schema library only in gateway/infra (and platform); x/term only in the composition (platform); the local embedder's
 #                           libraries (onnx, daulet-tokenizers, x-text) only in search/infra (and
 #                           platform), not in another module's infra
 #   modules-via-index       another module is imported only by its root package; a module's http
@@ -78,6 +78,13 @@ vendors:
       - golang.org/x/term/**
   mcp-sdk:
     in: github.com/modelcontextprotocol/go-sdk/**
+  # The JSON Schema library that checks a call's arguments: the gateway's infra only (the tests
+  # and the compat harness use it too, which the lint does not look at: tests of the other
+  # modules are in platform, which has anyVendorDeps).
+  jsonschema:
+    in:
+      - github.com/santhosh-tekuri/jsonschema/v6
+      - github.com/santhosh-tekuri/jsonschema/v6/**
   testcontainers:
     in: github.com/testcontainers/**
 
@@ -455,6 +462,7 @@ deps:
       - go-oidc
       - x-oauth2
       - mcp-sdk
+      - jsonschema
   gateway-http:
     mayDependOn:
       - gateway-http

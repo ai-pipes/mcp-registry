@@ -36,7 +36,7 @@ type flightCall[T any] struct {
 // refresh token must get its answer stored). Build it with NewSingleFlight.
 //
 // When the 30 s bound elapses the work's context ends and every waiter receives whatever fn returns
-// for an ended context: for ResolveCredential the provider call fails as "no answer" (the unexpired
+// for an ended context: for a resolve the provider call fails as "no answer" (the unexpired
 // access token is used, else FailureUnavailable) or, when the bound ends while waiting for the row
 // lock, the store's error (an unexpected error, not a CredentialFailure). Waiters are not cut off
 // separately: they return when fn does, or when their own context ends.

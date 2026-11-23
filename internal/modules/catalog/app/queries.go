@@ -72,6 +72,46 @@ func GetServerSecret(ctx context.Context, deps Deps, slug string) (secret string
 	return plain, true, nil
 }
 
+// SecretLookup is what GetServerSecretFor found.
+type SecretLookup string
+
+const (
+	// SecretFound means the secret belongs to the caller's configuration and is returned.
+	SecretFound SecretLookup = "found"
+	// SecretNotSet means the caller's configuration holds, but no secret is set.
+	SecretNotSet SecretLookup = "not_set"
+	// SecretMoved means the server no longer sends its secret where the caller's target would (another
+	// auth kind; for shared_secret another URL; for oauth_user another token URL, revoke URL or
+	// client ID), or it is gone. Nothing is opened or returned.
+	SecretMoved SecretLookup = "moved"
+)
+
+// GetServerSecretFor is the opened server secret for a caller that holds a configuration read
+// earlier (target): the secret and the configuration it is judged against come from ONE read of
+// the server, and the secret is returned only when it belongs to the target's destination
+// (domain Server.SecretGoesTo). An edit that moves the secret clears it in the same write, so the
+// stored secret always belongs to the stored configuration and there is no window between two
+// reads (nor an ABA: a configuration that changed and came back holds only a secret set for it).
+// The status is not judged (the caller has its own rule). A secret no key opens is an error.
+func GetServerSecretFor(ctx context.Context, deps Deps, target ServerCallTarget) (string, SecretLookup, error) {
+	server, err := deps.Servers.FindBySlug(ctx, target.Slug)
+	if err != nil {
+		return "", "", err
+	}
+	if server == nil || !server.SecretGoesTo(target.URL, target.Auth) {
+		return "", SecretMoved, nil
+	}
+	sealed := server.SealedSecret()
+	if sealed == nil {
+		return "", SecretNotSet, nil
+	}
+	plain, err := deps.Box.Open(sealed)
+	if err != nil {
+		return "", "", err
+	}
+	return plain, SecretFound, nil
+}
+
 // GetServerForUpstream returns the call parameters of an active server; nil when it is unknown or
 // disabled.
 func GetServerForUpstream(ctx context.Context, deps Deps, slug string) (*ServerCallTarget, error) {

@@ -49,6 +49,12 @@ func startReal(t *testing.T, url string, key []byte, edit func(*config.Config)) 
 // that runs without a module, or with another embedder, starts from modules(rt)).
 func startRealWith(t *testing.T, url string, key []byte, edit func(*config.Config), build func(Runtime) []Module) *realServer {
 	t.Helper()
+	return startRealOpts(t, url, key, edit, build, nil)
+}
+
+// startRealOpts is startRealWith with a hook on the Options (a test seam such as callsGrace).
+func startRealOpts(t *testing.T, url string, key []byte, edit func(*config.Config), build func(Runtime) []Module, opts func(*Options)) *realServer {
+	t.Helper()
 	cfg := baseConfig(url, key)
 	cfg.OIDCLoginGroup, cfg.OIDCAdminGroup = "mcp-users", "mcp-admins" // the defaults of config.Load
 	if edit != nil {
@@ -56,6 +62,9 @@ func startRealWith(t *testing.T, url string, key []byte, edit func(*config.Confi
 	}
 	rs := &realServer{url: url}
 	rs.instance = startInstance(t, cfg, func(o *Options) {
+		if opts != nil {
+			opts(o)
+		}
 		o.modules = func(rt Runtime) []Module {
 			rs.rt = rt
 			return build(rt)

@@ -26,7 +26,7 @@ func TestResolveWithTheExpectedConfigurationBehavesAsBefore(t *testing.T) {
 	h := newHarness(t)
 	h.seedOAuth(tp(at(-1000)), "R1", "alice") // a refresh is due
 	h.oauth.next = app.TokenSet{AccessToken: "A2", ExpiresAt: tp(at(3_600_000))}
-	r, err := app.ResolveCredential(ctx, h.d, app.ResolveQuery{UserID: "alice", Server: "gitea", Expect: h.expectOf(false)})
+	r, err := app.ResolveForSending(ctx, h.d, app.ResolveQuery{UserID: "alice"}, *h.expectOf(false))
 	wantOK(t, r, err, "A2")
 	if got := h.oauth.refreshed(); !slices.Equal(got, []string{"R1"}) {
 		t.Fatalf("refreshed %v", got)
@@ -42,7 +42,7 @@ func TestResolveWithAnotherExpectedConfigurationIsUnavailableAndTouchesNothing(t
 			h.seedOAuth(expires, "R1", "alice")
 			before, _ := h.store.snap("alice", "gitea")
 			h.j.reset()
-			r, err := app.ResolveCredential(ctx, h.d, app.ResolveQuery{UserID: "alice", Server: "gitea", Expect: h.expectOf(true)})
+			r, err := app.ResolveForSending(ctx, h.d, app.ResolveQuery{UserID: "alice"}, *h.expectOf(true))
 			wantFailure(t, r, err, app.FailureUnavailable)
 			after, _ := h.store.snap("alice", "gitea")
 			if !reflect.DeepEqual(before, after) {
@@ -78,7 +78,7 @@ func TestTwoCallersWithDifferentExpectationsEachGetTheirOwnAnswer(t *testing.T) 
 	}
 	good := make(chan out, 1)
 	go func() {
-		r, err := app.ResolveCredential(ctx, h.d, app.ResolveQuery{UserID: "alice", Server: "gitea", Expect: h.expectOf(false)})
+		r, err := app.ResolveForSending(ctx, h.d, app.ResolveQuery{UserID: "alice"}, *h.expectOf(false))
 		good <- out{r, err}
 	}()
 	select {
@@ -86,7 +86,7 @@ func TestTwoCallersWithDifferentExpectationsEachGetTheirOwnAnswer(t *testing.T) 
 	case <-time.After(10 * time.Second):
 		t.Fatal("the renewal never started")
 	}
-	r, err := app.ResolveCredential(ctx, h.d, app.ResolveQuery{UserID: "alice", Server: "gitea", Expect: h.expectOf(true)})
+	r, err := app.ResolveForSending(ctx, h.d, app.ResolveQuery{UserID: "alice"}, *h.expectOf(true))
 	wantFailure(t, r, err, app.FailureUnavailable)
 	close(gate)
 	g := <-good
@@ -124,7 +124,7 @@ func TestExpectationDiffersInAnyFingerprintedPartIsUnavailable(t *testing.T) {
 			h.seedOAuth(tp(at(3_600_000)), "R1", "alice")
 			exp := *h.expectOf(false)
 			change(&exp)
-			r, err := app.ResolveCredential(ctx, h.d, app.ResolveQuery{UserID: "alice", Server: "gitea", Expect: &exp})
+			r, err := app.ResolveForSending(ctx, h.d, app.ResolveQuery{UserID: "alice"}, exp)
 			wantFailure(t, r, err, app.FailureUnavailable)
 		})
 	}
@@ -135,7 +135,7 @@ func TestExpectationDiffersInAnyFingerprintedPartIsUnavailable(t *testing.T) {
 		o := *exp.OAuth
 		o.Scopes = []string{"more"}
 		exp.OAuth = &o
-		r, err := app.ResolveCredential(ctx, h.d, app.ResolveQuery{UserID: "alice", Server: "gitea", Expect: &exp})
+		r, err := app.ResolveForSending(ctx, h.d, app.ResolveQuery{UserID: "alice"}, exp)
 		wantOK(t, r, err, "A1")
 	})
 }
@@ -146,7 +146,7 @@ func TestNothingIsOpenedBeforeTheExpectationIsChecked(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			h := newHarness(t)
 			h.seedOAuth(expires, "R1", "alice")
-			r, err := app.ResolveCredential(ctx, h.d, app.ResolveQuery{UserID: "alice", Server: "gitea", Expect: h.expectOf(true)})
+			r, err := app.ResolveForSending(ctx, h.d, app.ResolveQuery{UserID: "alice"}, *h.expectOf(true))
 			wantFailure(t, r, err, app.FailureUnavailable)
 			if h.box.opens != 0 {
 				t.Fatalf("the box opened %d values", h.box.opens)
@@ -176,7 +176,7 @@ func TestCallersThatLoadedDifferentConfigurationsDoNotShareARenewal(t *testing.T
 	a := h.expectOf(false)
 	leader := make(chan out, 1)
 	go func() {
-		r, err := app.ResolveCredential(ctx, h.d, app.ResolveQuery{UserID: "alice", Server: "gitea", Expect: a})
+		r, err := app.ResolveForSending(ctx, h.d, app.ResolveQuery{UserID: "alice"}, *a)
 		leader <- out{r, err}
 	}()
 	select {
@@ -191,7 +191,7 @@ func TestCallersThatLoadedDifferentConfigurationsDoNotShareARenewal(t *testing.T
 	h.dir.mu.Unlock()
 	follower := make(chan out, 1)
 	go func() {
-		r, err := app.ResolveCredential(ctx, h.d, app.ResolveQuery{UserID: "alice", Server: "gitea", Expect: h.expectOf(false)})
+		r, err := app.ResolveForSending(ctx, h.d, app.ResolveQuery{UserID: "alice"}, *h.expectOf(false))
 		follower <- out{r, err}
 	}()
 	// Wait until the follower has read the secret of its own renewal: it did not join the leader's
@@ -236,10 +236,25 @@ func TestResolveRefusesWhenTheConfigurationChangedWhileTheClientSecretWasRead(t 
 		g.oauth = &o
 		g.clientSecret = "the-new-client-secret"
 	}
-	r, err := app.ResolveCredential(ctx, h.d, app.ResolveQuery{UserID: "alice", Server: "gitea"})
+	r, err := app.ResolveWithoutSending(ctx, h.d, app.ResolveQuery{UserID: "alice", Server: "gitea"})
 	wantFailure(t, r, err, app.FailureUnavailable)
 	after, _ := h.store.snap("alice", "gitea")
 	if !reflect.DeepEqual(before, after) || len(h.oauth.refreshed()) != 0 || len(h.audit.all()) != 0 {
 		t.Fatalf("something happened: refreshed %v, audit %s", h.oauth.refreshed(), h.audit.text())
+	}
+}
+
+// A caller that sends the secret somewhere must say where: the zero configuration is refused
+// before anything is read.
+func TestResolveForSendingWithoutAConfigurationIsRefused(t *testing.T) {
+	h := newHarness(t)
+	h.seedOAuth(tp(at(3_600_000)), "R1", "alice")
+	h.j.reset()
+	r, err := app.ResolveForSending(ctx, h.d, app.ResolveQuery{UserID: "alice", Server: "gitea"}, app.ServerConfig{})
+	if err == nil || r.Secret != "" {
+		t.Fatalf("got %v, %v", r, err)
+	}
+	if len(h.j.all()) != 0 {
+		t.Fatalf("something was read: %v", h.j.all())
 	}
 }

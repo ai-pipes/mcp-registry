@@ -91,6 +91,14 @@ func TestServiceAnswersWhatOtherModulesAsk(t *testing.T) {
 	if _, ok, err := svc.GetServerSecret(ctx, "beta"); ok || err != nil {
 		t.Fatalf("no secret: %v %v", ok, err)
 	}
+	if secret, found, err := svc.GetServerSecretFor(ctx, *target); err != nil || found != catalog.SecretFound || secret != "key" {
+		t.Fatalf("GetServerSecretFor: %q %v %v", secret, found, err)
+	}
+	moved := *target
+	moved.URL = "https://elsewhere.example.com/g"
+	if secret, found, err := svc.GetServerSecretFor(ctx, moved); err != nil || found != catalog.SecretMoved || secret != "" {
+		t.Fatalf("GetServerSecretFor, another URL: %q %v %v", secret, found, err)
+	}
 	slugs, err := svc.ListServerSlugs(ctx)
 	if err != nil || !reflect.DeepEqual(slugs, []string{"alpha", "beta"}) {
 		t.Fatalf("ListServerSlugs: %v %v", slugs, err)

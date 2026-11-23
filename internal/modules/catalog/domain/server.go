@@ -252,6 +252,15 @@ func (s *Server) UpdatedAt() time.Time { return s.s.UpdatedAt }
 // SecretSet returns the server's SecretSet.
 func (s *Server) SecretSet() bool { return s.s.SealedSecret != nil }
 
+// SecretGoesTo reports whether the stored secret belongs to the configuration url + auth (one a
+// caller read earlier): true unless an edit from this server's configuration to that one would
+// have cleared the secret (secretDestinationChanged). Since every edit that moves the secret
+// clears it in the same write, the stored secret always belongs to the stored configuration, so
+// this holds for the secret read together with it whatever happened in between.
+func (s *Server) SecretGoesTo(url string, auth AuthMode) bool {
+	return !secretDestinationChanged(editable{url: s.s.URL, auth: s.s.Auth}, editable{url: url, auth: auth})
+}
+
 // SecretChanged returns the server's SecretChanged.
 func (s *Server) SecretChanged() bool { return s.secretDirty }
 

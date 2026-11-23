@@ -1,0 +1,1430 @@
+[
+  {
+    "name": "init 2025-03-26",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"result\":{\"protocolVersion\":\"2025-03-26\",\"capabilities\":{\"tools\":{\"listChanged\":false}},\"serverInfo\":{\"name\":\"mcp-registry\",\"version\":\"1.0.1\"},\"instructions\":\"This server is a gateway to the user's services (git hosting, issue tracker and others). When a task needs one of them, call search_tools with a short description of the action, then describe_tool for the chosen tool, then call_tool. If nothing fits, continue without them. If a tool needs a connection, tell the user the link from the error.\"},\"jsonrpc\":\"2.0\",\"id\":1}\n\n"
+  },
+  {
+    "name": "init 2025-06-18",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"result\":{\"protocolVersion\":\"2025-06-18\",\"capabilities\":{\"tools\":{\"listChanged\":false}},\"serverInfo\":{\"name\":\"mcp-registry\",\"version\":\"1.0.1\"},\"instructions\":\"This server is a gateway to the user's services (git hosting, issue tracker and others). When a task needs one of them, call search_tools with a short description of the action, then describe_tool for the chosen tool, then call_tool. If nothing fits, continue without them. If a tool needs a connection, tell the user the link from the error.\"},\"jsonrpc\":\"2.0\",\"id\":1}\n\n"
+  },
+  {
+    "name": "init 2025-11-25",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"result\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"tools\":{\"listChanged\":false}},\"serverInfo\":{\"name\":\"mcp-registry\",\"version\":\"1.0.1\"},\"instructions\":\"This server is a gateway to the user's services (git hosting, issue tracker and others). When a task needs one of them, call search_tools with a short description of the action, then describe_tool for the chosen tool, then call_tool. If nothing fits, continue without them. If a tool needs a connection, tell the user the link from the error.\"},\"jsonrpc\":\"2.0\",\"id\":1}\n\n"
+  },
+  {
+    "name": "init 2024-11-05",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"result\":{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{\"tools\":{\"listChanged\":false}},\"serverInfo\":{\"name\":\"mcp-registry\",\"version\":\"1.0.1\"},\"instructions\":\"This server is a gateway to the user's services (git hosting, issue tracker and others). When a task needs one of them, call search_tools with a short description of the action, then describe_tool for the chosen tool, then call_tool. If nothing fits, continue without them. If a tool needs a connection, tell the user the link from the error.\"},\"jsonrpc\":\"2.0\",\"id\":1}\n\n"
+  },
+  {
+    "name": "init 1999-01-01",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"result\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"tools\":{\"listChanged\":false}},\"serverInfo\":{\"name\":\"mcp-registry\",\"version\":\"1.0.1\"},\"instructions\":\"This server is a gateway to the user's services (git hosting, issue tracker and others). When a task needs one of them, call search_tools with a short description of the action, then describe_tool for the chosen tool, then call_tool. If nothing fits, continue without them. If a tool needs a connection, tell the user the link from the error.\"},\"jsonrpc\":\"2.0\",\"id\":1}\n\n"
+  },
+  {
+    "name": "init 2026-07-28",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"result\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"tools\":{\"listChanged\":false}},\"serverInfo\":{\"name\":\"mcp-registry\",\"version\":\"1.0.1\"},\"instructions\":\"This server is a gateway to the user's services (git hosting, issue tracker and others). When a task needs one of them, call search_tools with a short description of the action, then describe_tool for the chosen tool, then call_tool. If nothing fits, continue without them. If a tool needs a connection, tell the user the link from the error.\"},\"jsonrpc\":\"2.0\",\"id\":1}\n\n"
+  },
+  {
+    "name": "init ",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"result\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"tools\":{\"listChanged\":false}},\"serverInfo\":{\"name\":\"mcp-registry\",\"version\":\"1.0.1\"},\"instructions\":\"This server is a gateway to the user's services (git hosting, issue tracker and others). When a task needs one of them, call search_tools with a short description of the action, then describe_tool for the chosen tool, then call_tool. If nothing fits, continue without them. If a tool needs a connection, tell the user the link from the error.\"},\"jsonrpc\":\"2.0\",\"id\":1}\n\n"
+  },
+  {
+    "name": "init bare",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32603,\"message\":\"[\\n  {\\n    \\\"expected\\\": \\\"object\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"params\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected object, received undefined\\\"\\n  }\\n]\"}}\n\n"
+  },
+  {
+    "name": "init params {}",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32603,\"message\":\"[\\n  {\\n    \\\"expected\\\": \\\"string\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"params\\\",\\n      \\\"protocolVersion\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected string, received undefined\\\"\\n  },\\n  {\\n    \\\"expected\\\": \\\"object\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"params\\\",\\n      \\\"capabilities\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected object, received undefined\\\"\\n  },\\n  {\\n    \\\"expected\\\": \\\"object\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"params\\\",\\n      \\\"clientInfo\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected object, received undefined\\\"\\n  }\\n]\"}}\n\n"
+  },
+  {
+    "name": "init only protocolVersion",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32603,\"message\":\"[\\n  {\\n    \\\"expected\\\": \\\"object\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"params\\\",\\n      \\\"capabilities\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected object, received undefined\\\"\\n  },\\n  {\\n    \\\"expected\\\": \\\"object\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"params\\\",\\n      \\\"clientInfo\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected object, received undefined\\\"\\n  }\\n]\"}}\n\n"
+  },
+  {
+    "name": "init no clientInfo",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32603,\"message\":\"[\\n  {\\n    \\\"expected\\\": \\\"object\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"params\\\",\\n      \\\"clientInfo\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected object, received undefined\\\"\\n  }\\n]\"}}\n\n"
+  },
+  {
+    "name": "init clientInfo no version",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32603,\"message\":\"[\\n  {\\n    \\\"expected\\\": \\\"string\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"params\\\",\\n      \\\"clientInfo\\\",\\n      \\\"version\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected string, received undefined\\\"\\n  }\\n]\"}}\n\n"
+  },
+  {
+    "name": "init capabilities array",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32603,\"message\":\"[\\n  {\\n    \\\"expected\\\": \\\"object\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"params\\\",\\n      \\\"capabilities\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected object, received array\\\"\\n  }\\n]\"}}\n\n"
+  },
+  {
+    "name": "init protocolVersion 5",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32603,\"message\":\"[\\n  {\\n    \\\"expected\\\": \\\"string\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"params\\\",\\n      \\\"protocolVersion\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected string, received number\\\"\\n  }\\n]\"}}\n\n"
+  },
+  {
+    "name": "init valid + header 1999",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"result\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"tools\":{\"listChanged\":false}},\"serverInfo\":{\"name\":\"mcp-registry\",\"version\":\"1.0.1\"},\"instructions\":\"This server is a gateway to the user's services (git hosting, issue tracker and others). When a task needs one of them, call search_tools with a short description of the action, then describe_tool for the chosen tool, then call_tool. If nothing fits, continue without them. If a tool needs a connection, tell the user the link from the error.\"},\"jsonrpc\":\"2.0\",\"id\":1}\n\n"
+  },
+  {
+    "name": "init bare + header 1999",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32000,\"message\":\"Bad Request: Unsupported protocol version: 1999-01-01 (supported versions: 2025-11-25, 2025-06-18, 2025-03-26, 2024-11-05, 2024-10-07)\"},\"id\":null}"
+  },
+  {
+    "name": "init valid + header 2025-06-18",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"result\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"tools\":{\"listChanged\":false}},\"serverInfo\":{\"name\":\"mcp-registry\",\"version\":\"1.0.1\"},\"instructions\":\"This server is a gateway to the user's services (git hosting, issue tracker and others). When a task needs one of them, call search_tools with a short description of the action, then describe_tool for the chosen tool, then call_tool. If nothing fits, continue without them. If a tool needs a connection, tell the user the link from the error.\"},\"jsonrpc\":\"2.0\",\"id\":1}\n\n"
+  },
+  {
+    "name": "init valid + modern header",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32020,\"message\":\"Bad Request: the request headers and body disagree: an initialize request (legacy handshake) was sent with a modern MCP-Protocol-Version header\",\"data\":{\"mismatch\":{\"header\":\"2026-07-28\",\"body\":\"an initialize request (legacy handshake) was sent with a modern MCP-Protocol-Version header\"}}},\"id\":1}"
+  },
+  {
+    "name": "init bare + modern header",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32020,\"message\":\"Bad Request: the request headers and body disagree: an initialize request (legacy handshake) was sent with a modern MCP-Protocol-Version header\",\"data\":{\"mismatch\":{\"header\":\"2026-07-28\",\"body\":\"an initialize request (legacy handshake) was sent with a modern MCP-Protocol-Version header\"}}},\"id\":1}"
+  },
+  {
+    "name": "init with classic claim",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"result\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"tools\":{\"listChanged\":false}},\"serverInfo\":{\"name\":\"mcp-registry\",\"version\":\"1.0.1\"},\"instructions\":\"This server is a gateway to the user's services (git hosting, issue tracker and others). When a task needs one of them, call search_tools with a short description of the action, then describe_tool for the chosen tool, then call_tool. If nothing fits, continue without them. If a tool needs a connection, tell the user the link from the error.\"},\"jsonrpc\":\"2.0\",\"id\":1}\n\n"
+  },
+  {
+    "name": "init with modern claim",
+    "status": 404,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32601,\"message\":\"Method not found\"}}"
+  },
+  {
+    "name": "init with string id",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"result\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"tools\":{\"listChanged\":false}},\"serverInfo\":{\"name\":\"mcp-registry\",\"version\":\"1.0.1\"},\"instructions\":\"This server is a gateway to the user's services (git hosting, issue tracker and others). When a task needs one of them, call search_tools with a short description of the action, then describe_tool for the chosen tool, then call_tool. If nothing fits, continue without them. If a tool needs a connection, tell the user the link from the error.\"},\"jsonrpc\":\"2.0\",\"id\":\"a\"}\n\n"
+  },
+  {
+    "name": "tools/list",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"result\":{\"tools\":[{\"name\":\"list_servers\",\"description\":\"List the user's services available through this gateway: slug, name, description, number of tools and connection state (connectUrl when the user has to connect first).\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{}},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"servers\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"slug\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"description\":{\"type\":\"string\"},\"tools\":{\"type\":\"number\"},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]},\"connectUrl\":{\"type\":\"string\"}},\"required\":[\"slug\",\"name\",\"description\",\"tools\",\"connection\"],\"additionalProperties\":false}}},\"required\":[\"servers\"],\"additionalProperties\":false}},{\"name\":\"search_tools\",\"description\":\"Find tools by a short description of the action. Returns only tools above a relevance threshold, best first, with score 0–1; an empty list means nothing fits. servers (slugs from list_servers) limits the search.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"query\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":500},\"limit\":{\"default\":10,\"type\":\"integer\",\"minimum\":1,\"maximum\":25},\"servers\":{\"minItems\":1,\"maxItems\":20,\"type\":\"array\",\"items\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":64}}},\"required\":[\"query\"]},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"results\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"tool\":{\"type\":\"string\"},\"title\":{\"type\":[\"string\",\"null\"]},\"description\":{\"type\":\"string\"},\"server\":{\"type\":\"string\"},\"score\":{\"type\":\"number\"},\"annotations\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{\"type\":\"boolean\"}},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]}},\"required\":[\"tool\",\"title\",\"description\",\"server\",\"score\",\"annotations\",\"connection\"],\"additionalProperties\":false}}},\"required\":[\"results\"],\"additionalProperties\":false}},{\"name\":\"describe_tool\",\"description\":\"Full description and input JSON Schema of a tool from search_tools (\\\"<server>.<tool>\\\"). Call before call_tool.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"tool\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":300}},\"required\":[\"tool\"]},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"tool\":{\"type\":\"string\"},\"title\":{\"type\":[\"string\",\"null\"]},\"description\":{\"type\":\"string\"},\"inputSchema\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}},\"outputSchema\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}},\"annotations\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{\"type\":\"boolean\"}},\"server\":{\"type\":\"string\"},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]}},\"required\":[\"tool\",\"title\",\"description\",\"inputSchema\",\"annotations\",\"server\",\"connection\"],\"additionalProperties\":false}},{\"name\":\"call_tool\",\"description\":\"Call a tool (\\\"<server>.<tool>\\\") with arguments matching its inputSchema, on the user's behalf. Returns the service's result as is.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"tool\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":300},\"arguments\":{\"default\":{},\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}}},\"required\":[\"tool\"]},\"annotations\":{\"readOnlyHint\":false,\"openWorldHint\":true}}]},\"jsonrpc\":\"2.0\",\"id\":2}\n\n"
+  },
+  {
+    "name": "ping",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"result\":{},\"jsonrpc\":\"2.0\",\"id\":2}\n\n"
+  },
+  {
+    "name": "ping with params",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"result\":{},\"jsonrpc\":\"2.0\",\"id\":2}\n\n"
+  },
+  {
+    "name": "list_servers",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"{\\\"servers\\\":[]}\"}],\"structuredContent\":{\"servers\":[]}},\"jsonrpc\":\"2.0\",\"id\":3}\n\n"
+  },
+  {
+    "name": "list_servers no args",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"{\\\"servers\\\":[]}\"}],\"structuredContent\":{\"servers\":[]}},\"jsonrpc\":\"2.0\",\"id\":3}\n\n"
+  },
+  {
+    "name": "unknown tool",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":3,\"error\":{\"code\":-32602,\"message\":\"Tool nope not found\"}}\n\n"
+  },
+  {
+    "name": "tools/call no name",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":3,\"error\":{\"code\":-32602,\"message\":\"Invalid tools/call request: [\\n  {\\n    \\\"expected\\\": \\\"string\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"params\\\",\\n      \\\"name\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected string, received undefined\\\"\\n  }\\n]\"}}\n\n"
+  },
+  {
+    "name": "tools/call no params",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":3,\"error\":{\"code\":-32602,\"message\":\"Invalid tools/call request: [\\n  {\\n    \\\"expected\\\": \\\"object\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"params\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected object, received undefined\\\"\\n  }\\n]\"}}\n\n"
+  },
+  {
+    "name": "tools/call args array",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":3,\"error\":{\"code\":-32602,\"message\":\"Invalid tools/call request: [\\n  {\\n    \\\"expected\\\": \\\"record\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"params\\\",\\n      \\\"arguments\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected record, received array\\\"\\n  }\\n]\"}}\n\n"
+  },
+  {
+    "name": "tools/call args null",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":3,\"error\":{\"code\":-32602,\"message\":\"Invalid tools/call request: [\\n  {\\n    \\\"expected\\\": \\\"record\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"params\\\",\\n      \\\"arguments\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected record, received null\\\"\\n  }\\n]\"}}\n\n"
+  },
+  {
+    "name": "tools/call name 5",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":3,\"error\":{\"code\":-32602,\"message\":\"Invalid tools/call request: [\\n  {\\n    \\\"expected\\\": \\\"string\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"params\\\",\\n      \\\"name\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected string, received number\\\"\\n  }\\n]\"}}\n\n"
+  },
+  {
+    "name": "search limit 26",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"Input validation error: Invalid arguments for tool search_tools: limit: Too big: expected number to be <=25\"}],\"isError\":true},\"jsonrpc\":\"2.0\",\"id\":3}\n\n"
+  },
+  {
+    "name": "search two issues",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"Input validation error: Invalid arguments for tool search_tools: query: Too small: expected string to have >=1 characters, limit: Too small: expected number to be >=1\"}],\"isError\":true},\"jsonrpc\":\"2.0\",\"id\":3}\n\n"
+  },
+  {
+    "name": "search ok",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"{\\\"results\\\":[]}\"}],\"structuredContent\":{\"results\":[]}},\"jsonrpc\":\"2.0\",\"id\":3}\n\n"
+  },
+  {
+    "name": "describe x.y",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"Tool \\\"x.y\\\" is not available. Use search_tools to find another.\"}],\"isError\":true},\"jsonrpc\":\"2.0\",\"id\":3}\n\n"
+  },
+  {
+    "name": "describe missing",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"Input validation error: Invalid arguments for tool describe_tool: tool: Invalid input: expected string, received undefined\"}],\"isError\":true},\"jsonrpc\":\"2.0\",\"id\":3}\n\n"
+  },
+  {
+    "name": "call_tool ok",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"called\"}]},\"jsonrpc\":\"2.0\",\"id\":3}\n\n"
+  },
+  {
+    "name": "call_tool args no",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"Input validation error: Invalid arguments for tool call_tool: arguments: Invalid input: expected record, received string\"}],\"isError\":true},\"jsonrpc\":\"2.0\",\"id\":3}\n\n"
+  },
+  {
+    "name": "no/such",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":2,\"error\":{\"code\":-32601,\"message\":\"Method not found\"}}\n\n"
+  },
+  {
+    "name": "resources/list",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":2,\"error\":{\"code\":-32601,\"message\":\"Method not found\"}}\n\n"
+  },
+  {
+    "name": "server/discover classic",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":2,\"error\":{\"code\":-32601,\"message\":\"Method not found\"}}\n\n"
+  },
+  {
+    "name": "notifications as request",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":2,\"error\":{\"code\":-32601,\"message\":\"Method not found\"}}\n\n"
+  },
+  {
+    "name": "tools/list header 1999-01-01",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32000,\"message\":\"Bad Request: Unsupported protocol version: 1999-01-01 (supported versions: 2025-11-25, 2025-06-18, 2025-03-26, 2024-11-05, 2024-10-07)\"},\"id\":null}"
+  },
+  {
+    "name": "tools/list header 2025-06-18",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"result\":{\"tools\":[{\"name\":\"list_servers\",\"description\":\"List the user's services available through this gateway: slug, name, description, number of tools and connection state (connectUrl when the user has to connect first).\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{}},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"servers\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"slug\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"description\":{\"type\":\"string\"},\"tools\":{\"type\":\"number\"},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]},\"connectUrl\":{\"type\":\"string\"}},\"required\":[\"slug\",\"name\",\"description\",\"tools\",\"connection\"],\"additionalProperties\":false}}},\"required\":[\"servers\"],\"additionalProperties\":false}},{\"name\":\"search_tools\",\"description\":\"Find tools by a short description of the action. Returns only tools above a relevance threshold, best first, with score 0–1; an empty list means nothing fits. servers (slugs from list_servers) limits the search.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"query\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":500},\"limit\":{\"default\":10,\"type\":\"integer\",\"minimum\":1,\"maximum\":25},\"servers\":{\"minItems\":1,\"maxItems\":20,\"type\":\"array\",\"items\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":64}}},\"required\":[\"query\"]},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"results\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"tool\":{\"type\":\"string\"},\"title\":{\"type\":[\"string\",\"null\"]},\"description\":{\"type\":\"string\"},\"server\":{\"type\":\"string\"},\"score\":{\"type\":\"number\"},\"annotations\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{\"type\":\"boolean\"}},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]}},\"required\":[\"tool\",\"title\",\"description\",\"server\",\"score\",\"annotations\",\"connection\"],\"additionalProperties\":false}}},\"required\":[\"results\"],\"additionalProperties\":false}},{\"name\":\"describe_tool\",\"description\":\"Full description and input JSON Schema of a tool from search_tools (\\\"<server>.<tool>\\\"). Call before call_tool.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"tool\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":300}},\"required\":[\"tool\"]},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"tool\":{\"type\":\"string\"},\"title\":{\"type\":[\"string\",\"null\"]},\"description\":{\"type\":\"string\"},\"inputSchema\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}},\"outputSchema\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}},\"annotations\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{\"type\":\"boolean\"}},\"server\":{\"type\":\"string\"},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]}},\"required\":[\"tool\",\"title\",\"description\",\"inputSchema\",\"annotations\",\"server\",\"connection\"],\"additionalProperties\":false}},{\"name\":\"call_tool\",\"description\":\"Call a tool (\\\"<server>.<tool>\\\") with arguments matching its inputSchema, on the user's behalf. Returns the service's result as is.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"tool\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":300},\"arguments\":{\"default\":{},\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}}},\"required\":[\"tool\"]},\"annotations\":{\"readOnlyHint\":false,\"openWorldHint\":true}}]},\"jsonrpc\":\"2.0\",\"id\":2}\n\n"
+  },
+  {
+    "name": "tools/list header 2024-10-07",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"result\":{\"tools\":[{\"name\":\"list_servers\",\"description\":\"List the user's services available through this gateway: slug, name, description, number of tools and connection state (connectUrl when the user has to connect first).\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{}},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"servers\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"slug\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"description\":{\"type\":\"string\"},\"tools\":{\"type\":\"number\"},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]},\"connectUrl\":{\"type\":\"string\"}},\"required\":[\"slug\",\"name\",\"description\",\"tools\",\"connection\"],\"additionalProperties\":false}}},\"required\":[\"servers\"],\"additionalProperties\":false}},{\"name\":\"search_tools\",\"description\":\"Find tools by a short description of the action. Returns only tools above a relevance threshold, best first, with score 0–1; an empty list means nothing fits. servers (slugs from list_servers) limits the search.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"query\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":500},\"limit\":{\"default\":10,\"type\":\"integer\",\"minimum\":1,\"maximum\":25},\"servers\":{\"minItems\":1,\"maxItems\":20,\"type\":\"array\",\"items\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":64}}},\"required\":[\"query\"]},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"results\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"tool\":{\"type\":\"string\"},\"title\":{\"type\":[\"string\",\"null\"]},\"description\":{\"type\":\"string\"},\"server\":{\"type\":\"string\"},\"score\":{\"type\":\"number\"},\"annotations\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{\"type\":\"boolean\"}},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]}},\"required\":[\"tool\",\"title\",\"description\",\"server\",\"score\",\"annotations\",\"connection\"],\"additionalProperties\":false}}},\"required\":[\"results\"],\"additionalProperties\":false}},{\"name\":\"describe_tool\",\"description\":\"Full description and input JSON Schema of a tool from search_tools (\\\"<server>.<tool>\\\"). Call before call_tool.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"tool\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":300}},\"required\":[\"tool\"]},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"tool\":{\"type\":\"string\"},\"title\":{\"type\":[\"string\",\"null\"]},\"description\":{\"type\":\"string\"},\"inputSchema\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}},\"outputSchema\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}},\"annotations\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{\"type\":\"boolean\"}},\"server\":{\"type\":\"string\"},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]}},\"required\":[\"tool\",\"title\",\"description\",\"inputSchema\",\"annotations\",\"server\",\"connection\"],\"additionalProperties\":false}},{\"name\":\"call_tool\",\"description\":\"Call a tool (\\\"<server>.<tool>\\\") with arguments matching its inputSchema, on the user's behalf. Returns the service's result as is.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"tool\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":300},\"arguments\":{\"default\":{},\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}}},\"required\":[\"tool\"]},\"annotations\":{\"readOnlyHint\":false,\"openWorldHint\":true}}]},\"jsonrpc\":\"2.0\",\"id\":2}\n\n"
+  },
+  {
+    "name": "tools/list header 2026-07-28",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32602,\"message\":\"Invalid params: the MCP-Protocol-Version header names protocol revision 2026-07-28, but the request is missing the required per-request envelope key(s): _meta\",\"data\":{\"envelope\":{\"missing\":[\"_meta\"]}}},\"id\":2}"
+  },
+  {
+    "name": "tools/list header 2027-01-01",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32602,\"message\":\"Invalid params: the MCP-Protocol-Version header names protocol revision 2027-01-01, but the request is missing the required per-request envelope key(s): _meta\",\"data\":{\"envelope\":{\"missing\":[\"_meta\"]}}},\"id\":2}"
+  },
+  {
+    "name": "tools/list header 2025-11-25",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"result\":{\"tools\":[{\"name\":\"list_servers\",\"description\":\"List the user's services available through this gateway: slug, name, description, number of tools and connection state (connectUrl when the user has to connect first).\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{}},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"servers\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"slug\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"description\":{\"type\":\"string\"},\"tools\":{\"type\":\"number\"},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]},\"connectUrl\":{\"type\":\"string\"}},\"required\":[\"slug\",\"name\",\"description\",\"tools\",\"connection\"],\"additionalProperties\":false}}},\"required\":[\"servers\"],\"additionalProperties\":false}},{\"name\":\"search_tools\",\"description\":\"Find tools by a short description of the action. Returns only tools above a relevance threshold, best first, with score 0–1; an empty list means nothing fits. servers (slugs from list_servers) limits the search.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"query\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":500},\"limit\":{\"default\":10,\"type\":\"integer\",\"minimum\":1,\"maximum\":25},\"servers\":{\"minItems\":1,\"maxItems\":20,\"type\":\"array\",\"items\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":64}}},\"required\":[\"query\"]},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"results\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"tool\":{\"type\":\"string\"},\"title\":{\"type\":[\"string\",\"null\"]},\"description\":{\"type\":\"string\"},\"server\":{\"type\":\"string\"},\"score\":{\"type\":\"number\"},\"annotations\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{\"type\":\"boolean\"}},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]}},\"required\":[\"tool\",\"title\",\"description\",\"server\",\"score\",\"annotations\",\"connection\"],\"additionalProperties\":false}}},\"required\":[\"results\"],\"additionalProperties\":false}},{\"name\":\"describe_tool\",\"description\":\"Full description and input JSON Schema of a tool from search_tools (\\\"<server>.<tool>\\\"). Call before call_tool.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"tool\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":300}},\"required\":[\"tool\"]},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"tool\":{\"type\":\"string\"},\"title\":{\"type\":[\"string\",\"null\"]},\"description\":{\"type\":\"string\"},\"inputSchema\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}},\"outputSchema\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}},\"annotations\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{\"type\":\"boolean\"}},\"server\":{\"type\":\"string\"},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]}},\"required\":[\"tool\",\"title\",\"description\",\"inputSchema\",\"annotations\",\"server\",\"connection\"],\"additionalProperties\":false}},{\"name\":\"call_tool\",\"description\":\"Call a tool (\\\"<server>.<tool>\\\") with arguments matching its inputSchema, on the user's behalf. Returns the service's result as is.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"tool\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":300},\"arguments\":{\"default\":{},\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}}},\"required\":[\"tool\"]},\"annotations\":{\"readOnlyHint\":false,\"openWorldHint\":true}}]},\"jsonrpc\":\"2.0\",\"id\":2}\n\n"
+  },
+  {
+    "name": "tools/list header 2027 empty meta",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32602,\"message\":\"Invalid params: the MCP-Protocol-Version header names protocol revision 2027-01-01, but the request is missing the required per-request envelope key(s): io.modelcontextprotocol/protocolVersion, io.modelcontextprotocol/clientCapabilities\",\"data\":{\"envelope\":{\"missing\":[\"io.modelcontextprotocol/protocolVersion\",\"io.modelcontextprotocol/clientCapabilities\"]}}},\"id\":2}"
+  },
+  {
+    "name": "tools/list modern header meta partial",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32602,\"message\":\"Invalid _meta envelope for protocol revision 2026-07-28: io.modelcontextprotocol/clientCapabilities: missing\",\"data\":{\"envelope\":{\"key\":\"io.modelcontextprotocol/clientCapabilities\",\"problem\":\"missing\"}}},\"id\":2}"
+  },
+  {
+    "name": "accept json only",
+    "status": 406,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32000,\"message\":\"Not Acceptable: Client must accept both application/json and text/event-stream\"},\"id\":null}"
+  },
+  {
+    "name": "accept sse only",
+    "status": 406,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32000,\"message\":\"Not Acceptable: Client must accept both application/json and text/event-stream\"},\"id\":null}"
+  },
+  {
+    "name": "accept none",
+    "status": 406,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32000,\"message\":\"Not Acceptable: Client must accept both application/json and text/event-stream\"},\"id\":null}"
+  },
+  {
+    "name": "accept */*",
+    "status": 406,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32000,\"message\":\"Not Acceptable: Client must accept both application/json and text/event-stream\"},\"id\":null}"
+  },
+  {
+    "name": "ct text/plain",
+    "status": 415,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32000,\"message\":\"Unsupported Media Type: Content-Type must be application/json\"},\"id\":null}"
+  },
+  {
+    "name": "ct none",
+    "status": 415,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32000,\"message\":\"Unsupported Media Type: Content-Type must be application/json\"},\"id\":null}"
+  },
+  {
+    "name": "ct charset",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"result\":{\"tools\":[{\"name\":\"list_servers\",\"description\":\"List the user's services available through this gateway: slug, name, description, number of tools and connection state (connectUrl when the user has to connect first).\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{}},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"servers\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"slug\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"description\":{\"type\":\"string\"},\"tools\":{\"type\":\"number\"},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]},\"connectUrl\":{\"type\":\"string\"}},\"required\":[\"slug\",\"name\",\"description\",\"tools\",\"connection\"],\"additionalProperties\":false}}},\"required\":[\"servers\"],\"additionalProperties\":false}},{\"name\":\"search_tools\",\"description\":\"Find tools by a short description of the action. Returns only tools above a relevance threshold, best first, with score 0–1; an empty list means nothing fits. servers (slugs from list_servers) limits the search.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"query\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":500},\"limit\":{\"default\":10,\"type\":\"integer\",\"minimum\":1,\"maximum\":25},\"servers\":{\"minItems\":1,\"maxItems\":20,\"type\":\"array\",\"items\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":64}}},\"required\":[\"query\"]},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"results\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"tool\":{\"type\":\"string\"},\"title\":{\"type\":[\"string\",\"null\"]},\"description\":{\"type\":\"string\"},\"server\":{\"type\":\"string\"},\"score\":{\"type\":\"number\"},\"annotations\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{\"type\":\"boolean\"}},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]}},\"required\":[\"tool\",\"title\",\"description\",\"server\",\"score\",\"annotations\",\"connection\"],\"additionalProperties\":false}}},\"required\":[\"results\"],\"additionalProperties\":false}},{\"name\":\"describe_tool\",\"description\":\"Full description and input JSON Schema of a tool from search_tools (\\\"<server>.<tool>\\\"). Call before call_tool.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"tool\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":300}},\"required\":[\"tool\"]},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"tool\":{\"type\":\"string\"},\"title\":{\"type\":[\"string\",\"null\"]},\"description\":{\"type\":\"string\"},\"inputSchema\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}},\"outputSchema\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}},\"annotations\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{\"type\":\"boolean\"}},\"server\":{\"type\":\"string\"},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]}},\"required\":[\"tool\",\"title\",\"description\",\"inputSchema\",\"annotations\",\"server\",\"connection\"],\"additionalProperties\":false}},{\"name\":\"call_tool\",\"description\":\"Call a tool (\\\"<server>.<tool>\\\") with arguments matching its inputSchema, on the user's behalf. Returns the service's result as is.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"tool\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":300},\"arguments\":{\"default\":{},\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}}},\"required\":[\"tool\"]},\"annotations\":{\"readOnlyHint\":false,\"openWorldHint\":true}}]},\"jsonrpc\":\"2.0\",\"id\":2}\n\n"
+  },
+  {
+    "name": "ct and accept bad",
+    "status": 415,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32000,\"message\":\"Unsupported Media Type: Content-Type must be application/json\"},\"id\":null}"
+  },
+  {
+    "name": "invalid json bad accept",
+    "status": 406,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32000,\"message\":\"Not Acceptable: Client must accept both application/json and text/event-stream\"},\"id\":null}"
+  },
+  {
+    "name": "shape bad accept",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Bad Request: the request body is not a valid JSON-RPC message\"},\"id\":null}"
+  },
+  {
+    "name": "notification bad accept",
+    "status": 406,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32000,\"message\":\"Not Acceptable: Client must accept both application/json and text/event-stream\"},\"id\":null}"
+  },
+  {
+    "name": "body empty",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32700,\"message\":\"Parse error: Invalid JSON\"},\"id\":null}"
+  },
+  {
+    "name": "body brace",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32700,\"message\":\"Parse error: Invalid JSON\"},\"id\":null}"
+  },
+  {
+    "name": "body number",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Bad Request: the request body is not a valid JSON-RPC message\"},\"id\":null}"
+  },
+  {
+    "name": "body null",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Bad Request: the request body is not a valid JSON-RPC message\"},\"id\":null}"
+  },
+  {
+    "name": "body string",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Bad Request: the request body is not a valid JSON-RPC message\"},\"id\":null}"
+  },
+  {
+    "name": "body hello",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Bad Request: the request body is not a valid JSON-RPC message\"},\"id\":null}"
+  },
+  {
+    "name": "body empty array",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Bad Request: empty JSON-RPC batch\"},\"id\":null}"
+  },
+  {
+    "name": "body jsonrpc 1.0",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Bad Request: the request body is not a valid JSON-RPC message\"},\"id\":1}"
+  },
+  {
+    "name": "body no jsonrpc",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Bad Request: the request body is not a valid JSON-RPC message\"},\"id\":1}"
+  },
+  {
+    "name": "body id null",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Bad Request: the request body is not a valid JSON-RPC message\"},\"id\":null}"
+  },
+  {
+    "name": "body id 1.5",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Bad Request: the request body is not a valid JSON-RPC message\"},\"id\":1.5}"
+  },
+  {
+    "name": "body id true",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Bad Request: the request body is not a valid JSON-RPC message\"},\"id\":null}"
+  },
+  {
+    "name": "body id object",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Bad Request: the request body is not a valid JSON-RPC message\"},\"id\":null}"
+  },
+  {
+    "name": "body params array",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Bad Request: the request body is not a valid JSON-RPC message\"},\"id\":1}"
+  },
+  {
+    "name": "body params null",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Bad Request: the request body is not a valid JSON-RPC message\"},\"id\":1}"
+  },
+  {
+    "name": "body method 5",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Bad Request: the request body is not a valid JSON-RPC message\"},\"id\":null}"
+  },
+  {
+    "name": "body extra key",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Bad Request: the request body is not a valid JSON-RPC message\"},\"id\":7}"
+  },
+  {
+    "name": "body Method key",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Bad Request: the request body is not a valid JSON-RPC message\"},\"id\":null}"
+  },
+  {
+    "name": "body result response",
+    "status": 202,
+    "contentType": "",
+    "allow": "",
+    "body": ""
+  },
+  {
+    "name": "body error response",
+    "status": 202,
+    "contentType": "",
+    "allow": "",
+    "body": ""
+  },
+  {
+    "name": "body error response no id",
+    "status": 202,
+    "contentType": "",
+    "allow": "",
+    "body": ""
+  },
+  {
+    "name": "body result not object",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Bad Request: the request body is not a valid JSON-RPC message\"},\"id\":null}"
+  },
+  {
+    "name": "body error code float",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Bad Request: the request body is not a valid JSON-RPC message\"},\"id\":null}"
+  },
+  {
+    "name": "body id float string method",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Bad Request: the request body is not a valid JSON-RPC message\"},\"id\":\"a\"}"
+  },
+  {
+    "name": "body whitespace body",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32700,\"message\":\"Parse error: Invalid JSON\"},\"id\":null}"
+  },
+  {
+    "name": "body dup method",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"result\":{\"tools\":[{\"name\":\"list_servers\",\"description\":\"List the user's services available through this gateway: slug, name, description, number of tools and connection state (connectUrl when the user has to connect first).\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{}},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"servers\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"slug\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"description\":{\"type\":\"string\"},\"tools\":{\"type\":\"number\"},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]},\"connectUrl\":{\"type\":\"string\"}},\"required\":[\"slug\",\"name\",\"description\",\"tools\",\"connection\"],\"additionalProperties\":false}}},\"required\":[\"servers\"],\"additionalProperties\":false}},{\"name\":\"search_tools\",\"description\":\"Find tools by a short description of the action. Returns only tools above a relevance threshold, best first, with score 0–1; an empty list means nothing fits. servers (slugs from list_servers) limits the search.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"query\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":500},\"limit\":{\"default\":10,\"type\":\"integer\",\"minimum\":1,\"maximum\":25},\"servers\":{\"minItems\":1,\"maxItems\":20,\"type\":\"array\",\"items\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":64}}},\"required\":[\"query\"]},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"results\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"tool\":{\"type\":\"string\"},\"title\":{\"type\":[\"string\",\"null\"]},\"description\":{\"type\":\"string\"},\"server\":{\"type\":\"string\"},\"score\":{\"type\":\"number\"},\"annotations\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{\"type\":\"boolean\"}},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]}},\"required\":[\"tool\",\"title\",\"description\",\"server\",\"score\",\"annotations\",\"connection\"],\"additionalProperties\":false}}},\"required\":[\"results\"],\"additionalProperties\":false}},{\"name\":\"describe_tool\",\"description\":\"Full description and input JSON Schema of a tool from search_tools (\\\"<server>.<tool>\\\"). Call before call_tool.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"tool\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":300}},\"required\":[\"tool\"]},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"tool\":{\"type\":\"string\"},\"title\":{\"type\":[\"string\",\"null\"]},\"description\":{\"type\":\"string\"},\"inputSchema\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}},\"outputSchema\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}},\"annotations\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{\"type\":\"boolean\"}},\"server\":{\"type\":\"string\"},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]}},\"required\":[\"tool\",\"title\",\"description\",\"inputSchema\",\"annotations\",\"server\",\"connection\"],\"additionalProperties\":false}},{\"name\":\"call_tool\",\"description\":\"Call a tool (\\\"<server>.<tool>\\\") with arguments matching its inputSchema, on the user's behalf. Returns the service's result as is.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"tool\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":300},\"arguments\":{\"default\":{},\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}}},\"required\":[\"tool\"]},\"annotations\":{\"readOnlyHint\":false,\"openWorldHint\":true}}]},\"jsonrpc\":\"2.0\",\"id\":1}\n\n"
+  },
+  {
+    "name": "body name variants",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"{\\\"servers\\\":[]}\"}],\"structuredContent\":{\"servers\":[]}},\"jsonrpc\":\"2.0\",\"id\":3}\n\n"
+  },
+  {
+    "name": "body Name only",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":3,\"error\":{\"code\":-32602,\"message\":\"Invalid tools/call request: [\\n  {\\n    \\\"expected\\\": \\\"string\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"params\\\",\\n      \\\"name\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected string, received undefined\\\"\\n  }\\n]\"}}\n\n"
+  },
+  {
+    "name": "result response header 1999",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32000,\"message\":\"Bad Request: Unsupported protocol version: 1999-01-01 (supported versions: 2025-11-25, 2025-06-18, 2025-03-26, 2024-11-05, 2024-10-07)\"},\"id\":null}"
+  },
+  {
+    "name": "meta progressToken string",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"result\":{\"tools\":[{\"name\":\"list_servers\",\"description\":\"List the user's services available through this gateway: slug, name, description, number of tools and connection state (connectUrl when the user has to connect first).\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{}},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"servers\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"slug\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"description\":{\"type\":\"string\"},\"tools\":{\"type\":\"number\"},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]},\"connectUrl\":{\"type\":\"string\"}},\"required\":[\"slug\",\"name\",\"description\",\"tools\",\"connection\"],\"additionalProperties\":false}}},\"required\":[\"servers\"],\"additionalProperties\":false}},{\"name\":\"search_tools\",\"description\":\"Find tools by a short description of the action. Returns only tools above a relevance threshold, best first, with score 0–1; an empty list means nothing fits. servers (slugs from list_servers) limits the search.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"query\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":500},\"limit\":{\"default\":10,\"type\":\"integer\",\"minimum\":1,\"maximum\":25},\"servers\":{\"minItems\":1,\"maxItems\":20,\"type\":\"array\",\"items\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":64}}},\"required\":[\"query\"]},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"results\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"tool\":{\"type\":\"string\"},\"title\":{\"type\":[\"string\",\"null\"]},\"description\":{\"type\":\"string\"},\"server\":{\"type\":\"string\"},\"score\":{\"type\":\"number\"},\"annotations\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{\"type\":\"boolean\"}},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]}},\"required\":[\"tool\",\"title\",\"description\",\"server\",\"score\",\"annotations\",\"connection\"],\"additionalProperties\":false}}},\"required\":[\"results\"],\"additionalProperties\":false}},{\"name\":\"describe_tool\",\"description\":\"Full description and input JSON Schema of a tool from search_tools (\\\"<server>.<tool>\\\"). Call before call_tool.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"tool\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":300}},\"required\":[\"tool\"]},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"tool\":{\"type\":\"string\"},\"title\":{\"type\":[\"string\",\"null\"]},\"description\":{\"type\":\"string\"},\"inputSchema\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}},\"outputSchema\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}},\"annotations\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{\"type\":\"boolean\"}},\"server\":{\"type\":\"string\"},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]}},\"required\":[\"tool\",\"title\",\"description\",\"inputSchema\",\"annotations\",\"server\",\"connection\"],\"additionalProperties\":false}},{\"name\":\"call_tool\",\"description\":\"Call a tool (\\\"<server>.<tool>\\\") with arguments matching its inputSchema, on the user's behalf. Returns the service's result as is.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"tool\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":300},\"arguments\":{\"default\":{},\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}}},\"required\":[\"tool\"]},\"annotations\":{\"readOnlyHint\":false,\"openWorldHint\":true}}]},\"jsonrpc\":\"2.0\",\"id\":2}\n\n"
+  },
+  {
+    "name": "notif meta progressToken string",
+    "status": 202,
+    "contentType": "",
+    "allow": "",
+    "body": ""
+  },
+  {
+    "name": "batch meta progressToken string",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"result\":{\"tools\":[{\"name\":\"list_servers\",\"description\":\"List the user's services available through this gateway: slug, name, description, number of tools and connection state (connectUrl when the user has to connect first).\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{}},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"servers\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"slug\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"description\":{\"type\":\"string\"},\"tools\":{\"type\":\"number\"},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]},\"connectUrl\":{\"type\":\"string\"}},\"required\":[\"slug\",\"name\",\"description\",\"tools\",\"connection\"],\"additionalProperties\":false}}},\"required\":[\"servers\"],\"additionalProperties\":false}},{\"name\":\"search_tools\",\"description\":\"Find tools by a short description of the action. Returns only tools above a relevance threshold, best first, with score 0–1; an empty list means nothing fits. servers (slugs from list_servers) limits the search.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"query\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":500},\"limit\":{\"default\":10,\"type\":\"integer\",\"minimum\":1,\"maximum\":25},\"servers\":{\"minItems\":1,\"maxItems\":20,\"type\":\"array\",\"items\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":64}}},\"required\":[\"query\"]},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"results\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"tool\":{\"type\":\"string\"},\"title\":{\"type\":[\"string\",\"null\"]},\"description\":{\"type\":\"string\"},\"server\":{\"type\":\"string\"},\"score\":{\"type\":\"number\"},\"annotations\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{\"type\":\"boolean\"}},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]}},\"required\":[\"tool\",\"title\",\"description\",\"server\",\"score\",\"annotations\",\"connection\"],\"additionalProperties\":false}}},\"required\":[\"results\"],\"additionalProperties\":false}},{\"name\":\"describe_tool\",\"description\":\"Full description and input JSON Schema of a tool from search_tools (\\\"<server>.<tool>\\\"). Call before call_tool.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"tool\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":300}},\"required\":[\"tool\"]},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"tool\":{\"type\":\"string\"},\"title\":{\"type\":[\"string\",\"null\"]},\"description\":{\"type\":\"string\"},\"inputSchema\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}},\"outputSchema\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}},\"annotations\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{\"type\":\"boolean\"}},\"server\":{\"type\":\"string\"},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]}},\"required\":[\"tool\",\"title\",\"description\",\"inputSchema\",\"annotations\",\"server\",\"connection\"],\"additionalProperties\":false}},{\"name\":\"call_tool\",\"description\":\"Call a tool (\\\"<server>.<tool>\\\") with arguments matching its inputSchema, on the user's behalf. Returns the service's result as is.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"tool\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":300},\"arguments\":{\"default\":{},\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}}},\"required\":[\"tool\"]},\"annotations\":{\"readOnlyHint\":false,\"openWorldHint\":true}}]},\"jsonrpc\":\"2.0\",\"id\":2}\n\n"
+  },
+  {
+    "name": "meta progressToken int",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"result\":{\"tools\":[{\"name\":\"list_servers\",\"description\":\"List the user's services available through this gateway: slug, name, description, number of tools and connection state (connectUrl when the user has to connect first).\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{}},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"servers\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"slug\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"description\":{\"type\":\"string\"},\"tools\":{\"type\":\"number\"},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]},\"connectUrl\":{\"type\":\"string\"}},\"required\":[\"slug\",\"name\",\"description\",\"tools\",\"connection\"],\"additionalProperties\":false}}},\"required\":[\"servers\"],\"additionalProperties\":false}},{\"name\":\"search_tools\",\"description\":\"Find tools by a short description of the action. Returns only tools above a relevance threshold, best first, with score 0–1; an empty list means nothing fits. servers (slugs from list_servers) limits the search.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"query\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":500},\"limit\":{\"default\":10,\"type\":\"integer\",\"minimum\":1,\"maximum\":25},\"servers\":{\"minItems\":1,\"maxItems\":20,\"type\":\"array\",\"items\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":64}}},\"required\":[\"query\"]},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"results\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"tool\":{\"type\":\"string\"},\"title\":{\"type\":[\"string\",\"null\"]},\"description\":{\"type\":\"string\"},\"server\":{\"type\":\"string\"},\"score\":{\"type\":\"number\"},\"annotations\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{\"type\":\"boolean\"}},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]}},\"required\":[\"tool\",\"title\",\"description\",\"server\",\"score\",\"annotations\",\"connection\"],\"additionalProperties\":false}}},\"required\":[\"results\"],\"additionalProperties\":false}},{\"name\":\"describe_tool\",\"description\":\"Full description and input JSON Schema of a tool from search_tools (\\\"<server>.<tool>\\\"). Call before call_tool.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"tool\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":300}},\"required\":[\"tool\"]},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"tool\":{\"type\":\"string\"},\"title\":{\"type\":[\"string\",\"null\"]},\"description\":{\"type\":\"string\"},\"inputSchema\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}},\"outputSchema\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}},\"annotations\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{\"type\":\"boolean\"}},\"server\":{\"type\":\"string\"},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]}},\"required\":[\"tool\",\"title\",\"description\",\"inputSchema\",\"annotations\",\"server\",\"connection\"],\"additionalProperties\":false}},{\"name\":\"call_tool\",\"description\":\"Call a tool (\\\"<server>.<tool>\\\") with arguments matching its inputSchema, on the user's behalf. Returns the service's result as is.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"tool\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":300},\"arguments\":{\"default\":{},\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}}},\"required\":[\"tool\"]},\"annotations\":{\"readOnlyHint\":false,\"openWorldHint\":true}}]},\"jsonrpc\":\"2.0\",\"id\":2}\n\n"
+  },
+  {
+    "name": "notif meta progressToken int",
+    "status": 202,
+    "contentType": "",
+    "allow": "",
+    "body": ""
+  },
+  {
+    "name": "batch meta progressToken int",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"result\":{\"tools\":[{\"name\":\"list_servers\",\"description\":\"List the user's services available through this gateway: slug, name, description, number of tools and connection state (connectUrl when the user has to connect first).\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{}},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"servers\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"slug\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"description\":{\"type\":\"string\"},\"tools\":{\"type\":\"number\"},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]},\"connectUrl\":{\"type\":\"string\"}},\"required\":[\"slug\",\"name\",\"description\",\"tools\",\"connection\"],\"additionalProperties\":false}}},\"required\":[\"servers\"],\"additionalProperties\":false}},{\"name\":\"search_tools\",\"description\":\"Find tools by a short description of the action. Returns only tools above a relevance threshold, best first, with score 0–1; an empty list means nothing fits. servers (slugs from list_servers) limits the search.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"query\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":500},\"limit\":{\"default\":10,\"type\":\"integer\",\"minimum\":1,\"maximum\":25},\"servers\":{\"minItems\":1,\"maxItems\":20,\"type\":\"array\",\"items\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":64}}},\"required\":[\"query\"]},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"results\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"tool\":{\"type\":\"string\"},\"title\":{\"type\":[\"string\",\"null\"]},\"description\":{\"type\":\"string\"},\"server\":{\"type\":\"string\"},\"score\":{\"type\":\"number\"},\"annotations\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{\"type\":\"boolean\"}},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]}},\"required\":[\"tool\",\"title\",\"description\",\"server\",\"score\",\"annotations\",\"connection\"],\"additionalProperties\":false}}},\"required\":[\"results\"],\"additionalProperties\":false}},{\"name\":\"describe_tool\",\"description\":\"Full description and input JSON Schema of a tool from search_tools (\\\"<server>.<tool>\\\"). Call before call_tool.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"tool\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":300}},\"required\":[\"tool\"]},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"tool\":{\"type\":\"string\"},\"title\":{\"type\":[\"string\",\"null\"]},\"description\":{\"type\":\"string\"},\"inputSchema\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}},\"outputSchema\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}},\"annotations\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{\"type\":\"boolean\"}},\"server\":{\"type\":\"string\"},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]}},\"required\":[\"tool\",\"title\",\"description\",\"inputSchema\",\"annotations\",\"server\",\"connection\"],\"additionalProperties\":false}},{\"name\":\"call_tool\",\"description\":\"Call a tool (\\\"<server>.<tool>\\\") with arguments matching its inputSchema, on the user's behalf. Returns the service's result as is.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"tool\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":300},\"arguments\":{\"default\":{},\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}}},\"required\":[\"tool\"]},\"annotations\":{\"readOnlyHint\":false,\"openWorldHint\":true}}]},\"jsonrpc\":\"2.0\",\"id\":2}\n\n"
+  },
+  {
+    "name": "meta progressToken float",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Bad Request: the request body is not a valid JSON-RPC message\"},\"id\":2}"
+  },
+  {
+    "name": "notif meta progressToken float",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Bad Request: the request body is not a valid JSON-RPC message\"},\"id\":null}"
+  },
+  {
+    "name": "batch meta progressToken float",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Bad Request: JSON-RPC batch contains an invalid message\"},\"id\":null}"
+  },
+  {
+    "name": "meta progressToken bool",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Bad Request: the request body is not a valid JSON-RPC message\"},\"id\":2}"
+  },
+  {
+    "name": "notif meta progressToken bool",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Bad Request: the request body is not a valid JSON-RPC message\"},\"id\":null}"
+  },
+  {
+    "name": "batch meta progressToken bool",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Bad Request: JSON-RPC batch contains an invalid message\"},\"id\":null}"
+  },
+  {
+    "name": "meta progressToken object",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Bad Request: the request body is not a valid JSON-RPC message\"},\"id\":2}"
+  },
+  {
+    "name": "notif meta progressToken object",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Bad Request: the request body is not a valid JSON-RPC message\"},\"id\":null}"
+  },
+  {
+    "name": "batch meta progressToken object",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Bad Request: JSON-RPC batch contains an invalid message\"},\"id\":null}"
+  },
+  {
+    "name": "meta related-task ok",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"result\":{\"tools\":[{\"name\":\"list_servers\",\"description\":\"List the user's services available through this gateway: slug, name, description, number of tools and connection state (connectUrl when the user has to connect first).\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{}},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"servers\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"slug\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"description\":{\"type\":\"string\"},\"tools\":{\"type\":\"number\"},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]},\"connectUrl\":{\"type\":\"string\"}},\"required\":[\"slug\",\"name\",\"description\",\"tools\",\"connection\"],\"additionalProperties\":false}}},\"required\":[\"servers\"],\"additionalProperties\":false}},{\"name\":\"search_tools\",\"description\":\"Find tools by a short description of the action. Returns only tools above a relevance threshold, best first, with score 0–1; an empty list means nothing fits. servers (slugs from list_servers) limits the search.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"query\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":500},\"limit\":{\"default\":10,\"type\":\"integer\",\"minimum\":1,\"maximum\":25},\"servers\":{\"minItems\":1,\"maxItems\":20,\"type\":\"array\",\"items\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":64}}},\"required\":[\"query\"]},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"results\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"tool\":{\"type\":\"string\"},\"title\":{\"type\":[\"string\",\"null\"]},\"description\":{\"type\":\"string\"},\"server\":{\"type\":\"string\"},\"score\":{\"type\":\"number\"},\"annotations\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{\"type\":\"boolean\"}},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]}},\"required\":[\"tool\",\"title\",\"description\",\"server\",\"score\",\"annotations\",\"connection\"],\"additionalProperties\":false}}},\"required\":[\"results\"],\"additionalProperties\":false}},{\"name\":\"describe_tool\",\"description\":\"Full description and input JSON Schema of a tool from search_tools (\\\"<server>.<tool>\\\"). Call before call_tool.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"tool\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":300}},\"required\":[\"tool\"]},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"tool\":{\"type\":\"string\"},\"title\":{\"type\":[\"string\",\"null\"]},\"description\":{\"type\":\"string\"},\"inputSchema\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}},\"outputSchema\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}},\"annotations\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{\"type\":\"boolean\"}},\"server\":{\"type\":\"string\"},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]}},\"required\":[\"tool\",\"title\",\"description\",\"inputSchema\",\"annotations\",\"server\",\"connection\"],\"additionalProperties\":false}},{\"name\":\"call_tool\",\"description\":\"Call a tool (\\\"<server>.<tool>\\\") with arguments matching its inputSchema, on the user's behalf. Returns the service's result as is.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"tool\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":300},\"arguments\":{\"default\":{},\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}}},\"required\":[\"tool\"]},\"annotations\":{\"readOnlyHint\":false,\"openWorldHint\":true}}]},\"jsonrpc\":\"2.0\",\"id\":2}\n\n"
+  },
+  {
+    "name": "notif meta related-task ok",
+    "status": 202,
+    "contentType": "",
+    "allow": "",
+    "body": ""
+  },
+  {
+    "name": "batch meta related-task ok",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"result\":{\"tools\":[{\"name\":\"list_servers\",\"description\":\"List the user's services available through this gateway: slug, name, description, number of tools and connection state (connectUrl when the user has to connect first).\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{}},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"servers\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"slug\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"description\":{\"type\":\"string\"},\"tools\":{\"type\":\"number\"},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]},\"connectUrl\":{\"type\":\"string\"}},\"required\":[\"slug\",\"name\",\"description\",\"tools\",\"connection\"],\"additionalProperties\":false}}},\"required\":[\"servers\"],\"additionalProperties\":false}},{\"name\":\"search_tools\",\"description\":\"Find tools by a short description of the action. Returns only tools above a relevance threshold, best first, with score 0–1; an empty list means nothing fits. servers (slugs from list_servers) limits the search.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"query\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":500},\"limit\":{\"default\":10,\"type\":\"integer\",\"minimum\":1,\"maximum\":25},\"servers\":{\"minItems\":1,\"maxItems\":20,\"type\":\"array\",\"items\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":64}}},\"required\":[\"query\"]},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"results\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"tool\":{\"type\":\"string\"},\"title\":{\"type\":[\"string\",\"null\"]},\"description\":{\"type\":\"string\"},\"server\":{\"type\":\"string\"},\"score\":{\"type\":\"number\"},\"annotations\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{\"type\":\"boolean\"}},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]}},\"required\":[\"tool\",\"title\",\"description\",\"server\",\"score\",\"annotations\",\"connection\"],\"additionalProperties\":false}}},\"required\":[\"results\"],\"additionalProperties\":false}},{\"name\":\"describe_tool\",\"description\":\"Full description and input JSON Schema of a tool from search_tools (\\\"<server>.<tool>\\\"). Call before call_tool.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"tool\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":300}},\"required\":[\"tool\"]},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"tool\":{\"type\":\"string\"},\"title\":{\"type\":[\"string\",\"null\"]},\"description\":{\"type\":\"string\"},\"inputSchema\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}},\"outputSchema\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}},\"annotations\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{\"type\":\"boolean\"}},\"server\":{\"type\":\"string\"},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]}},\"required\":[\"tool\",\"title\",\"description\",\"inputSchema\",\"annotations\",\"server\",\"connection\"],\"additionalProperties\":false}},{\"name\":\"call_tool\",\"description\":\"Call a tool (\\\"<server>.<tool>\\\") with arguments matching its inputSchema, on the user's behalf. Returns the service's result as is.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"tool\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":300},\"arguments\":{\"default\":{},\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}}},\"required\":[\"tool\"]},\"annotations\":{\"readOnlyHint\":false,\"openWorldHint\":true}}]},\"jsonrpc\":\"2.0\",\"id\":2}\n\n"
+  },
+  {
+    "name": "meta related-task bad",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Bad Request: the request body is not a valid JSON-RPC message\"},\"id\":2}"
+  },
+  {
+    "name": "notif meta related-task bad",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Bad Request: the request body is not a valid JSON-RPC message\"},\"id\":null}"
+  },
+  {
+    "name": "batch meta related-task bad",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Bad Request: JSON-RPC batch contains an invalid message\"},\"id\":null}"
+  },
+  {
+    "name": "meta meta null",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Bad Request: the request body is not a valid JSON-RPC message\"},\"id\":2}"
+  },
+  {
+    "name": "notif meta meta null",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Bad Request: the request body is not a valid JSON-RPC message\"},\"id\":null}"
+  },
+  {
+    "name": "batch meta meta null",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Bad Request: JSON-RPC batch contains an invalid message\"},\"id\":null}"
+  },
+  {
+    "name": "meta meta array",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Bad Request: the request body is not a valid JSON-RPC message\"},\"id\":2}"
+  },
+  {
+    "name": "notif meta meta array",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Bad Request: the request body is not a valid JSON-RPC message\"},\"id\":null}"
+  },
+  {
+    "name": "batch meta meta array",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Bad Request: JSON-RPC batch contains an invalid message\"},\"id\":null}"
+  },
+  {
+    "name": "notif params array",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Bad Request: the request body is not a valid JSON-RPC message\"},\"id\":null}"
+  },
+  {
+    "name": "notif initialized",
+    "status": 202,
+    "contentType": "",
+    "allow": "",
+    "body": ""
+  },
+  {
+    "name": "notif cancelled",
+    "status": 202,
+    "contentType": "",
+    "allow": "",
+    "body": ""
+  },
+  {
+    "name": "notif header 1999",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32000,\"message\":\"Bad Request: Unsupported protocol version: 1999-01-01 (supported versions: 2025-11-25, 2025-06-18, 2025-03-26, 2024-11-05, 2024-10-07)\"},\"id\":null}"
+  },
+  {
+    "name": "notif modern header",
+    "status": 202,
+    "contentType": "",
+    "allow": "",
+    "body": ""
+  },
+  {
+    "name": "notif header 2027",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32022,\"message\":\"Unsupported protocol version: 2027-01-01\",\"data\":{\"supported\":[\"2026-07-28\"],\"requested\":\"2027-01-01\"}},\"id\":null}"
+  },
+  {
+    "name": "notif modern header method mismatch",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32020,\"message\":\"Bad Request: the request headers and body disagree: the notification body names method notifications/initialized but the Mcp-Method header names x\",\"data\":{\"mismatch\":{\"header\":\"x\",\"body\":\"the notification body names method notifications/initialized but the Mcp-Method header names x\"}}},\"id\":null}"
+  },
+  {
+    "name": "notif claim",
+    "status": 202,
+    "contentType": "",
+    "allow": "",
+    "body": ""
+  },
+  {
+    "name": "notif claim 5",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32602,\"message\":\"Invalid _meta envelope for protocol revision 2026-07-28: io.modelcontextprotocol/protocolVersion: Invalid input: expected string, received number\",\"data\":{\"envelope\":{\"key\":\"io.modelcontextprotocol/protocolVersion\",\"problem\":\"Invalid input: expected string, received number\"}}},\"id\":null}"
+  },
+  {
+    "name": "notif claim header mismatch",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32020,\"message\":\"Bad Request: the request headers and body disagree: the notification envelope names protocol version 2026-07-28 but the MCP-Protocol-Version header names 2025-11-25\",\"data\":{\"mismatch\":{\"header\":\"2025-11-25\",\"body\":\"the notification envelope names protocol version 2026-07-28 but the MCP-Protocol-Version header names 2025-11-25\"}}},\"id\":null}"
+  },
+  {
+    "name": "notif claim method mismatch",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32020,\"message\":\"Bad Request: the request headers and body disagree: the notification body names method notifications/initialized but the Mcp-Method header names x\",\"data\":{\"mismatch\":{\"header\":\"x\",\"body\":\"the notification body names method notifications/initialized but the Mcp-Method header names x\"}}},\"id\":null}"
+  },
+  {
+    "name": "notif claim 2099",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32022,\"message\":\"Unsupported protocol version: 2099-01-01\",\"data\":{\"supported\":[\"2026-07-28\"],\"requested\":\"2099-01-01\"}},\"id\":null}"
+  },
+  {
+    "name": "notif claim classic",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32022,\"message\":\"Unsupported protocol version: 2025-06-18\",\"data\":{\"supported\":[\"2026-07-28\"],\"requested\":\"2025-06-18\"}},\"id\":null}"
+  },
+  {
+    "name": "notif jsonrpc 1.0 claim",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Bad Request: the request body is not a valid JSON-RPC message\"},\"id\":null}"
+  },
+  {
+    "name": "batch []",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Bad Request: empty JSON-RPC batch\"},\"id\":null}"
+  },
+  {
+    "name": "batch [list]",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"result\":{\"tools\":[{\"name\":\"list_servers\",\"description\":\"List the user's services available through this gateway: slug, name, description, number of tools and connection state (connectUrl when the user has to connect first).\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{}},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"servers\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"slug\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"description\":{\"type\":\"string\"},\"tools\":{\"type\":\"number\"},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]},\"connectUrl\":{\"type\":\"string\"}},\"required\":[\"slug\",\"name\",\"description\",\"tools\",\"connection\"],\"additionalProperties\":false}}},\"required\":[\"servers\"],\"additionalProperties\":false}},{\"name\":\"search_tools\",\"description\":\"Find tools by a short description of the action. Returns only tools above a relevance threshold, best first, with score 0–1; an empty list means nothing fits. servers (slugs from list_servers) limits the search.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"query\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":500},\"limit\":{\"default\":10,\"type\":\"integer\",\"minimum\":1,\"maximum\":25},\"servers\":{\"minItems\":1,\"maxItems\":20,\"type\":\"array\",\"items\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":64}}},\"required\":[\"query\"]},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"results\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"tool\":{\"type\":\"string\"},\"title\":{\"type\":[\"string\",\"null\"]},\"description\":{\"type\":\"string\"},\"server\":{\"type\":\"string\"},\"score\":{\"type\":\"number\"},\"annotations\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{\"type\":\"boolean\"}},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]}},\"required\":[\"tool\",\"title\",\"description\",\"server\",\"score\",\"annotations\",\"connection\"],\"additionalProperties\":false}}},\"required\":[\"results\"],\"additionalProperties\":false}},{\"name\":\"describe_tool\",\"description\":\"Full description and input JSON Schema of a tool from search_tools (\\\"<server>.<tool>\\\"). Call before call_tool.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"tool\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":300}},\"required\":[\"tool\"]},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"tool\":{\"type\":\"string\"},\"title\":{\"type\":[\"string\",\"null\"]},\"description\":{\"type\":\"string\"},\"inputSchema\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}},\"outputSchema\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}},\"annotations\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{\"type\":\"boolean\"}},\"server\":{\"type\":\"string\"},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]}},\"required\":[\"tool\",\"title\",\"description\",\"inputSchema\",\"annotations\",\"server\",\"connection\"],\"additionalProperties\":false}},{\"name\":\"call_tool\",\"description\":\"Call a tool (\\\"<server>.<tool>\\\") with arguments matching its inputSchema, on the user's behalf. Returns the service's result as is.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"tool\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":300},\"arguments\":{\"default\":{},\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}}},\"required\":[\"tool\"]},\"annotations\":{\"readOnlyHint\":false,\"openWorldHint\":true}}]},\"jsonrpc\":\"2.0\",\"id\":1}\n\n"
+  },
+  {
+    "name": "batch [list,ping]",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"result\":{\"tools\":[{\"name\":\"list_servers\",\"description\":\"List the user's services available through this gateway: slug, name, description, number of tools and connection state (connectUrl when the user has to connect first).\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{}},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"servers\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"slug\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"description\":{\"type\":\"string\"},\"tools\":{\"type\":\"number\"},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]},\"connectUrl\":{\"type\":\"string\"}},\"required\":[\"slug\",\"name\",\"description\",\"tools\",\"connection\"],\"additionalProperties\":false}}},\"required\":[\"servers\"],\"additionalProperties\":false}},{\"name\":\"search_tools\",\"description\":\"Find tools by a short description of the action. Returns only tools above a relevance threshold, best first, with score 0–1; an empty list means nothing fits. servers (slugs from list_servers) limits the search.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"query\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":500},\"limit\":{\"default\":10,\"type\":\"integer\",\"minimum\":1,\"maximum\":25},\"servers\":{\"minItems\":1,\"maxItems\":20,\"type\":\"array\",\"items\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":64}}},\"required\":[\"query\"]},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"results\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"tool\":{\"type\":\"string\"},\"title\":{\"type\":[\"string\",\"null\"]},\"description\":{\"type\":\"string\"},\"server\":{\"type\":\"string\"},\"score\":{\"type\":\"number\"},\"annotations\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{\"type\":\"boolean\"}},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]}},\"required\":[\"tool\",\"title\",\"description\",\"server\",\"score\",\"annotations\",\"connection\"],\"additionalProperties\":false}}},\"required\":[\"results\"],\"additionalProperties\":false}},{\"name\":\"describe_tool\",\"description\":\"Full description and input JSON Schema of a tool from search_tools (\\\"<server>.<tool>\\\"). Call before call_tool.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"tool\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":300}},\"required\":[\"tool\"]},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"tool\":{\"type\":\"string\"},\"title\":{\"type\":[\"string\",\"null\"]},\"description\":{\"type\":\"string\"},\"inputSchema\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}},\"outputSchema\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}},\"annotations\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{\"type\":\"boolean\"}},\"server\":{\"type\":\"string\"},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]}},\"required\":[\"tool\",\"title\",\"description\",\"inputSchema\",\"annotations\",\"server\",\"connection\"],\"additionalProperties\":false}},{\"name\":\"call_tool\",\"description\":\"Call a tool (\\\"<server>.<tool>\\\") with arguments matching its inputSchema, on the user's behalf. Returns the service's result as is.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"tool\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":300},\"arguments\":{\"default\":{},\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}}},\"required\":[\"tool\"]},\"annotations\":{\"readOnlyHint\":false,\"openWorldHint\":true}}]},\"jsonrpc\":\"2.0\",\"id\":1}\n\nevent: message\ndata: {\"result\":{},\"jsonrpc\":\"2.0\",\"id\":2}\n\n"
+  },
+  {
+    "name": "batch [init]",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"result\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"tools\":{\"listChanged\":false}},\"serverInfo\":{\"name\":\"mcp-registry\",\"version\":\"1.0.1\"},\"instructions\":\"This server is a gateway to the user's services (git hosting, issue tracker and others). When a task needs one of them, call search_tools with a short description of the action, then describe_tool for the chosen tool, then call_tool. If nothing fits, continue without them. If a tool needs a connection, tell the user the link from the error.\"},\"jsonrpc\":\"2.0\",\"id\":9}\n\n"
+  },
+  {
+    "name": "batch [bare init]",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":9,\"error\":{\"code\":-32603,\"message\":\"[\\n  {\\n    \\\"expected\\\": \\\"object\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"params\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected object, received undefined\\\"\\n  }\\n]\"}}\n\n"
+  },
+  {
+    "name": "batch [bare init, ping]",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":9,\"error\":{\"code\":-32603,\"message\":\"[\\n  {\\n    \\\"expected\\\": \\\"object\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"params\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected object, received undefined\\\"\\n  }\\n]\"}}\n\nevent: message\ndata: {\"result\":{},\"jsonrpc\":\"2.0\",\"id\":2}\n\n"
+  },
+  {
+    "name": "batch [init, ping]",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Invalid Request: Only one initialization request is allowed\"},\"id\":null}"
+  },
+  {
+    "name": "batch [bare init] 1999",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32000,\"message\":\"Bad Request: Unsupported protocol version: 1999-01-01 (supported versions: 2025-11-25, 2025-06-18, 2025-03-26, 2024-11-05, 2024-10-07)\"},\"id\":null}"
+  },
+  {
+    "name": "batch [init] 1999",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"result\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"tools\":{\"listChanged\":false}},\"serverInfo\":{\"name\":\"mcp-registry\",\"version\":\"1.0.1\"},\"instructions\":\"This server is a gateway to the user's services (git hosting, issue tracker and others). When a task needs one of them, call search_tools with a short description of the action, then describe_tool for the chosen tool, then call_tool. If nothing fits, continue without them. If a tool needs a connection, tell the user the link from the error.\"},\"jsonrpc\":\"2.0\",\"id\":9}\n\n"
+  },
+  {
+    "name": "batch [list] 1999",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32000,\"message\":\"Bad Request: Unsupported protocol version: 1999-01-01 (supported versions: 2025-11-25, 2025-06-18, 2025-03-26, 2024-11-05, 2024-10-07)\"},\"id\":null}"
+  },
+  {
+    "name": "batch [list] modern",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32000,\"message\":\"Bad Request: Unsupported protocol version: 2026-07-28 (supported versions: 2025-11-25, 2025-06-18, 2025-03-26, 2024-11-05, 2024-10-07)\"},\"id\":null}"
+  },
+  {
+    "name": "batch [init] modern",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"result\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{\"tools\":{\"listChanged\":false}},\"serverInfo\":{\"name\":\"mcp-registry\",\"version\":\"1.0.1\"},\"instructions\":\"This server is a gateway to the user's services (git hosting, issue tracker and others). When a task needs one of them, call search_tools with a short description of the action, then describe_tool for the chosen tool, then call_tool. If nothing fits, continue without them. If a tool needs a connection, tell the user the link from the error.\"},\"jsonrpc\":\"2.0\",\"id\":9}\n\n"
+  },
+  {
+    "name": "batch [bare init] modern",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32000,\"message\":\"Bad Request: Unsupported protocol version: 2026-07-28 (supported versions: 2025-11-25, 2025-06-18, 2025-03-26, 2024-11-05, 2024-10-07)\"},\"id\":null}"
+  },
+  {
+    "name": "batch [notif]",
+    "status": 202,
+    "contentType": "",
+    "allow": "",
+    "body": ""
+  },
+  {
+    "name": "batch [notif] 1999",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32000,\"message\":\"Bad Request: Unsupported protocol version: 1999-01-01 (supported versions: 2025-11-25, 2025-06-18, 2025-03-26, 2024-11-05, 2024-10-07)\"},\"id\":null}"
+  },
+  {
+    "name": "batch [response]",
+    "status": 202,
+    "contentType": "",
+    "allow": "",
+    "body": ""
+  },
+  {
+    "name": "batch [invalid]",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Bad Request: JSON-RPC batch contains an invalid message\"},\"id\":null}"
+  },
+  {
+    "name": "batch [jsonrpc 1.0 + claim]",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Bad Request: JSON-RPC batches may not contain requests for protocol revision 2026-07-28 or later\"},\"id\":null}"
+  },
+  {
+    "name": "batch [claim not string]",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Bad Request: JSON-RPC batches may not contain requests for protocol revision 2026-07-28 or later\"},\"id\":null}"
+  },
+  {
+    "name": "batch [list, invalid]",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Bad Request: JSON-RPC batch contains an invalid message\"},\"id\":null}"
+  },
+  {
+    "name": "batch [invalid, claim]",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Bad Request: JSON-RPC batch contains an invalid message\"},\"id\":null}"
+  },
+  {
+    "name": "batch [claim]",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Bad Request: JSON-RPC batches may not contain requests for protocol revision 2026-07-28 or later\"},\"id\":null}"
+  },
+  {
+    "name": "batch [[list]]",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Bad Request: JSON-RPC batch contains an invalid message\"},\"id\":null}"
+  },
+  {
+    "name": "batch [5]",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Bad Request: JSON-RPC batch contains an invalid message\"},\"id\":null}"
+  },
+  {
+    "name": "batch [null]",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Bad Request: JSON-RPC batch contains an invalid message\"},\"id\":null}"
+  },
+  {
+    "name": "batch [list, unknown]",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":4,\"error\":{\"code\":-32601,\"message\":\"Method not found\"}}\n\nevent: message\ndata: {\"result\":{\"tools\":[{\"name\":\"list_servers\",\"description\":\"List the user's services available through this gateway: slug, name, description, number of tools and connection state (connectUrl when the user has to connect first).\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{}},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"servers\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"slug\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"description\":{\"type\":\"string\"},\"tools\":{\"type\":\"number\"},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]},\"connectUrl\":{\"type\":\"string\"}},\"required\":[\"slug\",\"name\",\"description\",\"tools\",\"connection\"],\"additionalProperties\":false}}},\"required\":[\"servers\"],\"additionalProperties\":false}},{\"name\":\"search_tools\",\"description\":\"Find tools by a short description of the action. Returns only tools above a relevance threshold, best first, with score 0–1; an empty list means nothing fits. servers (slugs from list_servers) limits the search.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"query\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":500},\"limit\":{\"default\":10,\"type\":\"integer\",\"minimum\":1,\"maximum\":25},\"servers\":{\"minItems\":1,\"maxItems\":20,\"type\":\"array\",\"items\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":64}}},\"required\":[\"query\"]},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"results\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"tool\":{\"type\":\"string\"},\"title\":{\"type\":[\"string\",\"null\"]},\"description\":{\"type\":\"string\"},\"server\":{\"type\":\"string\"},\"score\":{\"type\":\"number\"},\"annotations\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{\"type\":\"boolean\"}},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]}},\"required\":[\"tool\",\"title\",\"description\",\"server\",\"score\",\"annotations\",\"connection\"],\"additionalProperties\":false}}},\"required\":[\"results\"],\"additionalProperties\":false}},{\"name\":\"describe_tool\",\"description\":\"Full description and input JSON Schema of a tool from search_tools (\\\"<server>.<tool>\\\"). Call before call_tool.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"tool\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":300}},\"required\":[\"tool\"]},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"tool\":{\"type\":\"string\"},\"title\":{\"type\":[\"string\",\"null\"]},\"description\":{\"type\":\"string\"},\"inputSchema\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}},\"outputSchema\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}},\"annotations\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{\"type\":\"boolean\"}},\"server\":{\"type\":\"string\"},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]}},\"required\":[\"tool\",\"title\",\"description\",\"inputSchema\",\"annotations\",\"server\",\"connection\"],\"additionalProperties\":false}},{\"name\":\"call_tool\",\"description\":\"Call a tool (\\\"<server>.<tool>\\\") with arguments matching its inputSchema, on the user's behalf. Returns the service's result as is.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"tool\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":300},\"arguments\":{\"default\":{},\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}}},\"required\":[\"tool\"]},\"annotations\":{\"readOnlyHint\":false,\"openWorldHint\":true}}]},\"jsonrpc\":\"2.0\",\"id\":1}\n\n"
+  },
+  {
+    "name": "batch [list] bad accept",
+    "status": 406,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32000,\"message\":\"Not Acceptable: Client must accept both application/json and text/event-stream\"},\"id\":null}"
+  },
+  {
+    "name": "batch [invalid] bad accept",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Bad Request: JSON-RPC batch contains an invalid message\"},\"id\":null}"
+  },
+  {
+    "name": "batch [init,init]",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Invalid Request: Only one initialization request is allowed\"},\"id\":null}"
+  },
+  {
+    "name": "batch [dup ids]",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"result\":{\"tools\":[{\"name\":\"list_servers\",\"description\":\"List the user's services available through this gateway: slug, name, description, number of tools and connection state (connectUrl when the user has to connect first).\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{}},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"servers\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"slug\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"description\":{\"type\":\"string\"},\"tools\":{\"type\":\"number\"},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]},\"connectUrl\":{\"type\":\"string\"}},\"required\":[\"slug\",\"name\",\"description\",\"tools\",\"connection\"],\"additionalProperties\":false}}},\"required\":[\"servers\"],\"additionalProperties\":false}},{\"name\":\"search_tools\",\"description\":\"Find tools by a short description of the action. Returns only tools above a relevance threshold, best first, with score 0–1; an empty list means nothing fits. servers (slugs from list_servers) limits the search.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"query\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":500},\"limit\":{\"default\":10,\"type\":\"integer\",\"minimum\":1,\"maximum\":25},\"servers\":{\"minItems\":1,\"maxItems\":20,\"type\":\"array\",\"items\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":64}}},\"required\":[\"query\"]},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"results\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"tool\":{\"type\":\"string\"},\"title\":{\"type\":[\"string\",\"null\"]},\"description\":{\"type\":\"string\"},\"server\":{\"type\":\"string\"},\"score\":{\"type\":\"number\"},\"annotations\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{\"type\":\"boolean\"}},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]}},\"required\":[\"tool\",\"title\",\"description\",\"server\",\"score\",\"annotations\",\"connection\"],\"additionalProperties\":false}}},\"required\":[\"results\"],\"additionalProperties\":false}},{\"name\":\"describe_tool\",\"description\":\"Full description and input JSON Schema of a tool from search_tools (\\\"<server>.<tool>\\\"). Call before call_tool.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"tool\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":300}},\"required\":[\"tool\"]},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"tool\":{\"type\":\"string\"},\"title\":{\"type\":[\"string\",\"null\"]},\"description\":{\"type\":\"string\"},\"inputSchema\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}},\"outputSchema\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}},\"annotations\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{\"type\":\"boolean\"}},\"server\":{\"type\":\"string\"},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]}},\"required\":[\"tool\",\"title\",\"description\",\"inputSchema\",\"annotations\",\"server\",\"connection\"],\"additionalProperties\":false}},{\"name\":\"call_tool\",\"description\":\"Call a tool (\\\"<server>.<tool>\\\") with arguments matching its inputSchema, on the user's behalf. Returns the service's result as is.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"tool\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":300},\"arguments\":{\"default\":{},\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}}},\"required\":[\"tool\"]},\"annotations\":{\"readOnlyHint\":false,\"openWorldHint\":true}}]},\"jsonrpc\":\"2.0\",\"id\":1}\n\n"
+  },
+  {
+    "name": "batch [list, notif, response]",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"result\":{\"tools\":[{\"name\":\"list_servers\",\"description\":\"List the user's services available through this gateway: slug, name, description, number of tools and connection state (connectUrl when the user has to connect first).\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{}},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"servers\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"slug\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"description\":{\"type\":\"string\"},\"tools\":{\"type\":\"number\"},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]},\"connectUrl\":{\"type\":\"string\"}},\"required\":[\"slug\",\"name\",\"description\",\"tools\",\"connection\"],\"additionalProperties\":false}}},\"required\":[\"servers\"],\"additionalProperties\":false}},{\"name\":\"search_tools\",\"description\":\"Find tools by a short description of the action. Returns only tools above a relevance threshold, best first, with score 0–1; an empty list means nothing fits. servers (slugs from list_servers) limits the search.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"query\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":500},\"limit\":{\"default\":10,\"type\":\"integer\",\"minimum\":1,\"maximum\":25},\"servers\":{\"minItems\":1,\"maxItems\":20,\"type\":\"array\",\"items\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":64}}},\"required\":[\"query\"]},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"results\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"tool\":{\"type\":\"string\"},\"title\":{\"type\":[\"string\",\"null\"]},\"description\":{\"type\":\"string\"},\"server\":{\"type\":\"string\"},\"score\":{\"type\":\"number\"},\"annotations\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{\"type\":\"boolean\"}},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]}},\"required\":[\"tool\",\"title\",\"description\",\"server\",\"score\",\"annotations\",\"connection\"],\"additionalProperties\":false}}},\"required\":[\"results\"],\"additionalProperties\":false}},{\"name\":\"describe_tool\",\"description\":\"Full description and input JSON Schema of a tool from search_tools (\\\"<server>.<tool>\\\"). Call before call_tool.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"tool\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":300}},\"required\":[\"tool\"]},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"tool\":{\"type\":\"string\"},\"title\":{\"type\":[\"string\",\"null\"]},\"description\":{\"type\":\"string\"},\"inputSchema\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}},\"outputSchema\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}},\"annotations\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{\"type\":\"boolean\"}},\"server\":{\"type\":\"string\"},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]}},\"required\":[\"tool\",\"title\",\"description\",\"inputSchema\",\"annotations\",\"server\",\"connection\"],\"additionalProperties\":false}},{\"name\":\"call_tool\",\"description\":\"Call a tool (\\\"<server>.<tool>\\\") with arguments matching its inputSchema, on the user's behalf. Returns the service's result as is.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"tool\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":300},\"arguments\":{\"default\":{},\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}}},\"required\":[\"tool\"]},\"annotations\":{\"readOnlyHint\":false,\"openWorldHint\":true}}]},\"jsonrpc\":\"2.0\",\"id\":1}\n\n"
+  },
+  {
+    "name": "batch 100",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"result\":{\"tools\":[{\"name\":\"list_servers\",\"description\":\"List the user's services available through this gateway: slug, name, description, number of tools and connection state (connectUrl when the user has to connect first).\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{}},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"servers\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"slug\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"description\":{\"type\":\"string\"},\"tools\":{\"type\":\"number\"},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]},\"connectUrl\":{\"type\":\"string\"}},\"required\":[\"slug\",\"name\",\"description\",\"tools\",\"connection\"],\"additionalProperties\":false}}},\"required\":[\"servers\"],\"additionalProperties\":false}},{\"name\":\"search_tools\",\"description\":\"Find tools by a short description of the action. Returns only tools above a relevance threshold, best first, with score 0–1; an empty list means nothing fits. servers (slugs from list_servers) limits the search.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"query\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":500},\"limit\":{\"default\":10,\"type\":\"integer\",\"minimum\":1,\"maximum\":25},\"servers\":{\"minItems\":1,\"maxItems\":20,\"type\":\"array\",\"items\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":64}}},\"required\":[\"query\"]},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"results\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"tool\":{\"type\":\"string\"},\"title\":{\"type\":[\"string\",\"null\"]},\"description\":{\"type\":\"string\"},\"server\":{\"type\":\"string\"},\"score\":{\"type\":\"number\"},\"annotations\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{\"type\":\"boolean\"}},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]}},\"required\":[\"tool\",\"title\",\"description\",\"server\",\"score\",\"annotations\",\"connection\"],\"additionalProperties\":false}}},\"required\":[\"results\"],\"additionalProperties\":false}},{\"name\":\"describe_tool\",\"description\":\"Full description and input JSON Schema of a tool from search_tools (\\\"<server>.<tool>\\\"). Call before call_tool.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"tool\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":300}},\"required\":[\"tool\"]},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"tool\":{\"type\":\"string\"},\"title\":{\"type\":[\"string\",\"null\"]},\"description\":{\"type\":\"string\"},\"inputSchema\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}},\"outputSchema\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}},\"annotations\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{\"type\":\"boolean\"}},\"server\":{\"type\":\"string\"},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]}},\"required\":[\"tool\",\"title\",\"description\",\"inputSchema\",\"annotations\",\"server\",\"connection\"],\"additionalProperties\":false}},{\"name\":\"call_tool\",\"description\":\"Call a tool (\\\"<server>.<tool>\\\") with arguments matching its inputSchema, on the user's behalf. Returns the service's result as is.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"tool\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":300},\"arguments\":{\"default\":{},\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}}},\"required\":[\"tool\"]},\"annotations\":{\"readOnlyHint\":false,\"openWorldHint\":true}}]},\"jsonrpc\":\"2.0\",\"id\":1}\n\n"
+  },
+  {
+    "name": "batch 101",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Invalid Request: Batch must not exceed 100 messages\"},\"id\":null}"
+  },
+  {
+    "name": "batch 101 bad accept",
+    "status": 406,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32000,\"message\":\"Not Acceptable: Client must accept both application/json and text/event-stream\"},\"id\":null}"
+  },
+  {
+    "name": "batch 101, invalid 101st",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Bad Request: JSON-RPC batch contains an invalid message\"},\"id\":null}"
+  },
+  {
+    "name": "batch 102, invalid 102nd",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Bad Request: JSON-RPC batch contains an invalid message\"},\"id\":null}"
+  },
+  {
+    "name": "batch 102, claim 102nd",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Bad Request: JSON-RPC batches may not contain requests for protocol revision 2026-07-28 or later\"},\"id\":null}"
+  },
+  {
+    "name": "m discover",
+    "status": 200,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"result\":{\"supportedVersions\":[\"2026-07-28\"],\"capabilities\":{\"tools\":{\"listChanged\":false}},\"instructions\":\"This server is a gateway to the user's services (git hosting, issue tracker and others). When a task needs one of them, call search_tools with a short description of the action, then describe_tool for the chosen tool, then call_tool. If nothing fits, continue without them. If a tool needs a connection, tell the user the link from the error.\",\"resultType\":\"complete\",\"ttlMs\":0,\"cacheScope\":\"private\",\"_meta\":{\"io.modelcontextprotocol/serverInfo\":{\"name\":\"mcp-registry\",\"version\":\"1.0.1\"}}},\"jsonrpc\":\"2.0\",\"id\":1}"
+  },
+  {
+    "name": "m list",
+    "status": 200,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"result\":{\"tools\":[{\"name\":\"list_servers\",\"description\":\"List the user's services available through this gateway: slug, name, description, number of tools and connection state (connectUrl when the user has to connect first).\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{}},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"servers\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"slug\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"description\":{\"type\":\"string\"},\"tools\":{\"type\":\"number\"},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]},\"connectUrl\":{\"type\":\"string\"}},\"required\":[\"slug\",\"name\",\"description\",\"tools\",\"connection\"],\"additionalProperties\":false}}},\"required\":[\"servers\"],\"additionalProperties\":false}},{\"name\":\"search_tools\",\"description\":\"Find tools by a short description of the action. Returns only tools above a relevance threshold, best first, with score 0–1; an empty list means nothing fits. servers (slugs from list_servers) limits the search.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"query\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":500},\"limit\":{\"default\":10,\"type\":\"integer\",\"minimum\":1,\"maximum\":25},\"servers\":{\"minItems\":1,\"maxItems\":20,\"type\":\"array\",\"items\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":64}}},\"required\":[\"query\"]},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"results\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"tool\":{\"type\":\"string\"},\"title\":{\"type\":[\"string\",\"null\"]},\"description\":{\"type\":\"string\"},\"server\":{\"type\":\"string\"},\"score\":{\"type\":\"number\"},\"annotations\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{\"type\":\"boolean\"}},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]}},\"required\":[\"tool\",\"title\",\"description\",\"server\",\"score\",\"annotations\",\"connection\"],\"additionalProperties\":false}}},\"required\":[\"results\"],\"additionalProperties\":false}},{\"name\":\"describe_tool\",\"description\":\"Full description and input JSON Schema of a tool from search_tools (\\\"<server>.<tool>\\\"). Call before call_tool.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"tool\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":300}},\"required\":[\"tool\"]},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"tool\":{\"type\":\"string\"},\"title\":{\"type\":[\"string\",\"null\"]},\"description\":{\"type\":\"string\"},\"inputSchema\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}},\"outputSchema\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}},\"annotations\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{\"type\":\"boolean\"}},\"server\":{\"type\":\"string\"},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]}},\"required\":[\"tool\",\"title\",\"description\",\"inputSchema\",\"annotations\",\"server\",\"connection\"],\"additionalProperties\":false}},{\"name\":\"call_tool\",\"description\":\"Call a tool (\\\"<server>.<tool>\\\") with arguments matching its inputSchema, on the user's behalf. Returns the service's result as is.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"tool\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":300},\"arguments\":{\"default\":{},\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}}},\"required\":[\"tool\"]},\"annotations\":{\"readOnlyHint\":false,\"openWorldHint\":true}}],\"resultType\":\"complete\",\"ttlMs\":0,\"cacheScope\":\"private\",\"_meta\":{\"io.modelcontextprotocol/serverInfo\":{\"name\":\"mcp-registry\",\"version\":\"1.0.1\"}}},\"jsonrpc\":\"2.0\",\"id\":1}"
+  },
+  {
+    "name": "m call list_servers",
+    "status": 200,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"{\\\"servers\\\":[]}\"}],\"structuredContent\":{\"servers\":[]},\"resultType\":\"complete\",\"_meta\":{\"io.modelcontextprotocol/serverInfo\":{\"name\":\"mcp-registry\",\"version\":\"1.0.1\"}}},\"jsonrpc\":\"2.0\",\"id\":1}"
+  },
+  {
+    "name": "m call no Mcp-Name",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32020,\"message\":\"Bad Request: the request headers and body disagree: the body carries params.name=\\\"list_servers\\\" but the required Mcp-Name header is absent\",\"data\":{\"mismatch\":{\"header\":\"(missing)\",\"body\":\"the body carries params.name=\\\"list_servers\\\" but the required Mcp-Name header is absent\"}}},\"id\":1}"
+  },
+  {
+    "name": "m call Mcp-Name other",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32020,\"message\":\"Bad Request: the request headers and body disagree: the body carries params.name=\\\"list_servers\\\" but the Mcp-Name header names \\\"call_tool\\\"\",\"data\":{\"mismatch\":{\"header\":\"call_tool\",\"body\":\"the body carries params.name=\\\"list_servers\\\" but the Mcp-Name header names \\\"call_tool\\\"\"}}},\"id\":1}"
+  },
+  {
+    "name": "m call base64",
+    "status": 200,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"{\\\"servers\\\":[]}\"}],\"structuredContent\":{\"servers\":[]},\"resultType\":\"complete\",\"_meta\":{\"io.modelcontextprotocol/serverInfo\":{\"name\":\"mcp-registry\",\"version\":\"1.0.1\"}}},\"jsonrpc\":\"2.0\",\"id\":1}"
+  },
+  {
+    "name": "m call base64 broken",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32020,\"message\":\"Bad Request: the request headers and body disagree: the Mcp-Name header carries an invalid Base64 sentinel value\",\"data\":{\"mismatch\":{\"header\":\"=?base64?b!?=\",\"body\":\"the Mcp-Name header carries an invalid Base64 sentinel value\"}}},\"id\":1}"
+  },
+  {
+    "name": "m call unknown tool",
+    "status": 200,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32602,\"message\":\"Tool nope not found\"}}"
+  },
+  {
+    "name": "m call search bad",
+    "status": 200,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"Input validation error: Invalid arguments for tool search_tools: limit: Too big: expected number to be <=25\"}],\"isError\":true,\"resultType\":\"complete\",\"_meta\":{\"io.modelcontextprotocol/serverInfo\":{\"name\":\"mcp-registry\",\"version\":\"1.0.1\"}}},\"jsonrpc\":\"2.0\",\"id\":1}"
+  },
+  {
+    "name": "m call no name",
+    "status": 200,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32602,\"message\":\"Invalid tools/call request: [\\n  {\\n    \\\"expected\\\": \\\"string\\\",\\n    \\\"code\\\": \\\"invalid_type\\\",\\n    \\\"path\\\": [\\n      \\\"params\\\",\\n      \\\"name\\\"\\n    ],\\n    \\\"message\\\": \\\"Invalid input: expected string, received undefined\\\"\\n  }\\n]\"}}"
+  },
+  {
+    "name": "m no version header",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32020,\"message\":\"Bad Request: the request headers and body disagree: the body envelope names protocol version 2026-07-28 but the required MCP-Protocol-Version header is absent\",\"data\":{\"mismatch\":{\"header\":\"(missing)\",\"body\":\"the body envelope names protocol version 2026-07-28 but the required MCP-Protocol-Version header is absent\"}}},\"id\":1}"
+  },
+  {
+    "name": "m no method header",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32020,\"message\":\"Bad Request: the request headers and body disagree: the body names method tools/list but the required Mcp-Method header is absent\",\"data\":{\"mismatch\":{\"header\":\"(missing)\",\"body\":\"the body names method tools/list but the required Mcp-Method header is absent\"}}},\"id\":1}"
+  },
+  {
+    "name": "m method mismatch",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32020,\"message\":\"Bad Request: the request headers and body disagree: the body names method tools/list but the Mcp-Method header names tools/call\",\"data\":{\"mismatch\":{\"header\":\"tools/call\",\"body\":\"the body names method tools/list but the Mcp-Method header names tools/call\"}}},\"id\":1}"
+  },
+  {
+    "name": "m version mismatch",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32020,\"message\":\"Bad Request: the request headers and body disagree: the body envelope names protocol version 2026-07-28 but the MCP-Protocol-Version header names 2025-11-25\",\"data\":{\"mismatch\":{\"header\":\"2025-11-25\",\"body\":\"the body envelope names protocol version 2026-07-28 but the MCP-Protocol-Version header names 2025-11-25\"}}},\"id\":1}"
+  },
+  {
+    "name": "m claim 2099",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32022,\"message\":\"Unsupported protocol version: 2099-01-01\",\"data\":{\"supported\":[\"2026-07-28\"],\"requested\":\"2099-01-01\"}},\"id\":1}"
+  },
+  {
+    "name": "m claim 2099 no headers",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32022,\"message\":\"Unsupported protocol version: 2099-01-01\",\"data\":{\"supported\":[\"2026-07-28\"],\"requested\":\"2099-01-01\"}},\"id\":1}"
+  },
+  {
+    "name": "m claim classic",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32022,\"message\":\"Unsupported protocol version: 2025-06-18\",\"data\":{\"supported\":[\"2026-07-28\"],\"requested\":\"2025-06-18\"}},\"id\":1}"
+  },
+  {
+    "name": "m claim 5",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32602,\"message\":\"Invalid _meta envelope for protocol revision 2026-07-28: io.modelcontextprotocol/protocolVersion: Invalid input: expected string, received number\",\"data\":{\"envelope\":{\"key\":\"io.modelcontextprotocol/protocolVersion\",\"problem\":\"Invalid input: expected string, received number\"}}},\"id\":1}"
+  },
+  {
+    "name": "m no capabilities",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32602,\"message\":\"Invalid _meta envelope for protocol revision 2026-07-28: io.modelcontextprotocol/clientCapabilities: missing\",\"data\":{\"envelope\":{\"key\":\"io.modelcontextprotocol/clientCapabilities\",\"problem\":\"missing\"}}},\"id\":1}"
+  },
+  {
+    "name": "m capabilities array",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32602,\"message\":\"Invalid _meta envelope for protocol revision 2026-07-28: io.modelcontextprotocol/clientCapabilities: Invalid input: expected object, received array\",\"data\":{\"envelope\":{\"key\":\"io.modelcontextprotocol/clientCapabilities\",\"problem\":\"Invalid input: expected object, received array\"}}},\"id\":1}"
+  },
+  {
+    "name": "m clientInfo bad",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32602,\"message\":\"Invalid _meta envelope for protocol revision 2026-07-28: io.modelcontextprotocol/clientInfo.name: Invalid input: expected string, received number\",\"data\":{\"envelope\":{\"key\":\"io.modelcontextprotocol/clientInfo.name\",\"problem\":\"Invalid input: expected string, received number\"}}},\"id\":1}"
+  },
+  {
+    "name": "m progressToken float",
+    "status": 400,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32600,\"message\":\"Bad Request: the request body is not a valid JSON-RPC message\"},\"id\":1}"
+  },
+  {
+    "name": "m ping",
+    "status": 404,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32601,\"message\":\"Method not found\"}}"
+  },
+  {
+    "name": "m initialize",
+    "status": 404,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32601,\"message\":\"Method not found\"}}"
+  },
+  {
+    "name": "m accept json only",
+    "status": 200,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"result\":{\"tools\":[{\"name\":\"list_servers\",\"description\":\"List the user's services available through this gateway: slug, name, description, number of tools and connection state (connectUrl when the user has to connect first).\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{}},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"servers\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"slug\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"description\":{\"type\":\"string\"},\"tools\":{\"type\":\"number\"},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]},\"connectUrl\":{\"type\":\"string\"}},\"required\":[\"slug\",\"name\",\"description\",\"tools\",\"connection\"],\"additionalProperties\":false}}},\"required\":[\"servers\"],\"additionalProperties\":false}},{\"name\":\"search_tools\",\"description\":\"Find tools by a short description of the action. Returns only tools above a relevance threshold, best first, with score 0–1; an empty list means nothing fits. servers (slugs from list_servers) limits the search.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"query\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":500},\"limit\":{\"default\":10,\"type\":\"integer\",\"minimum\":1,\"maximum\":25},\"servers\":{\"minItems\":1,\"maxItems\":20,\"type\":\"array\",\"items\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":64}}},\"required\":[\"query\"]},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"results\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"tool\":{\"type\":\"string\"},\"title\":{\"type\":[\"string\",\"null\"]},\"description\":{\"type\":\"string\"},\"server\":{\"type\":\"string\"},\"score\":{\"type\":\"number\"},\"annotations\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{\"type\":\"boolean\"}},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]}},\"required\":[\"tool\",\"title\",\"description\",\"server\",\"score\",\"annotations\",\"connection\"],\"additionalProperties\":false}}},\"required\":[\"results\"],\"additionalProperties\":false}},{\"name\":\"describe_tool\",\"description\":\"Full description and input JSON Schema of a tool from search_tools (\\\"<server>.<tool>\\\"). Call before call_tool.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"tool\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":300}},\"required\":[\"tool\"]},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"tool\":{\"type\":\"string\"},\"title\":{\"type\":[\"string\",\"null\"]},\"description\":{\"type\":\"string\"},\"inputSchema\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}},\"outputSchema\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}},\"annotations\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{\"type\":\"boolean\"}},\"server\":{\"type\":\"string\"},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]}},\"required\":[\"tool\",\"title\",\"description\",\"inputSchema\",\"annotations\",\"server\",\"connection\"],\"additionalProperties\":false}},{\"name\":\"call_tool\",\"description\":\"Call a tool (\\\"<server>.<tool>\\\") with arguments matching its inputSchema, on the user's behalf. Returns the service's result as is.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"tool\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":300},\"arguments\":{\"default\":{},\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}}},\"required\":[\"tool\"]},\"annotations\":{\"readOnlyHint\":false,\"openWorldHint\":true}}],\"resultType\":\"complete\",\"ttlMs\":0,\"cacheScope\":\"private\",\"_meta\":{\"io.modelcontextprotocol/serverInfo\":{\"name\":\"mcp-registry\",\"version\":\"1.0.1\"}}},\"jsonrpc\":\"2.0\",\"id\":1}"
+  },
+  {
+    "name": "m accept none",
+    "status": 200,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"result\":{\"tools\":[{\"name\":\"list_servers\",\"description\":\"List the user's services available through this gateway: slug, name, description, number of tools and connection state (connectUrl when the user has to connect first).\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{}},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"servers\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"slug\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"description\":{\"type\":\"string\"},\"tools\":{\"type\":\"number\"},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]},\"connectUrl\":{\"type\":\"string\"}},\"required\":[\"slug\",\"name\",\"description\",\"tools\",\"connection\"],\"additionalProperties\":false}}},\"required\":[\"servers\"],\"additionalProperties\":false}},{\"name\":\"search_tools\",\"description\":\"Find tools by a short description of the action. Returns only tools above a relevance threshold, best first, with score 0–1; an empty list means nothing fits. servers (slugs from list_servers) limits the search.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"query\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":500},\"limit\":{\"default\":10,\"type\":\"integer\",\"minimum\":1,\"maximum\":25},\"servers\":{\"minItems\":1,\"maxItems\":20,\"type\":\"array\",\"items\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":64}}},\"required\":[\"query\"]},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"results\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"tool\":{\"type\":\"string\"},\"title\":{\"type\":[\"string\",\"null\"]},\"description\":{\"type\":\"string\"},\"server\":{\"type\":\"string\"},\"score\":{\"type\":\"number\"},\"annotations\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{\"type\":\"boolean\"}},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]}},\"required\":[\"tool\",\"title\",\"description\",\"server\",\"score\",\"annotations\",\"connection\"],\"additionalProperties\":false}}},\"required\":[\"results\"],\"additionalProperties\":false}},{\"name\":\"describe_tool\",\"description\":\"Full description and input JSON Schema of a tool from search_tools (\\\"<server>.<tool>\\\"). Call before call_tool.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"tool\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":300}},\"required\":[\"tool\"]},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"tool\":{\"type\":\"string\"},\"title\":{\"type\":[\"string\",\"null\"]},\"description\":{\"type\":\"string\"},\"inputSchema\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}},\"outputSchema\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}},\"annotations\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{\"type\":\"boolean\"}},\"server\":{\"type\":\"string\"},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]}},\"required\":[\"tool\",\"title\",\"description\",\"inputSchema\",\"annotations\",\"server\",\"connection\"],\"additionalProperties\":false}},{\"name\":\"call_tool\",\"description\":\"Call a tool (\\\"<server>.<tool>\\\") with arguments matching its inputSchema, on the user's behalf. Returns the service's result as is.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"tool\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":300},\"arguments\":{\"default\":{},\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}}},\"required\":[\"tool\"]},\"annotations\":{\"readOnlyHint\":false,\"openWorldHint\":true}}],\"resultType\":\"complete\",\"ttlMs\":0,\"cacheScope\":\"private\",\"_meta\":{\"io.modelcontextprotocol/serverInfo\":{\"name\":\"mcp-registry\",\"version\":\"1.0.1\"}}},\"jsonrpc\":\"2.0\",\"id\":1}"
+  },
+  {
+    "name": "m no/such",
+    "status": 404,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32601,\"message\":\"Method not found\"}}"
+  },
+  {
+    "name": "m string id",
+    "status": 200,
+    "contentType": "application/json",
+    "allow": "",
+    "body": "{\"result\":{\"tools\":[{\"name\":\"list_servers\",\"description\":\"List the user's services available through this gateway: slug, name, description, number of tools and connection state (connectUrl when the user has to connect first).\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{}},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"servers\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"slug\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"description\":{\"type\":\"string\"},\"tools\":{\"type\":\"number\"},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]},\"connectUrl\":{\"type\":\"string\"}},\"required\":[\"slug\",\"name\",\"description\",\"tools\",\"connection\"],\"additionalProperties\":false}}},\"required\":[\"servers\"],\"additionalProperties\":false}},{\"name\":\"search_tools\",\"description\":\"Find tools by a short description of the action. Returns only tools above a relevance threshold, best first, with score 0–1; an empty list means nothing fits. servers (slugs from list_servers) limits the search.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"query\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":500},\"limit\":{\"default\":10,\"type\":\"integer\",\"minimum\":1,\"maximum\":25},\"servers\":{\"minItems\":1,\"maxItems\":20,\"type\":\"array\",\"items\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":64}}},\"required\":[\"query\"]},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"results\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"tool\":{\"type\":\"string\"},\"title\":{\"type\":[\"string\",\"null\"]},\"description\":{\"type\":\"string\"},\"server\":{\"type\":\"string\"},\"score\":{\"type\":\"number\"},\"annotations\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{\"type\":\"boolean\"}},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]}},\"required\":[\"tool\",\"title\",\"description\",\"server\",\"score\",\"annotations\",\"connection\"],\"additionalProperties\":false}}},\"required\":[\"results\"],\"additionalProperties\":false}},{\"name\":\"describe_tool\",\"description\":\"Full description and input JSON Schema of a tool from search_tools (\\\"<server>.<tool>\\\"). Call before call_tool.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"tool\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":300}},\"required\":[\"tool\"]},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"tool\":{\"type\":\"string\"},\"title\":{\"type\":[\"string\",\"null\"]},\"description\":{\"type\":\"string\"},\"inputSchema\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}},\"outputSchema\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}},\"annotations\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{\"type\":\"boolean\"}},\"server\":{\"type\":\"string\"},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]}},\"required\":[\"tool\",\"title\",\"description\",\"inputSchema\",\"annotations\",\"server\",\"connection\"],\"additionalProperties\":false}},{\"name\":\"call_tool\",\"description\":\"Call a tool (\\\"<server>.<tool>\\\") with arguments matching its inputSchema, on the user's behalf. Returns the service's result as is.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"tool\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":300},\"arguments\":{\"default\":{},\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}}},\"required\":[\"tool\"]},\"annotations\":{\"readOnlyHint\":false,\"openWorldHint\":true}}],\"resultType\":\"complete\",\"ttlMs\":0,\"cacheScope\":\"private\",\"_meta\":{\"io.modelcontextprotocol/serverInfo\":{\"name\":\"mcp-registry\",\"version\":\"1.0.1\"}}},\"jsonrpc\":\"2.0\",\"id\":\"s\"}"
+  },
+  {
+    "name": "http GET",
+    "status": 405,
+    "contentType": "application/json",
+    "allow": "POST",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32000,\"message\":\"Method not allowed.\"},\"id\":null}"
+  },
+  {
+    "name": "http DELETE",
+    "status": 405,
+    "contentType": "application/json",
+    "allow": "POST",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32000,\"message\":\"Method not allowed.\"},\"id\":null}"
+  },
+  {
+    "name": "http PUT",
+    "status": 405,
+    "contentType": "application/json",
+    "allow": "POST",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32000,\"message\":\"Method not allowed.\"},\"id\":null}"
+  },
+  {
+    "name": "http PATCH",
+    "status": 405,
+    "contentType": "application/json",
+    "allow": "POST",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32000,\"message\":\"Method not allowed.\"},\"id\":null}"
+  },
+  {
+    "name": "http OPTIONS",
+    "status": 405,
+    "contentType": "application/json",
+    "allow": "POST",
+    "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32000,\"message\":\"Method not allowed.\"},\"id\":null}"
+  },
+  {
+    "name": "deep nesting",
+    "status": 200,
+    "contentType": "text/event-stream",
+    "allow": "",
+    "body": "event: message\ndata: {\"result\":{\"tools\":[{\"name\":\"list_servers\",\"description\":\"List the user's services available through this gateway: slug, name, description, number of tools and connection state (connectUrl when the user has to connect first).\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{}},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"servers\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"slug\":{\"type\":\"string\"},\"name\":{\"type\":\"string\"},\"description\":{\"type\":\"string\"},\"tools\":{\"type\":\"number\"},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]},\"connectUrl\":{\"type\":\"string\"}},\"required\":[\"slug\",\"name\",\"description\",\"tools\",\"connection\"],\"additionalProperties\":false}}},\"required\":[\"servers\"],\"additionalProperties\":false}},{\"name\":\"search_tools\",\"description\":\"Find tools by a short description of the action. Returns only tools above a relevance threshold, best first, with score 0–1; an empty list means nothing fits. servers (slugs from list_servers) limits the search.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"query\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":500},\"limit\":{\"default\":10,\"type\":\"integer\",\"minimum\":1,\"maximum\":25},\"servers\":{\"minItems\":1,\"maxItems\":20,\"type\":\"array\",\"items\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":64}}},\"required\":[\"query\"]},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"results\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"tool\":{\"type\":\"string\"},\"title\":{\"type\":[\"string\",\"null\"]},\"description\":{\"type\":\"string\"},\"server\":{\"type\":\"string\"},\"score\":{\"type\":\"number\"},\"annotations\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{\"type\":\"boolean\"}},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]}},\"required\":[\"tool\",\"title\",\"description\",\"server\",\"score\",\"annotations\",\"connection\"],\"additionalProperties\":false}}},\"required\":[\"results\"],\"additionalProperties\":false}},{\"name\":\"describe_tool\",\"description\":\"Full description and input JSON Schema of a tool from search_tools (\\\"<server>.<tool>\\\"). Call before call_tool.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"tool\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":300}},\"required\":[\"tool\"]},\"annotations\":{\"readOnlyHint\":true},\"outputSchema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{\"tool\":{\"type\":\"string\"},\"title\":{\"type\":[\"string\",\"null\"]},\"description\":{\"type\":\"string\"},\"inputSchema\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}},\"outputSchema\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}},\"annotations\":{\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{\"type\":\"boolean\"}},\"server\":{\"type\":\"string\"},\"connection\":{\"type\":\"string\",\"enum\":[\"ready\",\"needs_connection\",\"expired\",\"not_required\"]}},\"required\":[\"tool\",\"title\",\"description\",\"inputSchema\",\"annotations\",\"server\",\"connection\"],\"additionalProperties\":false}},{\"name\":\"call_tool\",\"description\":\"Call a tool (\\\"<server>.<tool>\\\") with arguments matching its inputSchema, on the user's behalf. Returns the service's result as is.\",\"inputSchema\":{\"type\":\"object\",\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"tool\":{\"type\":\"string\",\"minLength\":1,\"maxLength\":300},\"arguments\":{\"default\":{},\"type\":\"object\",\"propertyNames\":{\"type\":\"string\"},\"additionalProperties\":{}}},\"required\":[\"tool\"]},\"annotations\":{\"readOnlyHint\":false,\"openWorldHint\":true}}]},\"jsonrpc\":\"2.0\",\"id\":1}\n\n"
+  }
+]

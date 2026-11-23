@@ -84,6 +84,11 @@ func Run(ctx context.Context, o Options) int {
 		pool.Close()
 		return 1
 	}
+	// The gateway's calls in flight are cancelled when the shutdown begins (and write their
+	// transport_error row before the pool closes).
+	callsCtx, cancelCalls := context.WithCancel(context.Background())
+	defer cancelCalls()
+	rt.CallsContext = callsCtx
 	asm, err := assemble(modulesOf(o.modules, rt))
 	if err != nil {
 		// The text names an event type or a command, never data.
@@ -144,7 +149,7 @@ func Run(ctx context.Context, o Options) int {
 		exit = 1
 	}
 
-	return shutdown(o, logger, srv, pool, []func(context.Context) error{stopWorker, stopScheduler}, asm.closers, exit)
+	return shutdown(o, logger, srv, pool, cancelCalls, []func(context.Context) error{stopWorker, stopScheduler}, asm.closers, exit)
 }
 
 // databasePassword is the PGPASSWORD_FILE value for db.Open, nil when unset.
@@ -202,6 +207,13 @@ func startOutbox(logger *slog.Logger, pool *pgxpool.Pool, handlers map[string]ou
 		Logger:   logger,
 		Sweep:    sweep,
 	})
+}
+
+func callsGraceOf(o Options) time.Duration {
+	if o.callsGrace > 0 {
+		return o.callsGrace
+	}
+	return callsGrace
 }
 
 func shutdownLimitOf(o Options) time.Duration {
@@ -313,10 +325,18 @@ func stopAllThenClose(ctx context.Context, stops, closers []func(context.Context
 }
 
 // shutdown stops accepting connections and drains requests while the worker and the scheduler
-// stop, all under one limit; then the closers of the modules run, then the pool is closed, only
+// stop, all under one limit (the gateway's calls in flight are cancelled after callsGrace); then the closers of the modules run, then the pool is closed, only
 // after every one of them has returned (a request or a job in flight still uses it). exit is the
 // code to return when it all goes well.
-func shutdown(o Options, logger *slog.Logger, srv *http.Server, pool *pgxpool.Pool, stops []func(context.Context) error, closers []func(context.Context) error, exit int) int {
+func shutdown(o Options, logger *slog.Logger, srv *http.Server, pool *pgxpool.Pool, cancelCalls func(), stops []func(context.Context) error, closers []func(context.Context) error, exit int) int {
+	// The listeners close at once (srv.Shutdown, below); the gateway's calls in flight get
+	// callsGrace to finish on their own, and the ones still running then are cancelled (an upstream
+	// call blocked for minutes would otherwise hold the drain until the limit). Each cancelled call
+	// still writes its log row, which needs the pool: the pool is closed below only after every
+	// request has returned. The timer is stopped when the shutdown ends earlier, and a shutdown
+	// with nothing in flight is not delayed: srv.Shutdown returns as soon as the server is idle.
+	grace := time.AfterFunc(callsGraceOf(o), cancelCalls)
+	defer grace.Stop()
 	ctx, cancel := context.WithTimeout(context.Background(), shutdownLimitOf(o))
 	defer cancel()
 	err := stopAllThenClose(ctx, append(stops, srv.Shutdown), closers)

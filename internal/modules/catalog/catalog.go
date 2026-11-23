@@ -22,8 +22,10 @@ type (
 	MemberServerView = app.MemberServerView
 	// ToolView is a stored tool with its schemas.
 	ToolView = app.ToolView
-	// ServerCallTarget is what the gateway needs to call a server (no secret: GetServerSecret).
+	// ServerCallTarget is what the gateway needs to call a server (no secret: GetServerSecretFor).
 	ServerCallTarget = app.ServerCallTarget
+	// SecretLookup is what GetServerSecretFor found.
+	SecretLookup = app.SecretLookup
 	// Entry is a server a person may browse, with its visible tools (TypeScript CatalogEntry).
 	Entry = app.CatalogEntry
 	// EntryTool is a tool of an Entry (TypeScript CatalogTool).
@@ -96,6 +98,10 @@ const (
 
 	StatusActive   = domain.StatusActive
 	StatusDisabled = domain.StatusDisabled
+
+	SecretFound  = app.SecretFound
+	SecretNotSet = app.SecretNotSet
+	SecretMoved  = app.SecretMoved
 )
 
 // The error codes the module answers with (kernel.DomainError.Code).
@@ -191,6 +197,14 @@ func (s *Service) GetServerForUpstream(ctx context.Context, slug string) (*Serve
 // ok is false when there is none. A secret no key opens is an error.
 func (s *Service) GetServerSecret(ctx context.Context, slug string) (secret string, ok bool, err error) {
 	return app.GetServerSecret(ctx, s.d, slug)
+}
+
+// GetServerSecretFor is the opened secret of a server for a caller holding a call target read
+// earlier: found only when the secret belongs to that target's configuration (one read of the
+// server judges both); moved when the server no longer sends its secret where the target would,
+// or is gone; not_set when there is none. A secret no key opens is an error.
+func (s *Service) GetServerSecretFor(ctx context.Context, target ServerCallTarget) (string, SecretLookup, error) {
+	return app.GetServerSecretFor(ctx, s.d, target)
 }
 
 // GetToolFor is a tool the person may use right now; one not_found for everything else, a

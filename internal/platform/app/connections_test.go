@@ -36,7 +36,7 @@ func testBox(t *testing.T) kernel.SecretBox {
 func bareRuntime(t *testing.T) Runtime {
 	t.Helper()
 	return Runtime{
-		Config: config.Config{PublicURL: "http://localhost:3000"},
+		Config: config.Config{PublicURL: "http://localhost:3000", UpstreamMaxResponseBytes: 1 << 20, MCPMaxBodyBytes: 1 << 20, CallLogRetentionDays: 90},
 		Clock:  kernel.SystemClock{}, Logger: discardLogger(), Version: "1.2.3",
 		Box: testBox(t), Audit: &countingAudit{},
 	}
@@ -68,12 +68,12 @@ func (*memPendingConnects) Consume(context.Context, string, string) (*condomain.
 	return nil, nil
 }
 
-// connectionsPaths is the route table of the server's own module list (the last module); like the
+// connectionsPaths is the route table of the server's own module list (the fifth module); like the
 // catalog's, it is compared with the one served over in-memory stores.
 func connectionsPaths(t *testing.T, e *wiringEnv) []httpx.Route {
 	t.Helper()
 	all := modules(bareRuntime(t))
-	composed := all[len(all)-1].Routes
+	composed := all[4].Routes
 	if len(composed) != 5 {
 		t.Fatalf("connections registers %d routes, want 5", len(composed))
 	}
@@ -195,11 +195,11 @@ func TestRedirectURIFollowsPublicURLLikeTheReference(t *testing.T) {
 	}
 }
 
-// The default list assembles with connections last, the catalog bound to it, and no event or
-// handler of its own.
-func TestTheDefaultModuleListHasConnectionsLast(t *testing.T) {
+// The default list assembles with connections fifth (the gateway follows), the catalog bound to
+// it, and no event or handler of its own.
+func TestTheDefaultModuleListHasConnectionsFifth(t *testing.T) {
 	got := modules(bareRuntime(t))
-	last := got[len(got)-1]
+	last := got[4]
 	var paths []string
 	for _, r := range last.Routes {
 		paths = append(paths, r.Method+" "+r.Path)
@@ -266,21 +266,27 @@ func TestBindingTwiceOrToNothingIsRefused(t *testing.T) {
 type fakeResolver struct {
 	res connections.CredentialResult
 	err error
-	got []connections.ResolveQuery
 }
 
-func (f fakeResolver) ResolveCredential(context.Context, connections.ResolveQuery) (connections.CredentialResult, error) {
+func (f fakeResolver) ResolveForSending(context.Context, string, connections.ServerCallTarget, bool) (connections.CredentialResult, error) {
 	return f.res, f.err
+}
+
+// sendAsk is one ResolveForSending call as the adapter made it.
+type sendAsk struct {
+	userID       string
+	target       connections.ServerCallTarget
+	forceRefresh bool
 }
 
 type recordingResolver struct {
 	fakeResolver
-	asked *[]connections.ResolveQuery
+	asked *[]sendAsk
 }
 
-func (r recordingResolver) ResolveCredential(ctx context.Context, q connections.ResolveQuery) (connections.CredentialResult, error) {
-	*r.asked = append(*r.asked, q)
-	return r.fakeResolver.ResolveCredential(ctx, q)
+func (r recordingResolver) ResolveForSending(ctx context.Context, userID string, target connections.ServerCallTarget, forceRefresh bool) (connections.CredentialResult, error) {
+	*r.asked = append(*r.asked, sendAsk{userID, target, forceRefresh})
+	return r.fakeResolver.ResolveForSending(ctx, userID, target, forceRefresh)
 }
 
 // The mapping of what connections answers to what the catalog stores (SyncOwner.failureOf then
@@ -299,7 +305,7 @@ func TestSyncCredentialsMapConnectionsAnswersToTheCatalogsFailures(t *testing.T)
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			var asked []connections.ResolveQuery
+			var asked []sendAsk
 			l := &lateSyncCredentials{}
 			l.bind(recordingResolver{fakeResolver: fakeResolver{res: c.res}, asked: &asked})
 			got, err := l.PersonalSecret(context.Background(), catalog.ServerCallTarget{Slug: "gitea"}, "u1")
@@ -307,9 +313,9 @@ func TestSyncCredentialsMapConnectionsAnswersToTheCatalogsFailures(t *testing.T)
 				t.Fatalf("got %+v, %v; want %+v", got, err, c.want)
 			}
 			// No forced refresh in a synchronisation: the reference does not ask for one.
-			want := connections.ServerConfigOf(catalog.ServerCallTarget{Slug: "gitea"})
-			if len(asked) != 1 || asked[0].UserID != "u1" || asked[0].Server != "gitea" || asked[0].ForceRefresh ||
-				asked[0].Expect == nil || !reflect.DeepEqual(*asked[0].Expect, want) {
+			// The target the sync read is what the secret is checked against.
+			if len(asked) != 1 || asked[0].userID != "u1" || asked[0].forceRefresh ||
+				!reflect.DeepEqual(asked[0].target, catalog.ServerCallTarget{Slug: "gitea"}) {
 				t.Fatalf("asked %+v", asked)
 			}
 		})

@@ -588,6 +588,51 @@ func TestDisconnect(t *testing.T) {
 		}
 	})
 
+	t.Run("a server that vanishes or loses its OAuth between the two reads gets no revoke", func(t *testing.T) {
+		for name, change := range map[string]func(g *fakeServer){
+			"disabled":        func(g *fakeServer) { g.disabled = true },
+			"no OAuth config": func(g *fakeServer) { g.oauth = nil },
+		} {
+			t.Run(name, func(t *testing.T) {
+				h := newHarness(t)
+				h.withRevokeURL()
+				h.connect(alice, "gitea")
+				g := h.gitea()
+				h.dir.onSecret = func() {
+					h.dir.mu.Lock()
+					defer h.dir.mu.Unlock()
+					change(g)
+				}
+				if err := disconnect(h, "gitea"); err != nil {
+					t.Fatal(err)
+				}
+				if len(h.oauth.revoked()) != 0 || h.store.size() != 0 {
+					t.Fatalf("revoked %v, rows %d", h.oauth.revoked(), h.store.size())
+				}
+			})
+		}
+	})
+
+	t.Run("the revoke uses the configuration of the second read", func(t *testing.T) {
+		h := newHarness(t)
+		h.withRevokeURL()
+		h.connect(alice, "gitea")
+		g := h.gitea()
+		h.dir.onSecret = func() {
+			h.dir.mu.Lock()
+			defer h.dir.mu.Unlock()
+			o := *g.oauth
+			o.Scopes = []string{"changed-between-reads"} // not fingerprinted: the revoke still goes out
+			g.oauth = &o
+		}
+		if err := disconnect(h, "gitea"); err != nil {
+			t.Fatal(err)
+		}
+		if len(h.oauth.revokeConfigs) != 1 || !slices.Equal(h.oauth.revokeConfigs[0].Scopes, []string{"changed-between-reads"}) {
+			t.Fatalf("revoke configs %+v", h.oauth.revokeConfigs)
+		}
+	})
+
 	t.Run("a disabled or unknown server: the row is still deleted, nobody is contacted", func(t *testing.T) {
 		h := newHarness(t)
 		h.withRevokeURL()
