@@ -59,8 +59,9 @@ type cacheSlot struct {
 	done     chan struct{}
 	sch      *jsonschema.Schema
 	disabled atomic.Bool
-	// nodes is the schema's reference-expanded node count (the work per argument value).
-	nodes int
+	// work is the schema's reference-expanded weight, the work one argument value can cost
+	// (ownWeight summed over every expanded node), saturated past maxValidationWork.
+	work int
 }
 
 // The bounds of what is compiled. Real tool schemas are far inside them (the recorded Gitea and
@@ -104,7 +105,7 @@ func (v *ArgsValidator) Validate(ref string, schema, args json.RawMessage) app.A
 	if len(bytes.TrimSpace(args)) == 0 {
 		doc = json.RawMessage("{}")
 	}
-	if e.nodes*countValues(doc) > maxValidationWork {
+	if values := countValues(doc); values > maxValidationWork || e.work*values > maxValidationWork {
 		// The same: past the work budget (see maxValidationWork) the upstream validates, silently.
 		return app.ArgsCheck{OK: true}
 	}
@@ -134,7 +135,7 @@ func (v *ArgsValidator) Validate(ref string, schema, args json.RawMessage) app.A
 		return app.ArgsCheck{OK: true}
 	}
 	leaf := firstLeaf(verr)
-	return app.ArgsCheck{Path: pointer(refusalLocation(leaf)), Message: messageOf(leaf)}
+	return app.ArgsCheck{Path: pointer(refusalLocation(leaf)), Message: capMessage(messageOf(leaf))}
 }
 
 // errApplyPanic is the warning text when applying a compiled schema panicked.
@@ -207,12 +208,12 @@ func (v *ArgsValidator) entryFor(ref string, schema json.RawMessage) *cacheSlot 
 		v.warnOnce(ref, err)
 		return e
 	}
-	nodes, err := expandedSize(sch)
+	_, work, err := expandedSize(sch)
 	if err != nil {
 		v.warnOnce(ref, err)
 		return e
 	}
-	e.sch, e.nodes = sch, nodes
+	e.sch, e.work = sch, work
 	return e
 }
 
