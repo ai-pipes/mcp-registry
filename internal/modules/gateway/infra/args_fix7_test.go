@@ -137,6 +137,11 @@ func adversarialShapes(t *testing.T) []adversarial {
 	typeBranch := `{"items":{"type":["string","boolean","object","array","null"]}}`
 	fanOut := `{"type":"object","properties":{"a":{"type":"array","allOf":[` + typeBranch + "," + typeBranch + "," + typeBranch + `]}}}`
 	enum1k := `{"type":"object","properties":{"a":{"type":"array","items":{"enum":[` + numberList(1_000) + `]}}}}`
+	var wideBranches []string
+	for i := 0; i < 30; i++ {
+		wideBranches = append(wideBranches, `{"minimum":`+wideLimit+`}`)
+	}
+	wideMinimum := `{"type":"object","properties":{"a":{"type":"array","items":{"allOf":[` + strings.Join(wideBranches, ",") + `]}}}}`
 	// Ceilings: about four times the total allocation measured on an Apple M-series machine
 	// (Follow-up 3 of the fix-wave report), at least 4 MiB, at most 256 MiB.
 	return []adversarial{
@@ -148,6 +153,7 @@ func adversarialShapes(t *testing.T) []adversarial {
 		{"20k required", req, budgetArgs(weightOf(req), "{}", 1), 80 << 20},
 		{"uniqueItems with colliding signs", unique, signPatterns(13, maxValidationWork/weightOf(unique)), 34 << 20},
 		{"1e-400 multipleOf", multiple, budgetArgs(weightOf(multiple), "1e-400", 1+(6+400)/16), 8 << 20},
+		{"wide schema minimum ×30", wideMinimum, budgetArgs(weightOf(wideMinimum), "-1", 1), 14 << 20},
 		{"failing type fan-out", fanOut, budgetArgs(weightOf(fanOut), "1", 1), 232 << 20},
 	}
 }

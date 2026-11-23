@@ -1,6 +1,8 @@
 package infra
 
 import (
+	"encoding/json"
+	"math/big"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -142,7 +144,8 @@ func (g *schemaGraph) expand(s *jsonschema.Schema) (int, int, error) {
 //	Location
 //	Ref, RecursiveRef, DynamicRef         children (dynamic ones are refused)
 //	Types                                 no: at most seven types
-//	Enum.Values                           yes: each entry compared, an entry by its JSON values
+//	Enum.Values                           yes: each entry compared, an entry by its JSON values,
+//	                                      a number by its width
 //	Const                                 yes: compared by its JSON values
 //	Not, AllOf, AnyOf, OneOf, If, Then,   children
 //	Else
@@ -169,7 +172,8 @@ func (g *schemaGraph) expand(s *jsonschema.Schema) (int, int, error) {
 //	ContentEncoding, ContentMediaType     no: one decode of the value itself
 //	ContentSchema                         child
 //	Maximum, Minimum, ExclusiveMaximum,   no
-//	ExclusiveMinimum                      (paid by the width of each argument number)
+//	ExclusiveMinimum                      yes, by width: each argument number is compared
+//	                                      exactly (ratWeight); argument numbers pay their width too
 //	MultipleOf                            stripped (prepare), refused behind a $ref: exact
 //	                                      rational division, one Rat kept per failure
 //	Extensions                            no: none registered
@@ -185,6 +189,12 @@ func ownWeight(s *jsonschema.Schema) int {
 	}
 	if s.Const != nil {
 		w += enumValueWeight * valueCount(*s.Const)
+	}
+	// The library compares with these exactly for every argument number: a wide one costs its width.
+	for _, r := range []*big.Rat{s.Minimum, s.Maximum, s.ExclusiveMinimum, s.ExclusiveMaximum} {
+		if r != nil {
+			w += ratWeight(r)
+		}
 	}
 	for _, names := range s.DependentRequired {
 		w += len(names)
@@ -203,10 +213,13 @@ func ownWeight(s *jsonschema.Schema) int {
 // against a 10 000-number enum took 0.45 s at weight 1.
 const enumValueWeight = 16
 
-// valueCount is the number of JSON values in a decoded value (itself and everything inside).
+// valueCount is the number of JSON values in a decoded value (itself and everything inside); a
+// number counts by its width (numberWeight), as in the arguments.
 func valueCount(v any) int {
 	n := 1
 	switch x := v.(type) {
+	case json.Number:
+		return numberWeight([]byte(x))
 	case []any:
 		for _, e := range x {
 			n += valueCount(e)
@@ -230,11 +243,24 @@ func valueCount(v any) int {
 func numberWeight(literal []byte) int {
 	exp := 0
 	if i := strings.IndexAny(string(literal), "eE"); i >= 0 {
-		if e, err := strconv.Atoi(strings.TrimPrefix(string(literal[i+1:]), "+")); err == nil {
-			exp = max(e, -e)
+		e, err := strconv.Atoi(strings.TrimPrefix(string(literal[i+1:]), "+"))
+		if err != nil {
+			e = maxNumberExponent // beyond int: as wide as the bound allows (refused anyway)
 		}
+		// Clamped before the absolute value: -e of the smallest int is itself.
+		e = min(max(e, -maxNumberExponent), maxNumberExponent)
+		exp = max(e, -e)
 	}
-	return 1 + (len(literal)+min(exp, maxNumberExponent))/16
+	return 1 + (min(len(literal), maxNumberChars)+exp)/16
+}
+
+// ratWeight is numberWeight for a number the library has already turned into an exact rational
+// (a schema's minimum, maximum and their exclusive forms): its width is the decimal digits of the
+// numerator and the denominator (log10(2) ≈ 0.30103 digits per bit), which for a literal
+// m e-k is about the digits of m plus k.
+func ratWeight(r *big.Rat) int {
+	digits := (r.Num().BitLen() + r.Denom().BitLen()) * 30103 / 100000
+	return 1 + digits/16
 }
 
 func countValues(doc []byte) int {
