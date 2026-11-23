@@ -69,6 +69,14 @@ func parseMessage(raw json.RawMessage) message {
 			m.echo = m.id
 		}
 	}
+	// The claim is seen before the shape is judged (classifyBatch asks hasEnvelopeClaim, which
+	// looks only at params._meta, before it validates the element).
+	if hasParams && kindOf(params) == "object" {
+		_ = json.Unmarshal(params, &m.params)
+		if metaRaw, ok := m.params["_meta"]; ok && kindOf(metaRaw) == "object" {
+			_ = json.Unmarshal(metaRaw, &m.meta)
+		}
+	}
 	if !jsonrpcVersion(obj["jsonrpc"]) {
 		return m
 	}
@@ -77,17 +85,8 @@ func parseMessage(raw json.RawMessage) message {
 		if kindOf(methodRaw) != "string" || (hasID && !requestID(m.id)) || !onlyKeys(obj, "jsonrpc", "id", "method", "params") {
 			return m
 		}
-		if hasParams {
-			if kindOf(params) != "object" {
-				return m
-			}
-			_ = json.Unmarshal(params, &m.params) // an object (checked above)
-			if metaRaw, ok := m.params["_meta"]; ok {
-				if kindOf(metaRaw) != "object" {
-					return m
-				}
-				_ = json.Unmarshal(metaRaw, &m.meta)
-			}
+		if hasParams && (kindOf(params) != "object" || !requestMeta(m.params)) {
+			return m
 		}
 		m.kind = kindNotification
 		if hasID {
@@ -103,6 +102,30 @@ func parseMessage(raw json.RawMessage) message {
 		}
 	}
 	return m
+}
+
+// requestMeta is RequestMetaSchema for params._meta (when present): an object whose progressToken
+// (when present) is a string or an integer and whose related-task entry (when present) is an
+// object with a string taskId.
+func requestMeta(params map[string]json.RawMessage) bool {
+	raw, ok := params["_meta"]
+	if !ok {
+		return true
+	}
+	var meta map[string]json.RawMessage
+	if kindOf(raw) != "object" || json.Unmarshal(raw, &meta) != nil {
+		return false
+	}
+	if tok, ok := meta["progressToken"]; ok && !requestID(tok) {
+		return false
+	}
+	if task, ok := meta["io.modelcontextprotocol/related-task"]; ok {
+		var t map[string]json.RawMessage
+		if kindOf(task) != "object" || json.Unmarshal(task, &t) != nil || kindOf(t["taskId"]) != "string" {
+			return false
+		}
+	}
+	return true
 }
 
 func jsonrpcVersion(raw json.RawMessage) bool {
@@ -207,6 +230,12 @@ func envelopeIssues(meta map[string]json.RawMessage) []envelopeIssue {
 func (m message) validModernClaim() bool {
 	v, ok := m.claimVersion()
 	return ok && isModern(v) && len(envelopeIssues(m.meta)) == 0
+}
+
+// isInitialization is isInitializeRequest: an initialize request whose params are valid for it
+// (the legacy transport skips the version header and allows no other message only for one).
+func (m message) isInitialization() bool {
+	return m.kind == kindRequest && m.method == "initialize" && len(initializeIssues(m.params, m.params != nil)) == 0
 }
 
 // isModern is isModernProtocolVersion: the 2026-07-28 revision or a later one (string order).

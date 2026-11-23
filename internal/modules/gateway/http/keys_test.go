@@ -91,13 +91,19 @@ func TestArgumentsAreReadByTheirExactKeyAndTheLastDuplicateWins(t *testing.T) {
 
 func TestInitializeReadsTheExactKey(t *testing.T) {
 	e := newEnv(t)
-	r := e.post(t, aliceToken, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"ProtocolVersion":"2025-06-18"}}`)
-	if r.msg.Result["protocolVersion"] != "2025-11-25" {
+	const rest = `"capabilities":{},"clientInfo":{"name":"x","version":"1"}`
+	r := e.post(t, aliceToken, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"ProtocolVersion":"2025-06-18","protocolVersion":"2025-03-26",`+rest+`}}`)
+	if r.msg.Result["protocolVersion"] != "2025-03-26" {
 		t.Fatalf("ProtocolVersion: %.300s", r.body)
 	}
-	r = e.post(t, aliceToken, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","protocolVersion":"2025-06-18"}}`)
+	r = e.post(t, aliceToken, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","protocolVersion":"2025-06-18",`+rest+`}}`)
 	if r.msg.Result["protocolVersion"] != "2025-06-18" {
 		t.Fatalf("duplicate: %.300s", r.body)
+	}
+	// Only the case variant: protocolVersion is missing, so this is no initialization request.
+	r = e.post(t, aliceToken, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"ProtocolVersion":"2025-06-18",`+rest+`}}`)
+	if r.msg.Error == nil || r.msg.Error.Code != -32603 || !strings.Contains(r.msg.Error.Message, `"protocolVersion"`) {
+		t.Fatalf("ProtocolVersion only: %.300s", r.body)
 	}
 }
 

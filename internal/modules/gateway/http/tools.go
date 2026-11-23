@@ -15,26 +15,27 @@ import (
 )
 
 // toolsListJSON is the tools/list result: the four meta-tools, their schemas as the reference's
-// zod 4 renders them (compat/golden/mcp-surface.json). It never depends on the catalog.
+// zod 4 renders them (compat/golden/mcp-surface.json), in the reference's key order (its own
+// tools/list answer, testdata/reference/answers.json). It never depends on the catalog.
 const toolsListJSON = `{"tools":[
 {"name":"list_servers",
  "description":"List the user's services available through this gateway: slug, name, description, number of tools and connection state (connectUrl when the user has to connect first).",
- "inputSchema":{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{}},
- "outputSchema":{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"servers":{"type":"array","items":{"type":"object","properties":{"slug":{"type":"string"},"name":{"type":"string"},"description":{"type":"string"},"tools":{"type":"number"},"connection":{"type":"string","enum":["ready","needs_connection","expired","not_required"]},"connectUrl":{"type":"string"}},"required":["slug","name","description","tools","connection"],"additionalProperties":false}}},"required":["servers"],"additionalProperties":false},
- "annotations":{"readOnlyHint":true}},
+ "inputSchema":{"type":"object","$schema":"https://json-schema.org/draft/2020-12/schema","properties":{}},
+ "annotations":{"readOnlyHint":true},
+ "outputSchema":{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"servers":{"type":"array","items":{"type":"object","properties":{"slug":{"type":"string"},"name":{"type":"string"},"description":{"type":"string"},"tools":{"type":"number"},"connection":{"type":"string","enum":["ready","needs_connection","expired","not_required"]},"connectUrl":{"type":"string"}},"required":["slug","name","description","tools","connection"],"additionalProperties":false}}},"required":["servers"],"additionalProperties":false}},
 {"name":"search_tools",
  "description":"Find tools by a short description of the action. Returns only tools above a relevance threshold, best first, with score 0–1; an empty list means nothing fits. servers (slugs from list_servers) limits the search.",
- "inputSchema":{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"query":{"type":"string","minLength":1,"maxLength":500},"limit":{"default":10,"type":"integer","minimum":1,"maximum":25},"servers":{"type":"array","items":{"type":"string","minLength":1,"maxLength":64},"minItems":1,"maxItems":20}},"required":["query"]},
- "outputSchema":{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"results":{"type":"array","items":{"type":"object","properties":{"tool":{"type":"string"},"title":{"type":["string","null"]},"description":{"type":"string"},"server":{"type":"string"},"score":{"type":"number"},"annotations":{"type":"object","propertyNames":{"type":"string"},"additionalProperties":{"type":"boolean"}},"connection":{"type":"string","enum":["ready","needs_connection","expired","not_required"]}},"required":["tool","title","description","server","score","annotations","connection"],"additionalProperties":false}}},"required":["results"],"additionalProperties":false},
- "annotations":{"readOnlyHint":true}},
+ "inputSchema":{"type":"object","$schema":"https://json-schema.org/draft/2020-12/schema","properties":{"query":{"type":"string","minLength":1,"maxLength":500},"limit":{"default":10,"type":"integer","minimum":1,"maximum":25},"servers":{"minItems":1,"maxItems":20,"type":"array","items":{"type":"string","minLength":1,"maxLength":64}}},"required":["query"]},
+ "annotations":{"readOnlyHint":true},
+ "outputSchema":{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"results":{"type":"array","items":{"type":"object","properties":{"tool":{"type":"string"},"title":{"type":["string","null"]},"description":{"type":"string"},"server":{"type":"string"},"score":{"type":"number"},"annotations":{"type":"object","propertyNames":{"type":"string"},"additionalProperties":{"type":"boolean"}},"connection":{"type":"string","enum":["ready","needs_connection","expired","not_required"]}},"required":["tool","title","description","server","score","annotations","connection"],"additionalProperties":false}}},"required":["results"],"additionalProperties":false}},
 {"name":"describe_tool",
  "description":"Full description and input JSON Schema of a tool from search_tools (\"<server>.<tool>\"). Call before call_tool.",
- "inputSchema":{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"tool":{"type":"string","minLength":1,"maxLength":300}},"required":["tool"]},
- "outputSchema":{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"tool":{"type":"string"},"title":{"type":["string","null"]},"description":{"type":"string"},"inputSchema":{"type":"object","propertyNames":{"type":"string"},"additionalProperties":{}},"outputSchema":{"type":"object","propertyNames":{"type":"string"},"additionalProperties":{}},"annotations":{"type":"object","propertyNames":{"type":"string"},"additionalProperties":{"type":"boolean"}},"server":{"type":"string"},"connection":{"type":"string","enum":["ready","needs_connection","expired","not_required"]}},"required":["tool","title","description","inputSchema","annotations","server","connection"],"additionalProperties":false},
- "annotations":{"readOnlyHint":true}},
+ "inputSchema":{"type":"object","$schema":"https://json-schema.org/draft/2020-12/schema","properties":{"tool":{"type":"string","minLength":1,"maxLength":300}},"required":["tool"]},
+ "annotations":{"readOnlyHint":true},
+ "outputSchema":{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"tool":{"type":"string"},"title":{"type":["string","null"]},"description":{"type":"string"},"inputSchema":{"type":"object","propertyNames":{"type":"string"},"additionalProperties":{}},"outputSchema":{"type":"object","propertyNames":{"type":"string"},"additionalProperties":{}},"annotations":{"type":"object","propertyNames":{"type":"string"},"additionalProperties":{"type":"boolean"}},"server":{"type":"string"},"connection":{"type":"string","enum":["ready","needs_connection","expired","not_required"]}},"required":["tool","title","description","inputSchema","annotations","server","connection"],"additionalProperties":false}},
 {"name":"call_tool",
  "description":"Call a tool (\"<server>.<tool>\") with arguments matching its inputSchema, on the user's behalf. Returns the service's result as is.",
- "inputSchema":{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"tool":{"type":"string","minLength":1,"maxLength":300},"arguments":{"default":{},"type":"object","propertyNames":{"type":"string"},"additionalProperties":{}}},"required":["tool"]},
+ "inputSchema":{"type":"object","$schema":"https://json-schema.org/draft/2020-12/schema","properties":{"tool":{"type":"string","minLength":1,"maxLength":300},"arguments":{"default":{},"type":"object","propertyNames":{"type":"string"},"additionalProperties":{}}},"required":["tool"]},
  "annotations":{"readOnlyHint":false,"openWorldHint":true}}
 ]}`
 
@@ -53,15 +54,13 @@ const msgInternal = "Internal error."
 func (x *exchange) toolsCall(m message) outcome {
 	// The name and the arguments are read from the one parsed message (exact keys, the last
 	// duplicate wins), the same values the Mcp-Name check saw.
-	name, ok := m.nameOf()
-	if !ok {
-		return outcome{err: &rpcErr{Code: codeInvalidParams, Message: msgInvalidParams}}
+	if issues := callParamsIssues(m.params, m.params != nil); len(issues) > 0 {
+		return outcome{err: &rpcErr{Code: codeInvalidParams, Message: "Invalid tools/call request: " + issues.text()}}
 	}
+	name, _ := m.nameOf()
 	var args map[string]json.RawMessage
 	if raw, present := m.params["arguments"]; present {
-		if kindOf(raw) != "object" || json.Unmarshal(raw, &args) != nil {
-			return outcome{err: &rpcErr{Code: codeInvalidParams, Message: msgInvalidParams}}
-		}
+		_ = json.Unmarshal(raw, &args) // an object (checked above)
 	}
 	ctx := x.r.Context()
 	var run func() ([]byte, error)

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -26,7 +27,11 @@ const listElement = `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`
 
 func TestABatchIsCappedAt100Messages(t *testing.T) {
 	e := newEnv(t)
-	r := e.post(t, aliceToken, batchOf(100, listElement))
+	var distinct []string
+	for i := range 100 {
+		distinct = append(distinct, `{"jsonrpc":"2.0","id":`+strconv.Itoa(i)+`,"method":"tools/list"}`)
+	}
+	r := e.post(t, aliceToken, "["+strings.Join(distinct, ",")+"]")
 	var answers []json.RawMessage
 	if err := json.Unmarshal(r.body, &answers); r.status != 200 || err != nil || len(answers) != 100 {
 		t.Fatalf("100 messages: %d %d answers %.200s", r.status, len(answers), r.body)

@@ -74,8 +74,10 @@ func TestClassicInitializeNegotiatesTheRevision(t *testing.T) {
 		}
 	}
 	// No params at all: the latest classic revision.
-	if r := e.post(t, aliceToken, rpcBody(1, "initialize", nil)); r.msg.Result["protocolVersion"] != "2025-11-25" {
-		t.Errorf("initialize without params: %.200s", r.body)
+	// Without params it is no initialization request: the in-band error is the zod issues.
+	if r := e.post(t, aliceToken, rpcBody(1, "initialize", nil)); r.status != 200 || r.msg.Error == nil || r.msg.Error.Code != -32603 ||
+		r.msg.Error.Message != "[\n  {\n    \"expected\": \"object\",\n    \"code\": \"invalid_type\",\n    \"path\": [\n      \"params\"\n    ],\n    \"message\": \"Invalid input: expected object, received undefined\"\n  }\n]" {
+		t.Errorf("initialize without params: %.300s", r.body)
 	}
 }
 
@@ -598,8 +600,8 @@ func TestTheModernEnvelopeIsCheckedAgainstTheHeaders(t *testing.T) {
 		{"version mismatch", rpcBody(1, "tools/list", envelope), []string{"MCP-Protocol-Version: 2025-11-25", "Mcp-Method: tools/list"}, 400, -32020},
 		{"an unsupported modern revision", rpcBody(1, "tools/list", map[string]any{"_meta": map[string]any{"io.modelcontextprotocol/protocolVersion": "2099-01-01", "io.modelcontextprotocol/clientCapabilities": map[string]any{}}}), nil, 400, -32022},
 		{"an envelope claim that is not a string", rpcBody(1, "tools/list", map[string]any{"_meta": map[string]any{"io.modelcontextprotocol/protocolVersion": 5}}), nil, 400, -32602},
-		{"ping is not a method of the revision", rpcBody(1, "ping", envelope), append(slices.Clone(modern), "Mcp-Method: ping"), 200, -32601},
-		{"initialize is not a method of the revision", rpcBody(1, "initialize", envelope), append(slices.Clone(modern), "Mcp-Method: initialize"), 200, -32601},
+		{"ping is not a method of the revision", rpcBody(1, "ping", envelope), append(slices.Clone(modern), "Mcp-Method: ping"), 404, -32601},
+		{"initialize is not a method of the revision", rpcBody(1, "initialize", envelope), append(slices.Clone(modern), "Mcp-Method: initialize"), 404, -32601},
 		{"a batch with an envelope", "[" + rpcBody(1, "tools/list", envelope) + "]", nil, 400, -32600},
 	} {
 		r := e.post(t, aliceToken, c.body, c.hdr...)

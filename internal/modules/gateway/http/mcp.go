@@ -41,6 +41,7 @@ const (
 	codeParseError      = -32700
 	codeInvalidRequest  = -32600
 	codeMethodNotFound  = -32601
+	codeInternalError   = -32603
 	codeInvalidParams   = -32602
 	codeServerError     = -32000
 	codeHeaderMismatch  = -32020
@@ -65,7 +66,6 @@ const (
 	msgModernInBatch    = "Bad Request: JSON-RPC batches may not contain requests for protocol revision 2026-07-28 or later"
 	msgOneInitialize    = "Invalid Request: Only one initialization request is allowed"
 	msgMethodNotFound   = "Method not found"
-	msgInvalidParams    = "Invalid params"
 )
 
 // maxBatch is the reference's MAX_BATCH_SIZE: a JSON-RPC array of more messages is refused.
@@ -307,7 +307,14 @@ func (x *exchange) modern(m message, revision string) {
 	if !x.standardHeaders(m, revision) {
 		return
 	}
-	x.answer(x.modernResult(m), m.id)
+	o := x.modernResult(m)
+	status := http.StatusOK
+	if o.err != nil && o.err.Code == codeMethodNotFound {
+		status = http.StatusNotFound // LADDER_ERROR_HTTP_STATUS of the reference's modern path
+	}
+	var b bytes.Buffer
+	writeAnswer(&b, o, m.id)
+	writeJSON(x.w, status, b.Bytes())
 }
 
 // standardHeaders refuses a modern request without MCP-Protocol-Version or Mcp-Method, or whose
@@ -351,7 +358,7 @@ func (x *exchange) legacy(m message) {
 	if !x.acceptable() {
 		return
 	}
-	if (m.kind != kindRequest || m.method != "initialize") && !x.classicHeaderOK() {
+	if !m.isInitialization() && !x.classicHeaderOK() {
 		return
 	}
 	if m.kind != kindRequest {
@@ -416,7 +423,7 @@ func (x *exchange) batch(raw []byte) {
 	}
 	initialize, requests := false, 0
 	for _, m := range msgs {
-		initialize = initialize || (m.kind == kindRequest && m.method == "initialize")
+		initialize = initialize || m.isInitialization()
 		if m.kind == kindRequest {
 			requests++
 		}
@@ -433,18 +440,25 @@ func (x *exchange) batch(raw []byte) {
 		return
 	}
 	// The answers are written once, into the one buffer that becomes the body.
+	// Every request runs; a request id answered already is not answered again (the reference maps
+	// answers to the stream by id, so a repeated id gets one answer, the first).
 	var b bytes.Buffer
 	b.WriteByte('[')
-	first := true
+	answered := map[string]bool{}
 	for _, m := range msgs {
 		if m.kind != kindRequest {
 			continue
 		}
-		if !first {
+		o := x.classic(m)
+		key := idKey(m.id)
+		if answered[key] {
+			continue
+		}
+		if len(answered) > 0 {
 			b.WriteByte(',')
 		}
-		first = false
-		writeAnswer(&b, x.classic(m), m.id)
+		answered[key] = true
+		writeAnswer(&b, o, m.id)
 	}
 	b.WriteByte(']')
 	writeJSON(x.w, http.StatusOK, b.Bytes())
@@ -462,17 +476,33 @@ func (x *exchange) answer(o outcome, id json.RawMessage) {
 	writeJSON(x.w, http.StatusOK, b.Bytes())
 }
 
-// writeAnswer writes the response to a request: its result or its error, with its id.
+// writeAnswer writes the response to a request in the reference's key order: {result, jsonrpc,
+// id} or {jsonrpc, id, error}.
 func writeAnswer(b *bytes.Buffer, o outcome, id json.RawMessage) {
 	if o.err != nil {
-		b.Write(errorBody(id, *o.err))
+		errJSON, _ := marshalJS(*o.err) // ints, strings and plain data always encode
+		b.WriteString(`{"jsonrpc":"2.0","id":`)
+		b.Write(id)
+		b.WriteString(`,"error":`)
+		b.Write(errJSON)
+		b.WriteByte('}')
 		return
 	}
-	b.WriteString(`{"jsonrpc":"2.0","id":`)
-	b.Write(id)
-	b.WriteString(`,"result":`)
+	b.WriteString(`{"result":`)
 	b.Write(o.result)
+	b.WriteString(`,"jsonrpc":"2.0","id":`)
+	b.Write(id)
 	b.WriteByte('}')
+}
+
+// idKey is the identity of a request id as a JavaScript Map key: a string, or a number by value.
+func idKey(id json.RawMessage) string {
+	if kindOf(id) == "number" {
+		if f, err := strconv.ParseFloat(string(id), 64); err == nil {
+			return "n" + strconv.FormatFloat(f, 'g', -1, 64)
+		}
+	}
+	return "s" + string(id)
 }
 
 func errorBody(id json.RawMessage, e rpcErr) []byte {
@@ -494,6 +524,9 @@ func errorBody(id json.RawMessage, e rpcErr) []byte {
 func (x *exchange) classic(m message) outcome {
 	switch m.method {
 	case "initialize":
+		if issues := initializeIssues(m.params, m.params != nil); len(issues) > 0 {
+			return outcome{err: &rpcErr{Code: codeInternalError, Message: issues.text()}}
+		}
 		version := latestClassic
 		var asked string
 		if raw := m.params["protocolVersion"]; kindOf(raw) == "string" && json.Unmarshal(raw, &asked) == nil && slices.Contains(classicRevisions, asked) {
@@ -526,7 +559,7 @@ func (x *exchange) modernResult(m message) outcome {
 		return outcome{err: &rpcErr{Code: codeMethodNotFound, Message: msgMethodNotFound}}
 	}
 	if o.err == nil {
-		o.result = x.h.withModernFields(o.result, method == "server/discover")
+		o.result = x.h.withModernFields(o.result, method == "server/discover" || method == "tools/list")
 	}
 	return o
 }
@@ -558,7 +591,7 @@ func (h *endpoint) discoverResult() []byte {
 	return b
 }
 
-// withModernFields appends resultType (and, for server/discover, the cache hints) and the server
+// withModernFields appends resultType (and, for server/discover and tools/list, the cache hints) and the server
 // info to a result object.
 func (h *endpoint) withModernFields(result []byte, discover bool) []byte {
 	var b bytes.Buffer
