@@ -1,17 +1,18 @@
-package http
+package httpx
 
 import (
+	"net/url"
 	"strings"
 	"unicode/utf8"
 )
 
-// queryParam is the value of the first parameter named key in a raw query string, read the way the
+// QueryParam is the value of the first parameter named key in a raw query string, read the way the
 // reference's web framework reads it (Hono's getQueryParam), which differs from net/url: pairs are
 // split on & only (a ; is data), a pair splits at its first =, a pair without = has the value "",
 // an empty name is skipped, + is a space, percent-decoding is lenient, and the first occurrence of
 // a name wins (an empty value included). A fragment ends the query. found is false when no
 // parameter has that name.
-func queryParam(rawQuery, key string) (value string, found bool) {
+func QueryParam(rawQuery, key string) (value string, found bool) {
 	if i := strings.IndexByte(rawQuery, '#'); i >= 0 {
 		rawQuery = rawQuery[:i]
 	}
@@ -32,6 +33,25 @@ func queryParam(rawQuery, key string) (value string, found bool) {
 		return lenientDecode(val), true
 	}
 	return "", false
+}
+
+// QueryValues is every parameter of a raw query string read as QueryParam reads one (Hono's
+// c.req.query()): one value per name, the first occurrence's. The Fields query readers take it.
+func QueryValues(rawQuery string) url.Values {
+	out := url.Values{}
+	if i := strings.IndexByte(rawQuery, '#'); i >= 0 {
+		rawQuery = rawQuery[:i]
+	}
+	for _, pair := range strings.Split(rawQuery, "&") {
+		name, val, _ := strings.Cut(pair, "=")
+		if name = lenientDecode(name); name == "" {
+			continue
+		}
+		if _, seen := out[name]; !seen {
+			out[name] = []string{lenientDecode(val)}
+		}
+	}
+	return out
 }
 
 // lenientDecode is `+` to space, then decodeURIComponent applied to every maximal run of %XX

@@ -3,7 +3,11 @@ package httpx
 import (
 	"math"
 	"net/url"
+	"regexp"
+	"slices"
 	"strconv"
+	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/ai-pipes/mcp-registry/internal/kernel"
@@ -141,4 +145,105 @@ func (f *Fields) QueryDigits(path string, q url.Values, name string, maxLen int)
 		return "", true
 	}
 	return v, true
+}
+
+// Check is a cross-field rule (zod's refine): when ok is false the problem is path: reason.
+func (f *Fields) Check(ok bool, path, reason string) {
+	if !ok {
+		f.fail(path, reason)
+	}
+}
+
+// OptionalQueryString is z.string().min(minLen).max(maxLen).optional() for query parameter name:
+// nil when absent, else the value (the first occurrence) checked like String.
+func (f *Fields) OptionalQueryString(path string, q url.Values, name string, minLen, maxLen int) *string {
+	vals, ok := q[name]
+	if !ok || len(vals) == 0 {
+		return nil
+	}
+	v := f.String(path, vals[0], minLen, maxLen)
+	return &v
+}
+
+// QueryEnum is z.enum(allowed).optional() for query parameter name: present reports whether it was
+// given; a given value must be one of allowed exactly (case included).
+func (f *Fields) QueryEnum(path string, q url.Values, name string, allowed []string) (value string, present bool) {
+	vals, ok := q[name]
+	if !ok || len(vals) == 0 {
+		return "", false
+	}
+	if !slices.Contains(allowed, vals[0]) {
+		f.fail(path, "must be one of "+strings.Join(allowed, ", "))
+		return "", true
+	}
+	return vals[0], true
+}
+
+// uuidPattern is zod 4's z.uuid(): RFC 9562 versions 1 to 8 with the variant 8, 9, a or b, the nil
+// and the max UUID; hexadecimal digits in either case.
+var uuidPattern = regexp.MustCompile(`^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$`)
+
+// QueryUUID is z.uuid().optional() for query parameter name.
+func (f *Fields) QueryUUID(path string, q url.Values, name string) (value string, present bool) {
+	vals, ok := q[name]
+	if !ok || len(vals) == 0 {
+		return "", false
+	}
+	if !uuidPattern.MatchString(vals[0]) {
+		f.fail(path, "must be a UUID")
+		return "", true
+	}
+	return vals[0], true
+}
+
+// isoDateTime is the shape of zod 4's z.iso.datetime({ offset: true }): seconds required, any
+// number of fraction digits, Z (upper case) or a +HH:MM / -HH:MM offset.
+var isoDateTime = regexp.MustCompile(`^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?(?:(Z)|([+-])(\d{2}):(\d{2}))$`)
+
+// QueryOffsetDateTime is z.iso.datetime({ offset: true }).optional() for query parameter name: a
+// real calendar date, hours 00-23, minutes and seconds 00-59, offset hours 00-23 and minutes
+// 00-59. The instant keeps at most nanoseconds of the fraction (the caller cuts it further).
+func (f *Fields) QueryOffsetDateTime(path string, q url.Values, name string) (value time.Time, present bool) {
+	vals, ok := q[name]
+	if !ok || len(vals) == 0 {
+		return time.Time{}, false
+	}
+	t, ok := parseOffsetDateTime(vals[0])
+	if !ok {
+		f.fail(path, "must be an ISO date-time with an offset")
+		return time.Time{}, true
+	}
+	return t, true
+}
+
+func parseOffsetDateTime(s string) (time.Time, bool) {
+	m := isoDateTime.FindStringSubmatch(s)
+	if m == nil {
+		return time.Time{}, false
+	}
+	n := func(i int) int { v, _ := strconv.Atoi(m[i]); return v }
+	year, month, day, hour, minute, sec := n(1), n(2), n(3), n(4), n(5), n(6)
+	if month < 1 || month > 12 || day < 1 || hour > 23 || minute > 59 || sec > 59 {
+		return time.Time{}, false
+	}
+	if day > time.Date(year, time.Month(month)+1, 0, 0, 0, 0, 0, time.UTC).Day() {
+		return time.Time{}, false
+	}
+	nanos := 0
+	if frac := m[7]; frac != "" {
+		frac = (frac + "000000000")[:9]
+		nanos, _ = strconv.Atoi(frac)
+	}
+	offset := 0
+	if m[8] == "" {
+		oh, om := n(10), n(11)
+		if oh > 23 || om > 59 {
+			return time.Time{}, false
+		}
+		offset = (oh*60 + om) * 60
+		if m[9] == "-" {
+			offset = -offset
+		}
+	}
+	return time.Date(year, time.Month(month), day, hour, minute, sec, nanos, time.FixedZone("", offset)).UTC(), true
 }

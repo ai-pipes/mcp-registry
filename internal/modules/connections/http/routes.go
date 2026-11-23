@@ -217,10 +217,10 @@ func (h *handlers) callback(w http.ResponseWriter, r *http.Request) {
 		toPage(w, "error="+errUnauthenticated)
 		return
 	}
-	// The query is read as the reference reads it (queryParam), not with net/url: a code with a raw
+	// The query is read as the reference reads it (httpx.QueryParam), not with net/url: a code with a raw
 	// ; or an invalid escape must connect as it does there.
-	rawState, _ := queryParam(r.URL.RawQuery, "state")
-	rawCode, _ := queryParam(r.URL.RawQuery, "code")
+	rawState, _ := httpx.QueryParam(r.URL.RawQuery, "state")
+	rawCode, _ := httpx.QueryParam(r.URL.RawQuery, "code")
 	var f httpx.Fields
 	state := f.String("state", rawState, 1, 256)
 	code := f.String("code", rawCode, 1, 4096)

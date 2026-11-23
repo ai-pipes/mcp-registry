@@ -1,4 +1,4 @@
-package http
+package httpx
 
 import "testing"
 
@@ -40,7 +40,7 @@ func TestQueryParamIsHonosParser(t *testing.T) {
 		{"code=a%252Bb&state=s", "a%2Bb", "s"},
 	} {
 		for key, want := range map[string]string{"code": c.code, "state": c.state} {
-			got, ok := queryParam(c.query, key)
+			got, ok := QueryParam(c.query, key)
 			if want == absent {
 				if ok {
 					t.Errorf("%q %s = %q, want absent", c.query, key, got)
