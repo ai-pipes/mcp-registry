@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/json"
-	"errors"
 	"math/big"
 	"slices"
 	"strings"
@@ -85,21 +84,25 @@ func (v *ArgsValidator) Validate(ref string, schema, args json.RawMessage) app.A
 	if compiled == nil || e.disabled.Load() {
 		return app.ArgsCheck{OK: true}
 	}
-	doc := "{}"
-	if len(strings.TrimSpace(string(args))) > 0 {
-		doc = string(args)
+	doc := args
+	if len(bytes.TrimSpace(args)) == 0 {
+		doc = json.RawMessage("{}")
 	}
-	value, err := jsonschema.UnmarshalJSON(strings.NewReader(doc))
+	// The literals are read from the bytes before anything is decoded: a number far beyond a double
+	// is refused cheaply, and its text is never echoed.
+	if rawHasExcessNumber(doc) {
+		return app.ArgsCheck{Path: "/", Message: "the arguments contain a number that is too large or too precise to be checked"}
+	}
+	value, err := jsonschema.UnmarshalJSON(bytes.NewReader(doc))
 	if err != nil {
 		return app.ArgsCheck{Path: "/", Message: "the arguments are not valid JSON"}
 	}
-	err = compiled.Validate(value)
-	if err == nil {
-		return app.ArgsCheck{OK: true}
+	verr, err := v.apply(e, ref, compiled, value)
+	if err != nil {
+		return app.ArgsCheck{OK: true} // the schema could not be applied: not enforced
 	}
-	var verr *jsonschema.ValidationError
-	if !errors.As(err, &verr) {
-		return app.ArgsCheck{Path: "/", Message: "the arguments do not match the schema"}
+	if verr == nil {
+		return app.ArgsCheck{OK: true}
 	}
 	if cycle := findRefCycle(verr); cycle {
 		// A schema that refers to itself without consuming any data cannot be applied: not enforced,
@@ -110,7 +113,40 @@ func (v *ArgsValidator) Validate(ref string, schema, args json.RawMessage) app.A
 		return app.ArgsCheck{OK: true}
 	}
 	leaf := firstLeaf(verr)
-	return app.ArgsCheck{Path: pointer(leaf.InstanceLocation), Message: messageOf(leaf)}
+	return app.ArgsCheck{Path: pointer(refusalLocation(leaf)), Message: messageOf(leaf)}
+}
+
+// errApplyPanic is the warning text when applying a compiled schema panicked.
+var errApplyPanic = fixedError("applying the schema failed unexpectedly")
+
+// apply runs the compiled schema on the arguments. A panic inside the library disables the schema
+// (one warning, the panic value is never logged) instead of reaching the caller.
+func (v *ArgsValidator) apply(e *cacheSlot, ref string, sch *jsonschema.Schema, value any) (verr *jsonschema.ValidationError, err error) {
+	defer func() {
+		if recover() != nil {
+			if e.disabled.CompareAndSwap(false, true) {
+				v.warnOnce(ref, errApplyPanic)
+			}
+			verr, err = nil, errApplyPanic
+		}
+	}()
+	if res := sch.Validate(value); res != nil {
+		var ok bool
+		if verr, ok = res.(*jsonschema.ValidationError); !ok {
+			return nil, errApplyPanic
+		}
+	}
+	return verr, nil
+}
+
+// refusalLocation is the instance location a refusal is reported at. An unevaluated property is
+// reported at its parent object, as the reference does (and as additionalProperties already is):
+// the library blames the property, whose name is the agent's.
+func refusalLocation(e *jsonschema.ValidationError) []string {
+	if _, ok := e.ErrorKind.(*kind.FalseSchema); ok && strings.HasSuffix(e.SchemaURL, "/unevaluatedProperties") && len(e.InstanceLocation) > 0 {
+		return e.InstanceLocation[:len(e.InstanceLocation)-1]
+	}
+	return e.InstanceLocation
 }
 
 // errRefCycle is the warning text of a schema whose references loop.
@@ -145,13 +181,27 @@ func (v *ArgsValidator) entryFor(ref string, schema json.RawMessage) *cacheSlot 
 	v.mu.Unlock()
 
 	defer close(e.done)
-	sch, err := v.compileFn(schema)
+	sch, err := v.safeCompile(schema)
 	if err != nil {
 		v.warnOnce(ref, err)
 		return e
 	}
 	e.sch = sch
 	return e
+}
+
+// errCompilePanic is the warning text when compiling a schema panicked.
+var errCompilePanic = fixedError("compiling the schema failed unexpectedly")
+
+// safeCompile is compileFn, but a panic becomes an error (without the panic value, which could
+// quote the schema): the slot is then "not enforced" with the usual single warning.
+func (v *ArgsValidator) safeCompile(schema json.RawMessage) (sch *jsonschema.Schema, err error) {
+	defer func() {
+		if recover() != nil {
+			sch, err = nil, errCompilePanic
+		}
+	}()
+	return v.compileFn(schema)
 }
 
 // cacheKey hashes the schema as given, whitespace aside.
@@ -250,15 +300,15 @@ func messageOf(e *jsonschema.ValidationError) string {
 	case *kind.AdditionalProperties:
 		return "additional properties are not allowed" // the library lists the keys, which are the agent's
 	case *kind.Minimum:
-		return "must be >= " + exactNumber(k.Want)
+		return limit("must be >= ", k.Want, "the schema's minimum")
 	case *kind.Maximum:
-		return "must be <= " + exactNumber(k.Want)
+		return limit("must be <= ", k.Want, "the schema's maximum")
 	case *kind.ExclusiveMinimum:
-		return "must be > " + exactNumber(k.Want)
+		return limit("must be > ", k.Want, "the schema's exclusive minimum")
 	case *kind.ExclusiveMaximum:
-		return "must be < " + exactNumber(k.Want)
+		return limit("must be < ", k.Want, "the schema's exclusive maximum")
 	case *kind.MultipleOf:
-		return "must be a multiple of " + exactNumber(k.Want)
+		return limit("must be a multiple of ", k.Want, "the schema's divisor")
 	case *kind.PropertyNames:
 		return "a property name is not allowed"
 	case *kind.Pattern:
@@ -279,19 +329,30 @@ func messageOf(e *jsonschema.ValidationError) string {
 	return strings.TrimPrefix(at.Error(), "at '': ")
 }
 
-// exactNumber writes a number the schema asked for as a plain decimal, without locale grouping
-// and without rounding: an integer as its digits, a finite fraction as its exact decimal.
-func exactNumber(r *big.Rat) string {
-	if r.IsInt() {
-		return r.Num().String()
+// maxRenderedBits bounds the numerator and the denominator of a number that is written into a
+// message: 256 bits is about 77 decimal digits, far more than any limit a real tool states (2^53
+// is 53 bits). A fraction with such a denominator needs at most as many decimal digits as it has
+// bits, so the exact rendering below costs a few hundred cheap steps at most.
+const maxRenderedBits = 256
+
+// limit writes "<prefix><number>" for a limit of the schema, as a plain decimal without locale
+// grouping and without rounding (an integer as its digits, a finite fraction as its exact
+// decimal). A number beyond maxRenderedBits, or one that does not render exactly within that many
+// digits, is not written: the text names the keyword instead (the generic text).
+func limit(prefix string, r *big.Rat, generic string) string {
+	if r == nil || r.Num().BitLen() > maxRenderedBits || r.Denom().BitLen() > maxRenderedBits {
+		return prefix + generic
 	}
-	for digits := 1; digits <= 1100; digits++ {
+	if r.IsInt() {
+		return prefix + r.Num().String()
+	}
+	for digits := 1; digits <= maxRenderedBits; digits++ {
 		text := r.FloatString(digits)
 		if back, ok := new(big.Rat).SetString(text); ok && back.Cmp(r) == 0 {
-			return text
+			return prefix + text
 		}
 	}
-	return r.FloatString(30) // not a finite decimal (cannot come from JSON text)
+	return prefix + generic
 }
 
 // pointer is a JSON pointer, "/" for the root (the reference's convention for the empty pointer).

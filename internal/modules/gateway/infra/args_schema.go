@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
@@ -79,6 +80,9 @@ func prepare(raw json.RawMessage) (any, *dialect, error) {
 	root, ok := doc.(map[string]any)
 	if !ok {
 		return nil, nil, errors.New("the schema is not an object")
+	}
+	if hasExcessNumber(doc) {
+		return nil, nil, fixedError("the schema has a number too large or too precise to be checked")
 	}
 	if depthOf(doc, 0) > maxSchemaDepth {
 		return nil, nil, fixedError("the schema is nested too deeply to be checked")
@@ -169,4 +173,76 @@ func depthOf(node any, depth int) int {
 		}
 	}
 	return deepest
+}
+
+// The bounds of a number literal, in a schema and in the arguments: at most maxNumberChars
+// characters and a decimal exponent of at most maxNumberExponent in magnitude. A double reaches
+// 1e308, so no real tool or call comes near them; a literal such as 1e9999999 is a few bytes that
+// the exact (big.Rat) arithmetic would turn into megabytes and seconds, or a panic.
+const (
+	maxNumberChars    = 400
+	maxNumberExponent = 400
+)
+
+// numberTooBig reports whether a JSON number literal is beyond the bounds above.
+func numberTooBig(literal string) bool {
+	if len(literal) > maxNumberChars {
+		return true
+	}
+	i := strings.IndexAny(literal, "eE")
+	if i < 0 {
+		return false
+	}
+	exp, err := strconv.Atoi(strings.TrimPrefix(literal[i+1:], "+"))
+	return err != nil || exp > maxNumberExponent || exp < -maxNumberExponent
+}
+
+// hasExcessNumber reports whether any number in a decoded document is beyond the bounds. It reads
+// the literals only, never turning them into values.
+func hasExcessNumber(node any) bool {
+	switch n := node.(type) {
+	case json.Number:
+		return numberTooBig(string(n))
+	case map[string]any:
+		for _, child := range n {
+			if hasExcessNumber(child) {
+				return true
+			}
+		}
+	case []any:
+		for _, child := range n {
+			if hasExcessNumber(child) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// rawHasExcessNumber is hasExcessNumber on JSON text: it finds the number literals outside strings
+// and judges each, without decoding the document.
+func rawHasExcessNumber(doc []byte) bool {
+	for i := 0; i < len(doc); {
+		c := doc[i]
+		switch {
+		case c == '"':
+			for i++; i < len(doc) && doc[i] != '"'; i++ {
+				if doc[i] == '\\' {
+					i++
+				}
+			}
+			i++
+		case c == '-' || (c >= '0' && c <= '9'):
+			start := i
+			for i < len(doc) && strings.IndexByte("0123456789+-.eE", doc[i]) >= 0 {
+				i++
+			}
+			if numberTooBig(string(doc[start:i])) {
+				return true
+			}
+		default:
+			i++
+		}
+	}
+	return false
 }
