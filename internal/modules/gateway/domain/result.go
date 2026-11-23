@@ -62,7 +62,11 @@ func isKind(v json.RawMessage, first byte) bool {
 func (r ToolResult) JSON() []byte {
 	var b bytes.Buffer
 	b.WriteString(`{"content":`)
-	b.Write(r.Content)
+	if len(r.Content) == 0 {
+		b.WriteString("[]") // the zero value: no content blocks
+	} else {
+		b.Write(r.Content)
+	}
 	if r.StructuredContent != nil {
 		b.WriteString(`,"structuredContent":`)
 		b.Write(r.StructuredContent)

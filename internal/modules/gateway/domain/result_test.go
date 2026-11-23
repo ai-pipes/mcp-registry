@@ -115,3 +115,9 @@ func TestFailureResultIsOneTextBlock(t *testing.T) {
 		t.Fatalf("%s", out)
 	}
 }
+
+func TestTheZeroToolResultIsAValidEmptyResult(t *testing.T) {
+	if got := string(domain.ToolResult{}.JSON()); got != `{"content":[]}` {
+		t.Fatalf("zero ToolResult: %s", got)
+	}
+}

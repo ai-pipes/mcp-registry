@@ -3,6 +3,7 @@ package domain_test
 import (
 	"testing"
 
+	"github.com/ai-pipes/mcp-registry/internal/kernel"
 	"github.com/ai-pipes/mcp-registry/internal/modules/gateway/domain"
 )
 
@@ -49,11 +50,11 @@ func TestOutcomeOfResult(t *testing.T) {
 }
 
 func TestOutcomeOfUpstreamFailure(t *testing.T) {
-	cases := map[domain.UpstreamFailure]domain.CallOutcome{
-		domain.FailureTimeout:   domain.OutcomeTimeout,
-		domain.FailureTooLarge:  domain.OutcomeTransportError,
-		domain.FailureTransport: domain.OutcomeTransportError,
-		domain.FailureRejected:  domain.OutcomeUpstreamError,
+	cases := map[kernel.UpstreamErrorKind]domain.CallOutcome{
+		kernel.UpstreamTimeout:   domain.OutcomeTimeout,
+		kernel.UpstreamTooLarge:  domain.OutcomeTransportError,
+		kernel.UpstreamTransport: domain.OutcomeTransportError,
+		kernel.UpstreamRejected:  domain.OutcomeUpstreamError,
 	}
 	for in, want := range cases {
 		if got := domain.OutcomeOfUpstreamFailure(in); got != want {

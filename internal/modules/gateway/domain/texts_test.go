@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ai-pipes/mcp-registry/internal/kernel"
 	"github.com/ai-pipes/mcp-registry/internal/modules/gateway/domain"
 )
 
@@ -72,7 +73,7 @@ func TestTimeoutAndSizeNumbers(t *testing.T) {
 
 func TestUpstreamRejectedText(t *testing.T) {
 	rej := func(code int, msg string) string {
-		return domain.TextUpstreamRejected("Gitea", domain.Rejection{Code: code, Message: msg})
+		return domain.TextUpstreamRejected("Gitea", kernel.UpstreamRejection{Code: code, Message: msg})
 	}
 	if got := rej(-32602, "Invalid params: owner is required"); got != "Gitea rejected the call (JSON-RPC -32602): Invalid params: owner is required" {
 		t.Fatal(got)
@@ -107,21 +108,21 @@ func TestUpstreamRejectedCutCountsUTF16AndDropsASplitPair(t *testing.T) {
 	head := "Gitea rejected the call (JSON-RPC 1): "
 	// 498 units + one astral rune (2 units) = 500 units: kept whole
 	whole := strings.Repeat("a", 498) + "😀"
-	if got := domain.TextUpstreamRejected("Gitea", domain.Rejection{Code: 1, Message: whole}); got != head+whole {
+	if got := domain.TextUpstreamRejected("Gitea", kernel.UpstreamRejection{Code: 1, Message: whole}); got != head+whole {
 		t.Fatal("500 units with a pair must be kept")
 	}
 	// 499 units + astral rune = 501 units: cut at 499, the rune does not fit
 	over := strings.Repeat("a", 499) + "😀"
-	if got := domain.TextUpstreamRejected("Gitea", domain.Rejection{Code: 1, Message: over}); got != head+strings.Repeat("a", 499)+"…" {
+	if got := domain.TextUpstreamRejected("Gitea", kernel.UpstreamRejection{Code: 1, Message: over}); got != head+strings.Repeat("a", 499)+"…" {
 		t.Fatal("cut before the pair")
 	}
 	// 498 units + astral + more: the pair ends at 500, 499 would split it: the half is dropped
 	split := strings.Repeat("a", 498) + "😀" + "b"
-	if got := domain.TextUpstreamRejected("Gitea", domain.Rejection{Code: 1, Message: split}); got != head+strings.Repeat("a", 498)+"…" {
+	if got := domain.TextUpstreamRejected("Gitea", kernel.UpstreamRejection{Code: 1, Message: split}); got != head+strings.Repeat("a", 498)+"…" {
 		t.Fatalf("a surrogate half must be dropped, got len %d", len(got))
 	}
 	// BMP letters outside ASCII are one unit each
-	if got := domain.TextUpstreamRejected("G", domain.Rejection{Code: 1, Message: strings.Repeat("я", 500)}); !strings.HasSuffix(got, strings.Repeat("я", 500)) {
+	if got := domain.TextUpstreamRejected("G", kernel.UpstreamRejection{Code: 1, Message: strings.Repeat("я", 500)}); !strings.HasSuffix(got, strings.Repeat("я", 500)) {
 		t.Fatal("500 BMP units kept")
 	}
 }
@@ -147,5 +148,11 @@ func TestBoundName(t *testing.T) {
 	}
 	if domain.MaxLoggedName != 200 || domain.MaxRejectionText != 500 {
 		t.Fatal("limits")
+	}
+}
+
+func TestTextUnknownServerInsertsTheSlugRaw(t *testing.T) {
+	if got := domain.TextUnknownServer(`a"b`); got != `Unknown server "a"b". Call list_servers.` {
+		t.Fatal(got)
 	}
 }

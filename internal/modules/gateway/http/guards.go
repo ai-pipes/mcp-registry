@@ -99,9 +99,3 @@ func originCheck(expected string) httpx.Middleware {
 		})
 	}
 }
-
-// connectURL is the page where a person connects a server: PUBLIC_URL without trailing slashes,
-// then /connections.
-func connectURL(publicURL string) string {
-	return strings.TrimRight(publicURL, "/") + "/connections"
-}

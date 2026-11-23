@@ -10,6 +10,7 @@ import (
 	"github.com/ai-pipes/mcp-registry/internal/modules/connections"
 	"github.com/ai-pipes/mcp-registry/internal/modules/gateway/domain"
 	"github.com/ai-pipes/mcp-registry/internal/modules/identity"
+	"github.com/ai-pipes/mcp-registry/internal/modules/search"
 )
 
 // Principal is who is calling: the identity module's principal.
@@ -141,4 +142,33 @@ type Deps struct {
 	// a transport_error row). A call is detached from its request's context, not from this one.
 	// Nil means never.
 	BaseContext context.Context
+}
+
+// PersonCatalog is what the meta-tools read of the catalog for a person: the servers the person may
+// use (with their visible tool counts) and a tool the person may use now. *catalog.Service
+// implements it; GetToolFor's DomainError codes not_found and invalid_tool_ref mean "not offered".
+type PersonCatalog interface {
+	ListServersFor(ctx context.Context, p Principal) ([]catalog.MemberServerView, error)
+	GetToolFor(ctx context.Context, p Principal, ref string) (catalog.ToolView, error)
+}
+
+// PersonConnections is the person's connections to the servers that take personal credentials.
+// *connections.Service implements it.
+type PersonConnections interface {
+	ListConnections(ctx context.Context, p Principal) ([]connections.ConnectionSummary, error)
+}
+
+// ToolSearch is the search over the tool index. *search.Service implements it.
+type ToolSearch interface {
+	SearchTools(ctx context.Context, query string, limit int, servers []string) ([]search.ToolHit, error)
+}
+
+// MetaDeps is what list_servers, search_tools and describe_tool need: the other modules' public
+// services and PUBLIC_URL (for the connections link).
+type MetaDeps struct {
+	Catalog     PersonCatalog
+	Connections PersonConnections
+	Search      ToolSearch
+	// PublicURL is PUBLIC_URL (trailing slashes are removed in the link).
+	PublicURL string
 }

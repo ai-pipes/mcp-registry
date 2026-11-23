@@ -1,5 +1,7 @@
 package domain
 
+import "github.com/ai-pipes/mcp-registry/internal/kernel"
+
 // CallOutcome is how a call_tool ended, as the call log stores it.
 type CallOutcome string
 
@@ -34,18 +36,6 @@ func ParseOutcome(s string) (CallOutcome, bool) {
 	return "", false
 }
 
-// UpstreamFailure is why the upstream could not be used (the kinds of kernel.UpstreamError other
-// than unauthorized, which the call handles before it asks for an outcome).
-type UpstreamFailure string
-
-// The upstream failure kinds.
-const (
-	FailureTimeout   UpstreamFailure = "timeout"
-	FailureTooLarge  UpstreamFailure = "too_large"
-	FailureTransport UpstreamFailure = "transport"
-	FailureRejected  UpstreamFailure = "rejected"
-)
-
 // CredentialFailure is why the person's upstream credential could not be had (the strings of
 // connections' CredentialFailure).
 type CredentialFailure string
@@ -67,12 +57,13 @@ func OutcomeOfResult(isError *bool) CallOutcome {
 }
 
 // OutcomeOfUpstreamFailure covers: a JSON-RPC error answer is upstream answering (upstream_error), a
-// timeout has its own outcome, too large and transport failures are transport_error.
-func OutcomeOfUpstreamFailure(kind UpstreamFailure) CallOutcome {
+// timeout has its own outcome, too large and transport failures are transport_error. (Unauthorized
+// is handled by the call before it asks for an outcome.)
+func OutcomeOfUpstreamFailure(kind kernel.UpstreamErrorKind) CallOutcome {
 	switch kind {
-	case FailureRejected:
+	case kernel.UpstreamRejected:
 		return OutcomeUpstreamError
-	case FailureTimeout:
+	case kernel.UpstreamTimeout:
 		return OutcomeTimeout
 	default:
 		return OutcomeTransportError

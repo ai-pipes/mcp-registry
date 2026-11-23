@@ -1,5 +1,7 @@
 package domain
 
+import "strings"
+
 // PersonalStatus is the person's connection to a personal server as the connections module
 // reports it; PersonalAbsent stands for "no entry for that server".
 type PersonalStatus string
@@ -50,3 +52,7 @@ func AgentConnectionOf(kind AuthKind, status PersonalStatus) AgentConnection {
 func (c AgentConnection) NeedsLink() bool {
 	return c == ConnectionNeedsConnection || c == ConnectionExpired
 }
+
+// ConnectURL is the page where a person connects a server: PUBLIC_URL without trailing slashes,
+// then /connections (list_servers' connectUrl).
+func ConnectURL(publicURL string) string { return strings.TrimRight(publicURL, "/") + "/connections" }

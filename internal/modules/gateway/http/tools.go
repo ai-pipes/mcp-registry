@@ -4,11 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"sync"
 
-	"github.com/ai-pipes/mcp-registry/internal/kernel"
 	"github.com/ai-pipes/mcp-registry/internal/modules/catalog"
 	"github.com/ai-pipes/mcp-registry/internal/modules/gateway"
+	"github.com/ai-pipes/mcp-registry/internal/modules/gateway/app"
 	"github.com/ai-pipes/mcp-registry/internal/modules/gateway/domain"
 	"github.com/ai-pipes/mcp-registry/internal/modules/identity"
 	"github.com/ai-pipes/mcp-registry/internal/platform/logging"
@@ -120,6 +119,9 @@ func structured(value any) ([]byte, error) {
 	return b.Bytes(), nil
 }
 
+// The wire shapes of the meta-tools' answers (the reference's key order). The use cases are in
+// gateway/app; this file only renders their results.
+
 // serverEntry is one server of list_servers.
 type serverEntry struct {
 	Slug        string                 `json:"slug"`
@@ -130,81 +132,18 @@ type serverEntry struct {
 	ConnectURL  string                 `json:"connectUrl,omitempty"`
 }
 
-// usable is the servers the person may use, in the catalog's order, with their connection state.
-type usable struct {
-	list []serverEntry
-	by   map[string]domain.AgentConnection
-}
-
-// connectionOf is the state of a hit's server (needs_connection when it is not in the list).
-func (u usable) connectionOf(slug string) domain.AgentConnection {
-	if c, ok := u.by[slug]; ok {
-		return c
-	}
-	return domain.ConnectionNeedsConnection
-}
-
-// usableServers reads the person's servers and connections (in parallel, as the reference does).
-func (h *endpoint) usableServers(ctx context.Context, p identity.Principal) (usable, error) {
-	var (
-		wg       sync.WaitGroup
-		servers  []catalog.MemberServerView
-		conns    []connectionStatus
-		srvErr   error
-		connsErr error
-	)
-	wg.Add(2)
-	go func() { defer wg.Done(); servers, srvErr = h.d.Catalog.ListServersFor(ctx, p) }()
-	go func() { defer wg.Done(); conns, connsErr = h.connections(ctx, p) }()
-	wg.Wait()
-	if srvErr != nil {
-		return usable{}, srvErr
-	}
-	if connsErr != nil {
-		return usable{}, connsErr
-	}
-	status := map[string]domain.PersonalStatus{}
-	for _, c := range conns {
-		status[c.server] = c.status
-	}
-	u := usable{list: make([]serverEntry, 0, len(servers)), by: map[string]domain.AgentConnection{}}
-	for _, s := range servers {
-		conn := domain.AgentConnectionOf(domain.AuthKind(s.AuthKind), status[s.Slug])
-		e := serverEntry{Slug: s.Slug, Name: s.Name, Description: s.Description, Tools: s.ToolCount, Connection: conn}
-		if conn.NeedsLink() {
-			e.ConnectURL = h.connectURL
-		}
-		u.list = append(u.list, e)
-		u.by[s.Slug] = conn
-	}
-	return u, nil
-}
-
-type connectionStatus struct {
-	server string
-	status domain.PersonalStatus
-}
-
-func (h *endpoint) connections(ctx context.Context, p identity.Principal) ([]connectionStatus, error) {
-	list, err := h.d.Connections.ListConnections(ctx, p)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]connectionStatus, 0, len(list))
-	for _, c := range list {
-		out = append(out, connectionStatus{server: c.Server, status: domain.PersonalStatus(c.Status)})
-	}
-	return out, nil
-}
-
 func (h *endpoint) listServers(ctx context.Context, p identity.Principal) ([]byte, error) {
-	u, err := h.usableServers(ctx, p)
+	servers, err := app.ListServers(ctx, h.meta, p)
 	if err != nil {
 		return nil, err
+	}
+	out := make([]serverEntry, 0, len(servers))
+	for _, s := range servers {
+		out = append(out, serverEntry{s.Slug, s.Name, s.Description, s.Tools, s.Connection, s.ConnectURL})
 	}
 	return structured(struct {
 		Servers []serverEntry `json:"servers"`
-	}{u.list})
+	}{out})
 }
 
 // searchHit is one result of search_tools.
@@ -219,76 +158,27 @@ type searchHit struct {
 }
 
 func (h *endpoint) searchTools(ctx context.Context, p identity.Principal, in searchInput) ([]byte, error) {
-	u, err := h.usableServers(ctx, p)
-	if err != nil {
-		return nil, err
-	}
-	servers := make([]string, 0, len(u.list))
+	q := app.SearchToolsQuery{Principal: p, Query: in.query, Limit: in.limit}
 	if in.hasServers {
-		for _, slug := range in.servers {
-			if _, ok := u.by[slug]; !ok {
-				return failure(`Unknown server "` + slug + `". Call list_servers.`), nil
-			}
-		}
-		seen := map[string]bool{}
-		for _, slug := range in.servers {
-			if !seen[slug] {
-				seen[slug] = true
-				servers = append(servers, slug)
-			}
-		}
-	} else {
-		for _, s := range u.list {
-			servers = append(servers, s.Slug)
-		}
+		q.Servers = append([]string{}, in.servers...) // non-nil: the agent named servers
 	}
-	hits, err := h.d.Search.SearchTools(ctx, in.query, in.limit, servers)
+	res, err := app.SearchTools(ctx, h.meta, q)
 	if err != nil {
 		return nil, err
 	}
-	// The index may lag the catalog: every hit is shown only while the catalog still offers the
-	// tool to this person.
-	tools := make([]*catalog.ToolView, len(hits))
-	errs := make([]error, len(hits))
-	var wg sync.WaitGroup
-	for i, hit := range hits {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			tools[i], errs[i] = h.toolFor(ctx, p, hit.Ref)
-		}()
+	if res.Refused != "" {
+		return failure(res.Refused), nil
 	}
-	wg.Wait()
-	results := make([]searchHit, 0, len(hits))
-	for i, hit := range hits {
-		if errs[i] != nil {
-			return nil, errs[i]
-		}
-		t := tools[i]
-		if t == nil {
-			continue
-		}
+	results := make([]searchHit, 0, len(res.Hits))
+	for _, hit := range res.Hits {
 		results = append(results, searchHit{
-			Tool: t.Ref, Title: t.Title, Description: ShortDescription(t.Description), Server: t.Server,
-			Score: hit.Score, Annotations: t.Annotations, Connection: u.connectionOf(t.Server),
+			Tool: hit.Ref, Title: hit.Title, Description: ShortDescription(hit.Description), Server: hit.Server,
+			Score: hit.Score, Annotations: hit.Annotations, Connection: hit.Connection,
 		})
 	}
 	return structured(struct {
 		Results []searchHit `json:"results"`
 	}{results})
-}
-
-// toolFor is the tool the catalog offers the person now, nil when it does not (unknown, hidden,
-// removed, a malformed ref, a server disabled or closed to the person).
-func (h *endpoint) toolFor(ctx context.Context, p identity.Principal, ref string) (*catalog.ToolView, error) {
-	t, err := h.d.Catalog.GetToolFor(ctx, p, ref)
-	if err != nil {
-		if de, ok := kernel.AsDomainError(err); ok && (de.Code == catalog.CodeNotFound || de.Code == catalog.CodeInvalidToolRef) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	return &t, nil
 }
 
 // described is the result of describe_tool.
@@ -304,24 +194,17 @@ type described struct {
 }
 
 func (h *endpoint) describeTool(ctx context.Context, p identity.Principal, ref string) ([]byte, error) {
-	t, err := h.toolFor(ctx, p, ref)
+	res, err := app.DescribeTool(ctx, h.meta, p, ref)
 	if err != nil {
 		return nil, err
 	}
-	if t == nil {
-		return failure(domain.TextNotFound(ref)), nil
+	if res.Tool == nil {
+		return failure(res.Refused), nil
 	}
-	u, err := h.usableServers(ctx, p)
-	if err != nil {
-		return nil, err
-	}
-	input := t.InputSchema
-	if len(input) == 0 {
-		input = json.RawMessage(`{"type":"object"}`)
-	}
+	t := res.Tool
 	return structured(described{
-		Tool: t.Ref, Title: t.Title, Description: t.Description, InputSchema: input, OutputSchema: t.OutputSchema,
-		Annotations: t.Annotations, Server: t.Server, Connection: u.connectionOf(t.Server),
+		Tool: t.Ref, Title: t.Title, Description: t.Description, InputSchema: t.InputSchema, OutputSchema: t.OutputSchema,
+		Annotations: t.Annotations, Server: t.Server, Connection: t.Connection,
 	})
 }
 

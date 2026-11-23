@@ -24,15 +24,14 @@ const (
 // ellipsis; half of a surrogate pair at the cut is dropped).
 func BoundName(name string) string { return cutUTF16(name, MaxLoggedName) }
 
-// Rejection is the code and message of an upstream JSON-RPC error answer. The message is the
-// upstream's text: it goes to the agent only, never to a log.
-type Rejection struct {
-	Code    int
-	Message string
-}
-
 // The agent-facing texts of a failed call_tool. name is the server's display name, publicUrl is
 // PUBLIC_URL without trailing slashes.
+
+// TextUnknownServer covers: search_tools was asked to search a server the person may not use (or
+// that does not exist); the slug is inserted as the agent sent it.
+func TextUnknownServer(slug string) string {
+	return `Unknown server "` + slug + `". Call list_servers.`
+}
 
 // TextNotFound covers: the tool is not usable by this person now (ref is the agent's raw string).
 func TextNotFound(ref string) string {
@@ -73,8 +72,9 @@ func TextTimeout(name string, timeoutMs int) string {
 // TextTransport covers: the upstream (or the OAuth provider) cannot be reached; no detail.
 func TextTransport(name string) string { return name + " is unavailable." }
 
-// TextUpstreamRejected covers: upstream answered the call with a JSON-RPC error.
-func TextUpstreamRejected(name string, r Rejection) string {
+// TextUpstreamRejected covers: upstream answered the call with a JSON-RPC error. The message is the
+// upstream's text: it goes to the agent only, never to a log.
+func TextUpstreamRejected(name string, r kernel.UpstreamRejection) string {
 	message := kernel.JSTrim(r.Message)
 	head := name + " rejected the call (JSON-RPC " + strconv.Itoa(r.Code) + ")"
 	if message == "" {

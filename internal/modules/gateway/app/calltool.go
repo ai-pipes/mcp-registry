@@ -224,18 +224,17 @@ func attempt(ctx context.Context, d Deps, server *catalog.ServerCallTarget, tool
 }
 
 func upstreamFailure(d Deps, server *catalog.ServerCallTarget, ue *kernel.UpstreamError) ended {
-	kind := domain.UpstreamFailure(ue.Kind)
-	outcome := domain.OutcomeOfUpstreamFailure(kind)
-	switch kind {
-	case domain.FailureRejected:
-		rej := domain.Rejection{}
+	outcome := domain.OutcomeOfUpstreamFailure(ue.Kind)
+	switch ue.Kind {
+	case kernel.UpstreamRejected:
+		rej := kernel.UpstreamRejection{}
 		if ue.Rejection != nil {
-			rej = domain.Rejection{Code: ue.Rejection.Code, Message: ue.Rejection.Message}
+			rej = *ue.Rejection
 		}
 		return failed(outcome, domain.TextUpstreamRejected(server.Name, rej))
-	case domain.FailureTimeout:
+	case kernel.UpstreamTimeout:
 		return failed(outcome, domain.TextTimeout(server.Name, server.TimeoutMs))
-	case domain.FailureTooLarge:
+	case kernel.UpstreamTooLarge:
 		return failed(outcome, domain.TextTooLarge(server.Name, d.MaxResponseBytes))
 	default:
 		// Includes the client's own limits (a server that keeps asking requests of us, a malformed

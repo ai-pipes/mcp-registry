@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/ai-pipes/mcp-registry/internal/modules/gateway/app"
 	"github.com/ai-pipes/mcp-registry/internal/modules/identity"
 	"github.com/ai-pipes/mcp-registry/internal/platform/httpx"
 )
@@ -75,11 +76,11 @@ var msgBatchTooLarge = "Invalid Request: Batch must not exceed " + strconv.Itoa(
 
 // endpoint serves the JSON-RPC of /mcp for the principal the bearer guard stored.
 type endpoint struct {
-	d          Deps
-	o          Options
-	principal  func(*http.Request) (identity.Principal, bool)
-	log        *slog.Logger
-	connectURL string
+	d         Deps
+	o         Options
+	principal func(*http.Request) (identity.Principal, bool)
+	log       *slog.Logger
+	meta      app.MetaDeps // the meta-tools' use cases read these
 }
 
 // rpcErr is a JSON-RPC error object.

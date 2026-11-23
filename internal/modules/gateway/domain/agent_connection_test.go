@@ -58,3 +58,15 @@ func TestAgentConnectionNeedsLink(t *testing.T) {
 		}
 	}
 }
+
+func TestConnectURLIsTheConnectionsPageOfThePublicURL(t *testing.T) {
+	for in, want := range map[string]string{
+		"http://localhost:3000":     "http://localhost:3000/connections",
+		"https://gw.example/base//": "https://gw.example/base/connections",
+		"https://gw.example/":       "https://gw.example/connections",
+	} {
+		if got := domain.ConnectURL(in); got != want {
+			t.Errorf("ConnectURL(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

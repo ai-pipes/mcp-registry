@@ -5,29 +5,20 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/ai-pipes/mcp-registry/internal/modules/catalog"
-	"github.com/ai-pipes/mcp-registry/internal/modules/connections"
 	"github.com/ai-pipes/mcp-registry/internal/modules/gateway"
+	"github.com/ai-pipes/mcp-registry/internal/modules/gateway/app"
 	"github.com/ai-pipes/mcp-registry/internal/modules/identity"
-	"github.com/ai-pipes/mcp-registry/internal/modules/search"
 	"github.com/ai-pipes/mcp-registry/internal/platform/httpx"
 )
 
-// Catalog is what the meta-tools read of the catalog (*catalog.Service).
-type Catalog interface {
-	ListServersFor(ctx context.Context, p identity.Principal) ([]catalog.MemberServerView, error)
-	GetToolFor(ctx context.Context, p identity.Principal, ref string) (catalog.ToolView, error)
-}
+// Catalog is what the meta-tools read of the catalog (*catalog.Service): the port of the use cases.
+type Catalog = app.PersonCatalog
 
 // Connections is the person's connection list (*connections.Service).
-type Connections interface {
-	ListConnections(ctx context.Context, p identity.Principal) ([]connections.ConnectionSummary, error)
-}
+type Connections = app.PersonConnections
 
 // Search is the tool search (*search.Service).
-type Search interface {
-	SearchTools(ctx context.Context, query string, limit int, servers []string) ([]search.ToolHit, error)
-}
+type Search = app.ToolSearch
 
 // Gateway is the module's own use cases (*gateway.Service).
 type Gateway interface {
@@ -112,6 +103,9 @@ func MCPHandler(g Guards, d Deps, o Options) http.Handler {
 	if o.Logger == nil {
 		o.Logger = slog.Default()
 	}
-	h := &endpoint{d: d, o: o, principal: g.Principal, log: o.Logger, connectURL: connectURL(o.PublicURL)}
+	h := &endpoint{
+		d: d, o: o, principal: g.Principal, log: o.Logger,
+		meta: app.MetaDeps{Catalog: d.Catalog, Connections: d.Connections, Search: d.Search, PublicURL: o.PublicURL},
+	}
 	return httpx.Chain(h, hostCheck(AllowedHosts(o.PublicURL, o.AllowedHosts)), originCheck(origin), g.Bearer)
 }
