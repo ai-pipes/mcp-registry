@@ -355,7 +355,7 @@ func TestKeywordTable(t *testing.T) {
 		{"if then", `{"if":{"properties":{"a":{"const":1}}},"then":{"required":["z"]}}`, `{"a":1}`, "/"},
 		{"dependentRequired", `{"dependentRequired":{"a":["b"]}}`, `{"a":1}`, "/"},
 		{"draft-07 dependencies", `{"$schema":"http://json-schema.org/draft-07/schema#","dependencies":{"a":["b"]}}`, `{"a":1}`, "/"},
-		{"unevaluatedProperties", `{"properties":{"a":{}},"unevaluatedProperties":false}`, `{"a":1,"b":2}`, "/b"}, // the library blames the property ("false schema"); the reference the object
+		{"unevaluatedProperties", `{"properties":{"a":{}},"unevaluatedProperties":false}`, `{"a":1,"b":2}`, "/b"}, // the library blames the property; the reference the object
 		{"propertyNames", `{"propertyNames":{"maxLength":2}}`, `{"abc":1}`, "/"},
 		{"date", `{"properties":{"a":{"format":"date"}}}`, `{"a":"2026-02-30"}`, "/a"},
 		{"date-time", `{"properties":{"a":{"format":"date-time"}}}`, `{"a":"2026-01-01"}`, "/a"},

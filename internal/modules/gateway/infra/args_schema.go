@@ -69,6 +69,9 @@ var (
 // canonical form of the chosen dialect, and for draft-07 a $ref's siblings are kept evaluated. The
 // input bytes are never touched.
 func prepare(raw json.RawMessage) (any, *dialect, error) {
+	if len(raw) > maxSchemaBytes {
+		return nil, nil, fixedError("the schema is too large to be checked")
+	}
 	doc, err := jsonschema.UnmarshalJSON(strings.NewReader(string(raw)))
 	if err != nil {
 		return nil, nil, errors.New("the schema is not valid JSON")
@@ -76,6 +79,9 @@ func prepare(raw json.RawMessage) (any, *dialect, error) {
 	root, ok := doc.(map[string]any)
 	if !ok {
 		return nil, nil, errors.New("the schema is not an object")
+	}
+	if depthOf(doc, 0) > maxSchemaDepth {
+		return nil, nil, fixedError("the schema is nested too deeply to be checked")
 	}
 	d, err := dialectOf(root)
 	if err != nil {
@@ -93,6 +99,11 @@ func walk(node any, d dialect) {
 		return
 	}
 	delete(obj, "pattern")
+	if f, isString := obj["format"].(string); isString && f == "regex" {
+		// The reference compiles the value with a JavaScript RegExp; Go's syntax would refuse
+		// what that accepts (lookahead, backreferences), so the format is not checked.
+		delete(obj, "format")
+	}
 	if _, has := obj["patternProperties"]; has {
 		// The properties the pattern would have allowed must not become additional ones.
 		delete(obj, "patternProperties")
@@ -137,4 +148,25 @@ func liftRefSiblings(obj map[string]any) {
 		return
 	}
 	obj["allOf"] = []any{lifted}
+}
+
+// depthOf is the nesting depth of objects and arrays in a decoded JSON document, stopping early once it is past the bound.
+func depthOf(node any, depth int) int {
+	if depth > maxSchemaDepth {
+		return depth
+	}
+	deepest := depth
+	switch n := node.(type) {
+	case map[string]any:
+		deepest++
+		for _, child := range n {
+			deepest = max(deepest, depthOf(child, depth+1))
+		}
+	case []any:
+		deepest++
+		for _, child := range n {
+			deepest = max(deepest, depthOf(child, depth+1))
+		}
+	}
+	return deepest
 }
