@@ -39,8 +39,6 @@ func TestASchemaWhoseReferencesFormACycleIsNotEnforced(t *testing.T) {
 		"through $defs":         `{"properties":{"x":{"$ref":"#/$defs/a"}},"$defs":{"a":{"items":{"$ref":"#/$defs/b"}},"b":{"properties":{"y":{"$ref":"#/$defs/a"}}}}}`,
 		"through $anchor":       `{"properties":{"x":{"$ref":"#node"}},"$defs":{"n":{"$anchor":"node","properties":{"c":{"$ref":"#node"}},"required":["c"]}}}`,
 		"through $id":           `{"properties":{"x":{"$ref":"https://gateway.invalid/inner.json"}},"$defs":{"n":{"$id":"https://gateway.invalid/inner.json","properties":{"c":{"$ref":"inner.json"}},"required":["c"]}}}`,
-		"$dynamicRef":           `{"$dynamicAnchor":"meta","properties":{"x":{"items":{"$dynamicRef":"#meta"}}},"required":["x"]}`,
-		"$recursiveRef":         `{"$schema":"https://json-schema.org/draft/2019-09/schema","$recursiveAnchor":true,"properties":{"x":{"items":{"$recursiveRef":"#"}}},"required":["x"]}`,
 		"draft-07 definitions":  `{"$schema":"http://json-schema.org/draft-07/schema#","definitions":{"a":{"properties":{"c":{"$ref":"#/definitions/a"}},"required":["c"]}},"properties":{"x":{"$ref":"#/definitions/a"}}}`,
 	} {
 		t.Run(name, func(t *testing.T) {

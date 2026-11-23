@@ -1,6 +1,8 @@
 package infra
 
 import (
+	"strings"
+
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
@@ -28,28 +30,46 @@ type matchAll struct{}
 func (matchAll) MatchString(string) bool { return true }
 func (matchAll) String() string          { return "" }
 
-// checkBounds refuses a compiled schema whose references form any cycle (including $ref "#",
-// $dynamicRef and $recursiveRef, whose dynamic targets are taken to be every schema with the
-// matching anchor), whose reference-expanded size is over maxExpandedNodes, or that still has
-// patternProperties. The cost is linear in the compiled graph: each node is expanded once.
+// errDynamicRef is the warning text of a schema that uses $dynamicRef or $recursiveRef.
+var errDynamicRef = fixedError("the schema uses dynamic references ($dynamicRef or $recursiveRef)")
+
+// maxValidationWork bounds one validation: the schema's reference-expanded node count times the
+// number of JSON values in the arguments. Validation can visit every expanded node for every value,
+// so past this the arguments go on to the upstream unchecked, like arguments over maxArgsBytes.
+// Measured: a 10-level allOf fan-in (about 3 000 expanded nodes) on "items" costs about 0.7 ms per
+// element, so 1 000 000 is about a quarter of a second in the worst shape.
+const maxValidationWork = 1_000_000
+
+// checkBounds refuses a compiled schema that uses a dynamic reference ($dynamicRef or
+// $recursiveRef reachable from the root: its targets are decided while validating, and the
+// library compiles every $dynamicAnchor of a resource, also one in an unreferenced $defs entry,
+// so the graph below cannot see them), whose references form any cycle, whose reference-expanded
+// size is over maxExpandedNodes, or that still has patternProperties. A keyword in a schema
+// position is what counts: a property merely named "$dynamicRef" compiles to no reference. The
+// cost is linear in the compiled graph: each node is expanded once.
 //
 // The validator's own cycle detection does not catch a cycle that consumes data on the way (an
 // "items" or a "properties" between the $ref and its target): the library only stops a loop
 // that returns to the same schema at the same instance location.
 func checkBounds(root *jsonschema.Schema) error {
-	g := &schemaGraph{state: map[*jsonschema.Schema]int{}, size: map[*jsonschema.Schema]int{}, dynamic: map[string][]*jsonschema.Schema{}}
-	g.collect(root, map[*jsonschema.Schema]bool{})
-	if g.patternProperties {
-		return errPatternPropertiesBehindRef
-	}
+	_, err := expandedSize(root)
+	return err
+}
+
+// expandedSize is the reference-expanded node count of a compiled schema (saturated at
+// maxExpandedNodes+1), or the reason it is not enforced.
+func expandedSize(root *jsonschema.Schema) (int, error) {
+	g := &schemaGraph{state: map[*jsonschema.Schema]int{}, size: map[*jsonschema.Schema]int{}}
 	n, err := g.expand(root)
-	if err != nil {
-		return err
+	switch {
+	case err != nil:
+		return 0, err
+	case g.patternProperties:
+		return 0, errPatternPropertiesBehindRef
+	case n > maxExpandedNodes:
+		return 0, errTooExpanded
 	}
-	if n > maxExpandedNodes {
-		return errTooExpanded
-	}
-	return nil
+	return n, nil
 }
 
 const (
@@ -59,37 +79,14 @@ const (
 )
 
 type schemaGraph struct {
-	state map[*jsonschema.Schema]int
-	size  map[*jsonschema.Schema]int
-	// dynamic holds the possible targets of a dynamic reference: "$" + anchor for $dynamicAnchor,
-	// "recursive" for $recursiveAnchor: true.
-	dynamic           map[string][]*jsonschema.Schema
+	state             map[*jsonschema.Schema]int
+	size              map[*jsonschema.Schema]int
 	patternProperties bool
 }
 
-// collect records the anchors of every schema reachable from s (structurally or by a static
-// reference), so that a dynamic reference can be given every target it might resolve to.
-func (g *schemaGraph) collect(s *jsonschema.Schema, seen map[*jsonschema.Schema]bool) {
-	if s == nil || seen[s] {
-		return
-	}
-	seen[s] = true
-	if s.DynamicAnchor != "" {
-		g.dynamic["$"+s.DynamicAnchor] = append(g.dynamic["$"+s.DynamicAnchor], s)
-	}
-	if s.RecursiveAnchor {
-		g.dynamic["recursive"] = append(g.dynamic["recursive"], s)
-	}
-	if len(s.PatternProperties) > 0 {
-		g.patternProperties = true
-	}
-	for _, c := range staticChildren(s) {
-		g.collect(c, seen)
-	}
-}
-
 // expand is the reference-expanded node count of s (memoised; it stops counting past the bound)
-// or errRefCycle when a path from s comes back to a schema still being expanded.
+// or errRefCycle when a path from s comes back to a schema still being expanded, or errDynamicRef
+// at the first dynamic reference. It notes patternProperties on the way.
 func (g *schemaGraph) expand(s *jsonschema.Schema) (int, error) {
 	switch g.state[s] {
 	case onPath:
@@ -97,9 +94,15 @@ func (g *schemaGraph) expand(s *jsonschema.Schema) (int, error) {
 	case finished:
 		return g.size[s], nil
 	}
+	if s.DynamicRef != nil || s.RecursiveRef != nil {
+		return 0, errDynamicRef
+	}
 	g.state[s] = onPath
+	if len(s.PatternProperties) > 0 {
+		g.patternProperties = true
+	}
 	total := 1
-	for _, c := range g.children(s) {
+	for _, c := range staticChildren(s) {
 		n, err := g.expand(c)
 		if err != nil {
 			return 0, err
@@ -111,16 +114,33 @@ func (g *schemaGraph) expand(s *jsonschema.Schema) (int, error) {
 	return total, nil
 }
 
-// children are the static children of s plus every possible target of its dynamic references.
-func (g *schemaGraph) children(s *jsonschema.Schema) []*jsonschema.Schema {
-	out := staticChildren(s)
-	if s.DynamicRef != nil && s.DynamicRef.Anchor != "" {
-		out = append(out, g.dynamic["$"+s.DynamicRef.Anchor]...)
+// countValues is the number of JSON values in a JSON text (every scalar, array and object; object
+// keys count too, which only overestimates), read from the bytes without decoding.
+func countValues(doc []byte) int {
+	n := 0
+	for i := 0; i < len(doc); {
+		switch c := doc[i]; {
+		case c == '"':
+			n++
+			for i++; i < len(doc) && doc[i] != '"'; i++ {
+				if doc[i] == '\\' {
+					i++
+				}
+			}
+			i++
+		case c == '{' || c == '[':
+			n++
+			i++
+		case c == '-' || (c >= '0' && c <= '9') || c == 't' || c == 'f' || c == 'n':
+			n++
+			for i < len(doc) && strings.IndexByte(",]} \t\r\n", doc[i]) < 0 {
+				i++
+			}
+		default:
+			i++
+		}
 	}
-	if s.RecursiveRef != nil {
-		out = append(out, g.dynamic["recursive"]...)
-	}
-	return out
+	return n
 }
 
 // staticChildren are the subschemas of s and the targets of its references as compiled.

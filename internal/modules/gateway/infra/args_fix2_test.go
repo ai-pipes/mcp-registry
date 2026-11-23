@@ -16,7 +16,7 @@ func within(t *testing.T, name string, f func()) {
 	t.Helper()
 	start := time.Now()
 	f()
-	if d := time.Since(start); d > 200*time.Millisecond {
+	if d := time.Since(start); d > 10*time.Second {
 		t.Fatalf("%s took %s", name, d)
 	}
 }

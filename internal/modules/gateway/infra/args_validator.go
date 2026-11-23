@@ -59,6 +59,8 @@ type cacheSlot struct {
 	done     chan struct{}
 	sch      *jsonschema.Schema
 	disabled atomic.Bool
+	// nodes is the schema's reference-expanded node count (the work per argument value).
+	nodes int
 }
 
 // The bounds of what is compiled. Real tool schemas are far inside them (the recorded Gitea and
@@ -101,6 +103,10 @@ func (v *ArgsValidator) Validate(ref string, schema, args json.RawMessage) app.A
 	doc := args
 	if len(bytes.TrimSpace(args)) == 0 {
 		doc = json.RawMessage("{}")
+	}
+	if e.nodes*countValues(doc) > maxValidationWork {
+		// The same: past the work budget (see maxValidationWork) the upstream validates, silently.
+		return app.ArgsCheck{OK: true}
 	}
 	// The literals are read from the bytes before anything is decoded: a number far beyond a double
 	// is refused cheaply, and its text is never echoed.
@@ -201,7 +207,12 @@ func (v *ArgsValidator) entryFor(ref string, schema json.RawMessage) *cacheSlot 
 		v.warnOnce(ref, err)
 		return e
 	}
-	e.sch = sch
+	nodes, err := expandedSize(sch)
+	if err != nil {
+		v.warnOnce(ref, err)
+		return e
+	}
+	e.sch, e.nodes = sch, nodes
 	return e
 }
 
