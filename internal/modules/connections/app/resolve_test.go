@@ -248,7 +248,7 @@ func TestResolveTwoProcessesTheRowLockLetsOneRefresh(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			results[i], errs[i] = app.ResolveWithoutSending(ctx, d, app.ResolveQuery{UserID: "alice", Server: "gitea"})
+			results[i], errs[i] = h.resolveVia(ctx, d, app.ResolveQuery{UserID: "alice", Server: "gitea"})
 		}()
 	}
 	// Both read the stored row before the first one (held in the provider call) writes. A caller
@@ -298,7 +298,7 @@ func TestResolveForceRefresh(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			results[i], errs[i] = app.ResolveWithoutSending(ctx, d, app.ResolveQuery{UserID: "alice", Server: "gitea", ForceRefresh: true})
+			results[i], errs[i] = h.resolveVia(ctx, d, app.ResolveQuery{UserID: "alice", Server: "gitea", ForceRefresh: true})
 		}()
 	}
 	// Both read the stored row before the first one (held in the provider call) writes A3. Each
@@ -728,7 +728,7 @@ func TestResolveCancelledCallerReturnsWhileTheRefreshCompletes(t *testing.T) {
 	cctx, cancel := context.WithCancel(ctx)
 	returned := make(chan error, 1)
 	go func() {
-		_, err := app.ResolveWithoutSending(cctx, h.d, app.ResolveQuery{UserID: "alice", Server: "gitea"})
+		_, err := h.resolveVia(cctx, h.d, app.ResolveQuery{UserID: "alice", Server: "gitea"})
 		returned <- err
 	}()
 	<-h.oauth.entered // the refresh is under way, started by the caller above
@@ -793,7 +793,7 @@ func bothInFlight(t *testing.T, h *harness, a, b app.ResolveQuery) (string, stri
 	for i, q := range []app.ResolveQuery{a, b} {
 		ch[i] = make(chan out, 1)
 		go func() {
-			r, err := app.ResolveWithoutSending(ctx, h.d, q)
+			r, err := h.resolveVia(ctx, h.d, q)
 			ch[i] <- out{r, err}
 		}()
 	}

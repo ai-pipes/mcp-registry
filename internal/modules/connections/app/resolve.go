@@ -97,21 +97,13 @@ var errNoDestination = errors.New("connections: ResolveForSending needs the conf
 // view is stale and the answer is `unavailable` (retry later): nothing is opened, stored, expired,
 // sent or audited. The server is to.Slug (q.Server is ignored).
 //
-// The rest is as ResolveWithoutSending.
+// The rest is as resolve below.
 func ResolveForSending(ctx context.Context, d Deps, q ResolveQuery, to ServerConfig) (CredentialResult, error) {
 	if to.Slug == "" {
 		return CredentialResult{}, errNoDestination
 	}
 	q.Server = to.Slug
-	return resolve(ctx, d, q, &to)
-}
-
-// ResolveWithoutSending is ResolveCredential for a caller that sends the secret nowhere (it only
-// asks whether the person has one). It is the explicitly named path without an expectation: the
-// secret is checked against the configuration loaded now, which the caller does not know. A caller
-// that sends the result to a server uses ResolveForSending.
-func ResolveWithoutSending(ctx context.Context, d Deps, q ResolveQuery) (CredentialResult, error) {
-	return resolve(ctx, d, q, nil)
+	return resolve(ctx, d, q, to)
 }
 
 // resolve is the person's upstream secret for the server: the OAuth access token or the
@@ -128,7 +120,7 @@ func ResolveWithoutSending(ctx context.Context, d Deps, q ResolveQuery) (Credent
 // The error is for unexpected failures (a store, a stored token no key opens, the audit log); the
 // answers a caller acts on are CredentialFailure values with a nil error. A caller whose ctx ends
 // while it waits for a renewal returns ctx.Err() and the renewal goes on without it.
-func resolve(ctx context.Context, d Deps, q ResolveQuery, expect *ServerConfig) (CredentialResult, error) {
+func resolve(ctx context.Context, d Deps, q ResolveQuery, expect ServerConfig) (CredentialResult, error) {
 	seen, err := d.Connections.Get(ctx, q.UserID, q.Server)
 	if err != nil {
 		return CredentialResult{}, err
@@ -146,7 +138,7 @@ func resolve(ctx context.Context, d Deps, q ResolveQuery, expect *ServerConfig) 
 	fp := fingerprint(*cfg)
 	// Before any secret is opened or any renewal starts, and per caller (not inside the shared
 	// work): a caller that read another configuration never receives a secret meant for this one.
-	if expect != nil && fingerprint(*expect) != fp {
+	if fingerprint(expect) != fp {
 		return failed(FailureUnavailable), nil
 	}
 	switch plan := seen.CredentialPlan(d.Clock.Now(), domain.PlanOptions{ForceRefresh: q.ForceRefresh, Config: fp}); plan.Action {

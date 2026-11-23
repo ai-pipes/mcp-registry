@@ -884,12 +884,22 @@ func failureOf(r app.CredentialResult, err error) string {
 	return "ok"
 }
 
+// resolveVia resolves for sending to the server as the catalog configures it now (an unknown or
+// disabled server is named by its slug alone: nothing is read for it).
+func (h *harness) resolveVia(c context.Context, d app.Deps, q app.ResolveQuery) (app.CredentialResult, error) {
+	to := app.ServerConfig{Slug: q.Server}
+	if s := h.dir.find(q.Server); s != nil {
+		to = h.dir.configOf(s)
+	}
+	return app.ResolveForSending(c, d, q, to)
+}
+
 func (h *harness) resolve(user, server string) (app.CredentialResult, error) {
-	return app.ResolveWithoutSending(ctx, h.d, app.ResolveQuery{UserID: user, Server: server})
+	return h.resolveVia(ctx, h.d, app.ResolveQuery{UserID: user, Server: server})
 }
 
 func (h *harness) resolveForced(user, server string) (app.CredentialResult, error) {
-	return app.ResolveWithoutSending(ctx, h.d, app.ResolveQuery{UserID: user, Server: server, ForceRefresh: true})
+	return h.resolveVia(ctx, h.d, app.ResolveQuery{UserID: user, Server: server, ForceRefresh: true})
 }
 
 func (h *harness) noLockViolations() {
