@@ -112,8 +112,8 @@ func TestHugeArgumentNumbersAreRefusedCheaplyWithoutEchoingThem(t *testing.T) {
 
 func TestNumbersWithinTheBoundsAreStillJudgedExactly(t *testing.T) {
 	v, _ := newValidator(t)
-	wantRefused(t, check(v, `{"properties":{"a":{"multipleOf":3}}}`, `{"a":1e300}`), "/a")
-	if got := check(v, `{"properties":{"a":{"multipleOf":0.5}}}`, `{"a":1e300}`); !got.OK {
+	wantRefused(t, check(v, `{"properties":{"a":{"exclusiveMinimum":1e300}}}`, `{"a":1e300}`), "/a")
+	if got := check(v, `{"properties":{"a":{"minimum":1e300}}}`, `{"a":1e300}`); !got.OK {
 		t.Fatalf("%+v", got)
 	}
 	wantRefused(t, check(v, `{"properties":{"a":{"maximum":1e300}}}`, `{"a":1e301}`), "/a")
@@ -132,7 +132,6 @@ func TestANumberOfTheSchemaIsRenderedWithinABound(t *testing.T) {
 		{`{"properties":{"a":{"maximum":-1e100}}}`, `{"a":0}`, "must be <= the schema's maximum"},
 		{`{"properties":{"a":{"exclusiveMinimum":1e100}}}`, `{"a":0}`, "must be > the schema's exclusive minimum"},
 		{`{"properties":{"a":{"exclusiveMaximum":-1e100}}}`, `{"a":0}`, "must be < the schema's exclusive maximum"},
-		{`{"properties":{"a":{"multipleOf":1e-100}}}`, `{"a":0.5e-101}`, "must be a multiple of the schema's divisor"},
 		{`{"properties":{"a":{"minimum":0.1234567890123456789012345678901234567890123456789012345678901234567890123456789}}}`, `{"a":0}`, "must be >= the schema's minimum"},
 		{`{"properties":{"a":{"minimum":1e30}}}`, `{"a":0}`, "must be >= 1000000000000000000000000000000"},
 		{`{"properties":{"a":{"minimum":0.0625}}}`, `{"a":0}`, "must be >= 0.0625"},

@@ -337,12 +337,10 @@ func TestKeywordTable(t *testing.T) {
 		{"exclusiveMinimum", `{"properties":{"a":{"exclusiveMinimum":1}}}`, `{"a":1}`, "/a"},
 		{"maximum", `{"properties":{"a":{"maximum":1}}}`, `{"a":2}`, "/a"},
 		{"exclusiveMaximum", `{"properties":{"a":{"exclusiveMaximum":1}}}`, `{"a":1}`, "/a"},
-		{"multipleOf", `{"properties":{"a":{"multipleOf":5}}}`, `{"a":7}`, "/a"},
 		{"minLength", `{"properties":{"a":{"minLength":2}}}`, `{"a":"x"}`, "/a"},
 		{"maxLength", `{"properties":{"a":{"maxLength":2}}}`, `{"a":"xyz"}`, "/a"},
 		{"minItems", `{"properties":{"a":{"minItems":2}}}`, `{"a":[1]}`, "/a"},
 		{"maxItems", `{"properties":{"a":{"maxItems":1}}}`, `{"a":[1,2]}`, "/a"},
-		{"uniqueItems", `{"properties":{"a":{"uniqueItems":true}}}`, `{"a":[1,1]}`, "/a"},
 		{"items", `{"properties":{"a":{"items":{"type":"string"}}}}`, `{"a":["x",1]}`, "/a/1"},
 		{"contains", `{"properties":{"a":{"contains":{"type":"string"}}}}`, `{"a":[1]}`, "/a/0"}, // the item's own error, as the reference
 		{"minProperties", `{"properties":{"a":{"minProperties":1}}}`, `{"a":{}}`, "/a"},
@@ -437,10 +435,6 @@ func TestLargeNumbersAreJudgedExactly(t *testing.T) {
 	wantRefused(t, check(v, s, `{"a":9007199254740993}`), "/a")
 	if got := check(v, s, `{"a":9007199254740992}`); !got.OK {
 		t.Fatal(got)
-	}
-	const dec = `{"properties":{"a":{"multipleOf":0.1}}}`
-	if got := check(v, dec, `{"a":0.3}`); !got.OK {
-		t.Fatalf("0.3 is a multiple of 0.1: %+v", got)
 	}
 }
 

@@ -103,6 +103,10 @@ func walk(node any, d dialect) {
 		return
 	}
 	delete(obj, "pattern")
+	// Never run by the gateway: uniqueItems is quadratic through the library's hash collisions,
+	// multipleOf divides exact rationals (see errUnstrippedKeyword). The upstream checks them.
+	delete(obj, "uniqueItems")
+	delete(obj, "multipleOf")
 	if f, isString := obj["format"].(string); isString && f == "regex" {
 		// The reference compiles the value with a JavaScript RegExp; Go's syntax would refuse
 		// what that accepts (lookahead, backreferences), so the format is not checked.

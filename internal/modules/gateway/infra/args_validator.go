@@ -135,7 +135,8 @@ func (v *ArgsValidator) Validate(ref string, schema, args json.RawMessage) app.A
 		return app.ArgsCheck{OK: true}
 	}
 	leaf := firstLeaf(verr)
-	return app.ArgsCheck{Path: pointer(refusalLocation(leaf)), Message: capMessage(messageOf(leaf))}
+	path, message := capRefusal(pointer(refusalLocation(leaf)), messageOf(leaf))
+	return app.ArgsCheck{Path: path, Message: message}
 }
 
 // errApplyPanic is the warning text when applying a compiled schema panicked.

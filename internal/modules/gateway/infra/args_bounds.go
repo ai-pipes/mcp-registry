@@ -1,6 +1,7 @@
 package infra
 
 import (
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -31,6 +32,12 @@ type matchAll struct{}
 func (matchAll) MatchString(string) bool { return true }
 func (matchAll) String() string          { return "" }
 
+// errUnstrippedKeyword is the warning text of uniqueItems or multipleOf the walk could not strip
+// (reached through a $ref to a location that is not a schema position): the gateway never runs
+// them (uniqueItems is quadratic through the library's hash collisions, multipleOf divides exact
+// rationals and keeps one per failure).
+var errUnstrippedKeyword = fixedError("the schema has uniqueItems or multipleOf that cannot be removed")
+
 // errDynamicRef is the warning text of a schema that uses $dynamicRef or $recursiveRef.
 var errDynamicRef = fixedError("the schema uses dynamic references ($dynamicRef or $recursiveRef)")
 
@@ -38,9 +45,11 @@ var errDynamicRef = fixedError("the schema uses dynamic references ($dynamicRef 
 // number of JSON values in the arguments. Validation can visit every expanded node for every value,
 // so past this the arguments go on to the upstream unchecked, like arguments over maxArgsBytes.
 // The weight is ownWeight summed over the expanded nodes (a long enum or required list weighs its
-// length). Measured: a 10-level allOf fan-in (about 3 000 expanded nodes) on "items" costs about 0.7 ms per
-// element, so 1 000 000 is about a quarter of a second in the worst shape.
-const maxValidationWork = 1_000_000
+// length). The library also keeps an error (about 130 bytes) for every failing (node, value) pair,
+// so the budget bounds memory too: at 1 000 000 three failing type checks over 255 KB of numbers
+// held 132 MiB; at 250 000 the known hostile shapes stay within tens of MiB (see
+// TestKnownAdversarialShapesStayWithinTheirAllocationCeiling).
+const maxValidationWork = 250_000
 
 // checkBounds refuses a compiled schema that uses a dynamic reference ($dynamicRef or
 // $recursiveRef reachable from the root: its targets are decided while validating, and the
@@ -107,6 +116,9 @@ func (g *schemaGraph) expand(s *jsonschema.Schema) (int, int, error) {
 	if len(s.PatternProperties) > 0 {
 		g.patternProperties = true
 	}
+	if s.UniqueItems || s.MultipleOf != nil {
+		return 0, 0, errUnstrippedKeyword
+	}
 	total, work := 1, ownWeight(s)
 	for _, c := range staticChildren(s) {
 		n, w, err := g.expand(c)
@@ -147,7 +159,9 @@ func (g *schemaGraph) expand(s *jsonschema.Schema) (int, int, error) {
 //	UnevaluatedProperties                 child
 //	MinItems, MaxItems, MinContains,      no
 //	MaxContains
-//	UniqueItems                           no: the library hashes (linear in the argument)
+//	UniqueItems                           stripped (prepare); refused when left behind a $ref: the
+//	                                      library's hash collides for 1 and -1 (absolute
+//	                                      numerator bytes), so it is quadratic in the argument
 //	Contains, Items, AdditionalItems,     children
 //	PrefixItems, Items2020,
 //	UnevaluatedItems
@@ -155,7 +169,9 @@ func (g *schemaGraph) expand(s *jsonschema.Schema) (int, int, error) {
 //	ContentEncoding, ContentMediaType     no: one decode of the value itself
 //	ContentSchema                         child
 //	Maximum, Minimum, ExclusiveMaximum,   no
-//	ExclusiveMinimum, MultipleOf
+//	ExclusiveMinimum                      (paid by the width of each argument number)
+//	MultipleOf                            stripped (prepare), refused behind a $ref: exact
+//	                                      rational division, one Rat kept per failure
 //	Extensions                            no: none registered
 //	Title, Description, Default,          no: annotations, never evaluated
 //	Comment, ReadOnly, WriteOnly,
@@ -204,7 +220,23 @@ func valueCount(v any) int {
 }
 
 // countValues is the number of JSON values in a JSON text (every scalar, array and object; object
-// keys count too, which only overestimates), read from the bytes without decoding.
+// keys count too, which only overestimates), read from the bytes without decoding. A number
+// counts by its width (numberWeight).
+// numberWeight is what one number literal counts as: 1 + (its length in bytes + |its decimal
+// exponent|) / 16. The library computes with exact rationals, whose cost grows with the digits
+// and the exponent (1e-400 is a 401-digit denominator), so a wide number pays for the number
+// keywords that remain (minimum, maximum, exclusive*, enum, const). Literals beyond the bounds of
+// numberTooBig are refused before this is used.
+func numberWeight(literal []byte) int {
+	exp := 0
+	if i := strings.IndexAny(string(literal), "eE"); i >= 0 {
+		if e, err := strconv.Atoi(strings.TrimPrefix(string(literal[i+1:]), "+")); err == nil {
+			exp = max(e, -e)
+		}
+	}
+	return 1 + (len(literal)+min(exp, maxNumberExponent))/16
+}
+
 func countValues(doc []byte) int {
 	n := 0
 	for i := 0; i < len(doc); {
@@ -220,7 +252,13 @@ func countValues(doc []byte) int {
 		case c == '{' || c == '[':
 			n++
 			i++
-		case c == '-' || (c >= '0' && c <= '9') || c == 't' || c == 'f' || c == 'n':
+		case c == '-' || (c >= '0' && c <= '9'):
+			start := i
+			for i < len(doc) && strings.IndexByte(",]} \t\r\n", doc[i]) < 0 {
+				i++
+			}
+			n += numberWeight(doc[start:i])
+		case c == 't' || c == 'f' || c == 'n':
 			n++
 			for i < len(doc) && strings.IndexByte(",]} \t\r\n", doc[i]) < 0 {
 				i++
@@ -277,17 +315,31 @@ func staticChildren(s *jsonschema.Schema) []*jsonschema.Schema {
 	return out
 }
 
-// maxRefusalMessage is how many characters of the validator's message a refusal carries: the
-// library lists every allowed value of an enum and every missing required name, which a schema can
-// make as long as the schema itself. The reference has no cap (ajv's messages never list them).
+// maxRefusalMessage is how many characters of the refusal the validator derives (the JSON pointer,
+// ": " and the library's message) the agent gets: the library lists every allowed value of an enum
+// and every missing required name, and the pointer carries the agent's keys, both as long as the
+// schema or the arguments. The reference has no cap (ajv's messages never list them).
 const maxRefusalMessage = 2000
 
-// capMessage cuts a message to maxRefusalMessage characters at a rune boundary, the last one an
-// ellipsis.
-func capMessage(s string) string {
-	if utf8.RuneCountInString(s) <= maxRefusalMessage {
+// capRefusal cuts the pointer and the message so that together with the ": " between them they
+// stay within maxRefusalMessage characters, each cut at a rune boundary ending in an ellipsis. The
+// message keeps at least half when both are long.
+func capRefusal(path, message string) (string, string) {
+	room := maxRefusalMessage - 2
+	pathLen, msgLen := utf8.RuneCountInString(path), utf8.RuneCountInString(message)
+	if pathLen+msgLen <= room {
+		return path, message
+	}
+	pathRoom := max(room-msgLen, room/2)
+	path = cutRunes(path, pathRoom)
+	return path, cutRunes(message, room-utf8.RuneCountInString(path))
+}
+
+// cutRunes cuts s to at most limit characters at a rune boundary, the last one an ellipsis.
+func cutRunes(s string, limit int) string {
+	if utf8.RuneCountInString(s) <= limit {
 		return s
 	}
 	r := []rune(s)
-	return string(r[:maxRefusalMessage-1]) + "…"
+	return string(r[:limit-1]) + "…"
 }

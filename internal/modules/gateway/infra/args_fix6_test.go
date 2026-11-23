@@ -36,7 +36,10 @@ func TestALongEnumCountsTowardsTheBudget(t *testing.T) {
 	if got := check(v, s, many); !got.OK {
 		t.Fatalf("10 000 values: %+v, want not validated", got)
 	}
-	wantRefused(t, check(v, s, `{"a":[1,2,-1]}`), "/a/2")
+	// A 10 000-entry enum is over the budget even for one value; a 1 000-entry one is checked for
+	// a handful.
+	small := `{"type":"object","properties":{"a":{"type":"array","items":{"enum":[` + numberList(1_000) + `]}}}}`
+	wantRefused(t, check(v, small, `{"a":[1,2,-1]}`), "/a/2")
 	if n := len(w.all()); n != 0 {
 		t.Fatalf("warnings %v", w.all())
 	}
@@ -91,7 +94,7 @@ func TestAStructuredConstOrEnumEntryWeighsItsValues(t *testing.T) {
 	}
 }
 
-// Every recorded tool schema is enforced and leaves room for at least 1 000 argument values.
+// Every recorded tool schema is enforced and leaves room for at least 500 argument values.
 func TestEveryRecordedToolSchemaIsEnforcedWithRoomForArguments(t *testing.T) {
 	fixtures := os.DirFS(filepath.Join("..", "..", "..", "..", "apps", "server", "test", "fixtures", "tools"))
 	for _, name := range []string{"gitea", "youtrack"} {
@@ -111,7 +114,7 @@ func TestEveryRecordedToolSchemaIsEnforcedWithRoomForArguments(t *testing.T) {
 		v, w := newValidator(t)
 		for _, tool := range doc.Tools {
 			e := v.entryFor(name+"."+tool.Name, tool.InputSchema)
-			if e.sch == nil || e.work*1_000 > maxValidationWork {
+			if e.sch == nil || e.work*500 > maxValidationWork {
 				t.Errorf("%s.%s: enforced %v, work %d", name, tool.Name, e.sch != nil, e.work)
 			}
 		}
@@ -123,11 +126,11 @@ func TestEveryRecordedToolSchemaIsEnforcedWithRoomForArguments(t *testing.T) {
 
 func TestARefusalMessageIsCappedAtARuneBoundary(t *testing.T) {
 	long := strings.Repeat("é", maxRefusalMessage+10)
-	got := capMessage(long)
+	got := cutRunes(long, maxRefusalMessage)
 	if utf8.RuneCountInString(got) != maxRefusalMessage || !utf8.ValidString(got) || !strings.HasSuffix(got, "…") {
 		t.Fatalf("%d runes, valid %v", utf8.RuneCountInString(got), utf8.ValidString(got))
 	}
-	if capMessage("short") != "short" {
+	if cutRunes("short", maxRefusalMessage) != "short" {
 		t.Fatal("a short message changed")
 	}
 }

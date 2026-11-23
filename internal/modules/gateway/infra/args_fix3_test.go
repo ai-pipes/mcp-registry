@@ -135,12 +135,16 @@ func TestOversizedArgumentsAreNotValidatedAndTheWorstShapesBelowAre(t *testing.T
 		t.Fatalf("warnings %v: a warning per oversized call is a log amplifier", w.all())
 	}
 
-	// Just under the bound: validated, and cheap even in the worst shapes (failing late).
+	// Just under the bound the work budget decides: 131 000 values are over it (not validated,
+	// silently), a few hundred are validated, failing late.
 	under := `{"a":[` + strings.Repeat("1,", (maxArgsBytes-30)/2) + `-1]}`
 	if len(under) > maxArgsBytes {
 		t.Fatal("the test body is over the bound")
 	}
-	wantRefused(t, check(v, arraySchema, under), "/a/"+fmt.Sprint((maxArgsBytes-30)/2))
+	if got := check(v, arraySchema, under); !got.OK {
+		t.Fatalf("a body over the work budget must go on to the upstream: %+v", got)
+	}
+	wantRefused(t, check(v, arraySchema, `{"a":[`+strings.Repeat("1,", 500)+`-1]}`), "/a/500")
 	var sb strings.Builder
 	sb.WriteString(`{`)
 	for i := 0; sb.Len() < maxArgsBytes-40; i++ {
