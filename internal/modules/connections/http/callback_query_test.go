@@ -42,6 +42,19 @@ func TestCallbackReadsItsQueryLikeTheReference(t *testing.T) {
 			t.Fatal(loc)
 		}
 	})
+	t.Run("raw bytes that are not UTF-8 in the state: invalid_state, never the database", func(t *testing.T) {
+		e := newEnv(t)
+		// The reference's URL parser turns raw bytes into text, so the state is unknown there; here
+		// Postgres would refuse such a text (SQLSTATE 22021) and the person would see "internal".
+		for _, state := range []string{"\xff\xfe", "ab\xc3", "\x80"} {
+			if loc := e.callback(t, "alice", "code=x&state="+state); loc != "/connections?error=invalid_state" {
+				t.Fatalf("state %q: %s", state, loc)
+			}
+		}
+		if len(e.oauth.codes) != 0 {
+			t.Fatal("the provider was reached")
+		}
+	})
 }
 
 // A client that goes away after the provider redirected it must not leave a consumed state without

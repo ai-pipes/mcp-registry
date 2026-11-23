@@ -267,6 +267,10 @@ func TestSecretCarryingTypesRedactWhenPrinted(t *testing.T) {
 		app.CredentialResult{Secret: "ACCESSMARK"},
 		app.ExchangeInput{Code: "CODEMARK", CodeVerifier: "VERIFIERMARK", RedirectURI: "https://x"},
 		app.AuthorizeInput{State: "STATEMARK", CodeChallenge: "c", RedirectURI: "https://x"},
+		app.CompleteConnectCommand{Principal: alice, State: "STATEMARK", Code: "CODEMARK"},
+		&app.CompleteConnectCommand{Principal: alice, State: "STATEMARK", Code: "CODEMARK"},
+		app.SavePATCommand{Principal: alice, Server: "yt", Token: "PATMARK"},
+		&app.SavePATCommand{Principal: alice, Server: "yt", Token: "PATMARK"},
 	}
 	for _, v := range values {
 		if found := leaks(v); len(found) != 0 {

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/ai-pipes/mcp-registry/internal/kernel"
 	"github.com/ai-pipes/mcp-registry/internal/modules/connections/app"
@@ -228,8 +229,9 @@ func (h *handlers) callback(w http.ResponseWriter, r *http.Request) {
 		toPage(w, "error="+errDenied)
 		return
 	}
-	// No attempt can have such a state, and Postgres refuses a text with a NUL.
-	if hasNUL(state) {
+	// No attempt can have such a state, and Postgres refuses a text with a NUL or with bytes that
+	// are not UTF-8 (the reference's URL parser turns raw bytes into text: an unknown state there).
+	if hasNUL(state) || !utf8.ValidString(state) {
 		toPage(w, "error=invalid_state")
 		return
 	}

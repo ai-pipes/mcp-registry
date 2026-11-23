@@ -13,6 +13,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/ai-pipes/mcp-registry/internal/kernel"
 	"github.com/ai-pipes/mcp-registry/internal/modules/catalog"
@@ -172,6 +173,10 @@ func (p *memPending) Consume(_ context.Context, state, userID string) (*domain.P
 	defer p.mu.Unlock()
 	if p.failErr != nil {
 		return nil, p.failErr
+	}
+	// Like Postgres: a text that is not valid UTF-8 is an error, not "no such row".
+	if !utf8.ValidString(state) {
+		return nil, errors.New("pending: invalid byte sequence for encoding UTF8 (SQLSTATE 22021)")
 	}
 	pc, ok := p.m[state]
 	if !ok || pc.UserID() != userID {

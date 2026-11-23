@@ -432,7 +432,7 @@ func TestDisconnect(t *testing.T) {
 		if len(recs) != 1 || recs[0].Action != "connection.disconnect" || *recs[0].Target != "gitea" || len(recs[0].Meta) != 0 {
 			t.Fatalf("audit: %s", h.audit.text())
 		}
-		want := []string{"store.delete", "audit:connection.disconnect", "servers.config", "servers.client_secret", "oauth.revoke"}
+		want := []string{"store.delete", "audit:connection.disconnect", "servers.config", "servers.client_secret", "servers.config", "oauth.revoke"}
 		if got := h.j.all(); !slices.Equal(got, want) {
 			t.Fatalf("sequence:\n got %v\nwant %v", got, want)
 		}
@@ -550,6 +550,41 @@ func TestDisconnect(t *testing.T) {
 			if h.store.size() != 0 || len(h.oauth.revoked()) != 0 {
 				t.Fatal("state or revoke")
 			}
+		}
+	})
+
+	t.Run("a configuration that changes while the client secret is read gets no revoke", func(t *testing.T) {
+		for name, change := range map[string]func(g *fakeServer){
+			"another provider": func(g *fakeServer) {
+				o := *g.oauth
+				o.TokenURL = "https://evil.example.com/token"
+				g.oauth = &o
+				g.clientSecret = "the-new-client-secret"
+			},
+			"another revoke URL": func(g *fakeServer) {
+				o := *g.oauth
+				o.RevokeURL = sp("https://evil.example.com/revoke")
+				g.oauth = &o
+				g.clientSecret = "the-new-client-secret"
+			},
+		} {
+			t.Run(name, func(t *testing.T) {
+				h := newHarness(t)
+				h.withRevokeURL()
+				h.connect(alice, "gitea")
+				g := h.gitea()
+				h.dir.onSecret = func() {
+					h.dir.mu.Lock()
+					defer h.dir.mu.Unlock()
+					change(g)
+				}
+				if err := disconnect(h, "gitea"); err != nil {
+					t.Fatal(err)
+				}
+				if len(h.oauth.revoked()) != 0 || h.store.size() != 0 {
+					t.Fatalf("revoked %v, rows %d", h.oauth.revoked(), h.store.size())
+				}
+			})
 		}
 	})
 

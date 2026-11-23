@@ -46,7 +46,7 @@ while (out.length < 130) {
   out.push(s);
 }
 const rows = out.map((s) => ({ in: s, out: new URLSearchParams({ v: s }).toString().slice(2) }));
-writeFileSync(target('formencode.json'), JSON.stringify(rows, null, 1) + '\n');
+writeFileSync(target('formencode.json'), JSON.stringify(rows, null, 2) + '\n');
 
 const fe2 = (v) => new URLSearchParams({ v }).toString().slice(2);
 const pairs = [
@@ -72,6 +72,6 @@ writeFileSync(
       header: 'Basic ' + Buffer.from(`${fe2(id)}:${fe2(secret)}`, 'utf8').toString('base64'),
     })),
     null,
-    1,
+    2,
   ) + '\n',
 );

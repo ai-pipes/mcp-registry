@@ -1,2 +1,2 @@
 `gen.mjs` regenerates `../formencode.json` and `../basic.json` with node's `URLSearchParams` (the reference's form encoding of Basic credentials): `cd internal/modules/connections/infra/testdata && node gen/gen.mjs`.
-The committed tables are formatted by the repository formatter; the content (not the whitespace) is what the generator reproduces.
+The output is byte-identical to the committed files (JSON indented by two spaces, which is also what the repository formatter writes), so `git diff --exit-code .` is clean after a run.

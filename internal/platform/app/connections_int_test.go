@@ -460,6 +460,17 @@ func TestConnectionsOnTheComposedServer(t *testing.T) {
 		}
 	})
 
+	t.Run("raw bytes that are not UTF-8 in the state are an unknown state, not an internal error", func(t *testing.T) {
+		alice := e.admin("alice-bytes")
+		// Postgres refuses such a text (SQLSTATE 22021); the page must say invalid_state.
+		for _, state := range []string{"%ff%fe", "\xff\xfe", "ab\xc3"} {
+			status, loc := e.noRedirect("/api/connections/callback?code=x&state="+state, alice.cookie)
+			if status != http.StatusFound || loc != "/connections?error=invalid_state" {
+				t.Fatalf("state %q: %d %q", state, status, loc)
+			}
+		}
+	})
+
 	t.Run("a PAT is saved, and a synchronisation of a pat_user server sends it in the catalog's header", func(t *testing.T) {
 		up := newMCPFake(t, "alpha")
 		alice := e.admin("alice3")

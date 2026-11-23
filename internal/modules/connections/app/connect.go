@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 
 	"github.com/ai-pipes/mcp-registry/internal/modules/catalog"
 	"github.com/ai-pipes/mcp-registry/internal/modules/connections/domain"
@@ -60,6 +62,22 @@ type CompleteConnectCommand struct {
 	State     string
 	Code      string
 }
+
+// Format prints "CompleteConnectCommand{}" for every verb: State and Code are secrets.
+func (CompleteConnectCommand) Format(f fmt.State, _ rune) {
+	_, _ = io.WriteString(f, "CompleteConnectCommand{}")
+}
+
+// LogValue is the slog form: nothing but the type.
+func (CompleteConnectCommand) LogValue() slog.Value {
+	return slog.StringValue("CompleteConnectCommand{}")
+}
+
+// MarshalJSON writes "[redacted]".
+func (CompleteConnectCommand) MarshalJSON() ([]byte, error) { return redactedJSON, nil }
+
+// MarshalText writes "[redacted]".
+func (CompleteConnectCommand) MarshalText() ([]byte, error) { return []byte(redacted), nil }
 
 // ConnectResult is the server a connect completed for.
 type ConnectResult struct{ Server string }
@@ -164,6 +182,22 @@ type SavePATCommand struct {
 	Token     string
 }
 
+// Format prints the server only, for every verb: Token is a secret.
+func (c SavePATCommand) Format(f fmt.State, _ rune) {
+	_, _ = fmt.Fprintf(f, "SavePATCommand{server:%s}", c.Server)
+}
+
+// LogValue is the slog form: the server only.
+func (c SavePATCommand) LogValue() slog.Value {
+	return slog.GroupValue(slog.String("server", c.Server))
+}
+
+// MarshalJSON writes "[redacted]".
+func (SavePATCommand) MarshalJSON() ([]byte, error) { return redactedJSON, nil }
+
+// MarshalText writes "[redacted]".
+func (SavePATCommand) MarshalText() ([]byte, error) { return []byte(redacted), nil }
+
 // SavePAT stores a personal access token for a pat_user server the person may use, replacing any
 // earlier connection (an OAuth one too). The server is checked first: not_found, invalid_auth_kind;
 // then the token (domain.ParsePAT: trimmed, a non-empty single line of at most 4096 UTF-16 units):
@@ -234,6 +268,15 @@ func Disconnect(ctx context.Context, d Deps, c DisconnectCommand) error {
 	secret, err := d.Servers.ClientSecret(ctx, c.Server)
 	if err != nil {
 		return fmt.Errorf("connections: read the OAuth client secret of %q: %w", c.Server, err)
+	}
+	// The secret was read after the configuration: if the server changed in between, the new
+	// secret must not go to the old revoke URL. The row is deleted already; nothing is sent.
+	again, err := d.Servers.Config(ctx, c.Server)
+	if err != nil {
+		return err
+	}
+	if again == nil || again.OAuth == nil || !removed.IssuedFor(fingerprint(*again)) || !removed.MayRevokeAt(again.OAuth.RevokeURL) {
+		return nil
 	}
 	sealed := removed.RefreshToken()
 	if len(sealed) == 0 {
