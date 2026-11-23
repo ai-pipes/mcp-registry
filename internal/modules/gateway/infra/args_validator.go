@@ -47,6 +47,8 @@ type ArgsValidator struct {
 	compiledCount int
 	// compileFn builds a schema (compile; a seam for tests that need a slow or blocked compile).
 	compileFn func(json.RawMessage) (*jsonschema.Schema, error)
+	// validateFn applies a compiled schema (Schema.Validate; a seam for the panic test).
+	validateFn func(*jsonschema.Schema, any) error
 	// waiters is how many callers wait for another caller's compilation (a test hook).
 	waiters atomic.Int32
 }
@@ -66,13 +68,20 @@ type cacheSlot struct {
 const (
 	maxSchemaDepth = 100
 	maxSchemaBytes = 256 << 10
+	// maxArgsBytes is the largest arguments body that is validated; larger bodies go on to the
+	// upstream unchecked. Validation is advisory and runs before the daily limit, on every request
+	// of a token holder, and its cost grows with the number of values, not with the bytes: measured
+	// without -race, 10 MiB of `1,` against {"type":"array","items":{"type":"integer","minimum":0}}
+	// takes 4.7 s (1 MiB: 0.5 s; 256 KiB: 0.17 to 0.22 s, 128 KiB: 0.1 to 0.17 s), a 10 MiB object of 500k properties
+	// against additionalProperties 0.5 s. A difference from the reference, which validates any size.
+	maxArgsBytes = 256 << 10
 )
 
 var _ app.ArgsValidator = (*ArgsValidator)(nil)
 
 // NewArgsValidator builds a validator; warn may be nil (no warnings).
 func NewArgsValidator(warn Warner) *ArgsValidator {
-	return &ArgsValidator{warn: warn, cache: map[[sha256.Size]byte]*cacheSlot{}, compileFn: compile}
+	return &ArgsValidator{warn: warn, cache: map[[sha256.Size]byte]*cacheSlot{}, compileFn: compile, validateFn: (*jsonschema.Schema).Validate}
 }
 
 // Validate implements app.ArgsValidator: only the first offence is reported, as its JSON pointer
@@ -82,6 +91,11 @@ func (v *ArgsValidator) Validate(ref string, schema, args json.RawMessage) app.A
 	e := v.entryFor(ref, schema)
 	compiled := e.sch
 	if compiled == nil || e.disabled.Load() {
+		return app.ArgsCheck{OK: true}
+	}
+	if len(args) > maxArgsBytes {
+		// Advisory validation is not worth its cost on a body this large (see maxArgsBytes): the
+		// upstream validates it. No warning, a call per request would be a log amplifier.
 		return app.ArgsCheck{OK: true}
 	}
 	doc := args
@@ -130,7 +144,7 @@ func (v *ArgsValidator) apply(e *cacheSlot, ref string, sch *jsonschema.Schema, 
 			verr, err = nil, errApplyPanic
 		}
 	}()
-	if res := sch.Validate(value); res != nil {
+	if res := v.validateFn(sch, value); res != nil {
 		var ok bool
 		if verr, ok = res.(*jsonschema.ValidationError); !ok {
 			return nil, errApplyPanic

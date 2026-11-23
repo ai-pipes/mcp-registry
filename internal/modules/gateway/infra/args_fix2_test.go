@@ -93,6 +93,12 @@ func TestHugeArgumentNumbersAreRefusedCheaplyWithoutEchoingThem(t *testing.T) {
 		for _, a := range args {
 			within(t, s+" "+a[:min(20, len(a))], func() {
 				got := check(v, s, a)
+				if len(a) > maxArgsBytes { // not validated at all (see maxArgsBytes): cheap and accepted
+					if !got.OK {
+						t.Fatalf("an oversized body is not validated: %+v", got)
+					}
+					return
+				}
 				if got.OK {
 					t.Fatalf("an argument number far beyond any double was accepted for %s", s)
 				}

@@ -237,7 +237,9 @@ func rawHasExcessNumber(doc []byte) bool {
 			for i < len(doc) && strings.IndexByte("0123456789+-.eE", doc[i]) >= 0 {
 				i++
 			}
-			if numberTooBig(string(doc[start:i])) {
+			// Only a well-formed literal is judged: malformed text (1e, 1e+, --e+-) is left to the
+			// decoder, which refuses it as invalid JSON.
+			if literal := string(doc[start:i]); wellFormedNumber(literal) && numberTooBig(literal) {
 				return true
 			}
 		default:
@@ -245,4 +247,46 @@ func rawHasExcessNumber(doc []byte) bool {
 		}
 	}
 	return false
+}
+
+// wellFormedNumber is the JSON grammar of a number: -?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?
+func wellFormedNumber(s string) bool {
+	digits := func(from int) int {
+		i := from
+		for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+			i++
+		}
+		return i
+	}
+	i := 0
+	if i < len(s) && s[i] == '-' {
+		i++
+	}
+	switch {
+	case i < len(s) && s[i] == '0':
+		i++
+	case i < len(s) && s[i] >= '1' && s[i] <= '9':
+		i = digits(i)
+	default:
+		return false
+	}
+	if i < len(s) && s[i] == '.' {
+		end := digits(i + 1)
+		if end == i+1 {
+			return false
+		}
+		i = end
+	}
+	if i < len(s) && (s[i] == 'e' || s[i] == 'E') {
+		i++
+		if i < len(s) && (s[i] == '+' || s[i] == '-') {
+			i++
+		}
+		end := digits(i)
+		if end == i {
+			return false
+		}
+		i = end
+	}
+	return i == len(s)
 }
