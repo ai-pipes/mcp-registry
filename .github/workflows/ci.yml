@@ -260,7 +260,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-  # The browser flows that need only identity and the catalog (make e2e-flows-go lists them and names
+  # The browser flows that need only identity, the catalog and connections (make e2e-flows-go lists them and names
   # the milestone each skipped flow waits for) against the Go image. Not a required check; arm64 only.
   e2e-flows-go:
     needs: [go]

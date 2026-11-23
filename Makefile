@@ -99,6 +99,14 @@ compat-image-go:
 # index follows the catalog", "a change of the server is reindexed", the reindex command). Not
 # added: TestSearchReadyBeforeServing (its decided branch compares a search made at once with a
 # settled one: /mcp, milestone 6) and TestUpgradeKeepsEverything (search through /mcp, 6).
+# Milestone 5 (connections) added the connections scenarios, whose people no longer open an MCP
+# session at creation (the helper does it on first use), so their REST, SQL and fake-provider
+# subtests are judged: the connect flow, the callback refusals, the start refusals, PAT storage and
+# refusals, the personal list, the web API rules, the effect of a configuration change on the revoke
+# URL, disconnect with failing revoke endpoints and the administrator's sync (the judge of
+# resolveCredential before call_tool); the personal-auth sync step of TestCLIServers; and the
+# hand-over of connections between the images (TestPlatformStartsOnReferenceDatabase and
+# TestPlatformReverseHandOver). Their subtests that call a tool are skipped (milestone 6, below).
 COMPAT_GO_TESTS := TestConfigRefused TestPlatformStartsOnReferenceDatabase TestPlatformReverseHandOver \
 	TestPlatformWithoutPeople TestPlatformMigrationsAndKeyCheck TestPlatformStaticFilesAndSPA \
 	TestIdentityOIDC TestIdentityOIDCFailedCallbackAudit TestIdentityOIDCProviderDownAtStart \
@@ -110,7 +118,11 @@ COMPAT_GO_TESTS := TestConfigRefused TestPlatformStartsOnReferenceDatabase TestP
 	TestCatalogOptimisticConcurrency TestCatalogValidation TestCatalogServers TestCLIServers \
 	TestPlatformBearerNeverOpensTheWebAPI \
 	TestCatalogSearch TestSearchStoredVectors TestCLIReindexEmpty TestConfigOpenAICompatibleEmbedder \
-	TestConfigModelDirMissing TestSearchFailedReembedding TestSearchStaleRemoval
+	TestConfigModelDirMissing TestSearchFailedReembedding TestSearchStaleRemoval \
+	TestConnectionsConnectFlow TestConnectionsConnectCallbackRefusals TestConnectionsStartRefusals \
+	TestConnectionsPAT TestConnectionsArePersonal TestConnectionsWebAPIRules TestConnectionsConfigChange \
+	TestConnectionsDisconnectIgnoresRevokeFailures TestConnectionsAdminSync \
+	TestConnectionsConfigChangeBySync
 
 # Subtests of the scenarios above that need a later milestone, as a go test -skip expression: one
 # entry per line below, joined with `|` (slash-separated regular expressions per level; spaces of a
@@ -148,9 +160,8 @@ COMPAT_GO_TESTS := TestConfigRefused TestPlatformStartsOnReferenceDatabase TestP
 #     "upstream calls": a tool call through /mcp.
 #   - TestPlatformBearerNeverOpensTheWebAPI, "the same token opens /mcp (control)" and "a bad token
 #     on /mcp is 401 with a challenge"; the loop over /api paths in its body runs.
-#   milestone 5 (connections: PUT /api/connections/<slug>/pat)
-#   - TestCLIServers, "sync of a personal-auth server uses the connection of the administrator it
-#     names".
+#   milestone 5 (connections) is done: the personal-auth sync step of TestCLIServers runs, and so do
+#   the connections scenarios that need only REST, SQL and the fake provider (see below).
 #   milestone 6 also (the search scenarios reach it; their SQL and CLI steps are judged)
 #   - TestCatalogSearch: every subtest that asks search_tools, describe_tool, list_servers or
 #     call_tool: "the recorded queries" (also the rankings against the reference image),
@@ -164,6 +175,26 @@ COMPAT_GO_TESTS := TestConfigRefused TestPlatformStartsOnReferenceDatabase TestP
 #   - TestConfigOpenAICompatibleEmbedder, "a query is embedded with the query: prefix ..." and the
 #     nested "text search over MCP ..." of "with the embedder down ..."; TestConfigModelDirMissing,
 #     its nested "text search over MCP ...".
+#   milestone 6 also (the connections scenarios call a tool or list_servers through /mcp). The helper
+#   connNewPerson opens a person's MCP session on first use, so every other step of these scenarios
+#   is judged. TestConnectionsRefresh, TestConnectionsRefreshFailures, TestConnectionsSingleFlight
+#   and TestConnectionsUpstreamRejectsTheToken are left out whole: every subtest of them is driven
+#   by call_tool (refresh, refusals, outages, concurrent calls, a 401 from the upstream). The
+#   refresh and the rest of resolveCredential are judged meanwhile by TestConnectionsAdminSync (a
+#   sync resolves the credential), the hand-over of a connection between the images and the
+#   integration tests of internal/modules/connections and internal/platform/app.
+#   - TestConnectionsConnectFlow, "the connection serves calls ..." and "a disconnected person no
+#     longer gets calls through" (the text of a call after the disconnect).
+#   - TestConnectionsPAT, "a stored token reaches the upstream ...", "a new token replaces the old
+#     one", "the upstream rejecting the token expires the connection ..." and "an unconnected person
+#     is told where to connect ..." (each ends in call_tool).
+#   - TestConnectionsArePersonal, "a person without a connection is told to connect ...", "each call
+#     carries the caller's own token", "one person's expiry, refresh and disconnect do not touch the
+#     other" and "the agent learns each person's connection state ..." (list_servers).
+#   - TestConnectionsConfigChange: the four "a changed <field> expires the connection ...", "after a
+#     changed upstream URL a reconnect works ..." and "other scopes or a changed or removed revoke
+#     URL ...": each makes a call after the change; what the change does to the status, the audit
+#     and the tokens is judged meanwhile by the integration tests of the module.
 COMPAT_GO_SKIP_ENTRIES := \
 	^TestPlatformMigrationsAndKeyCheck$$/^the_old_key_alone:_healthy,_one_warning;_rotate-secrets-key_re-seals_the_check$$ \
 	^TestPlatformStaticFilesAndSPA$$/^$$/^api,_$$/^mcp_and_$$/^healthz_are_never_the_shell$$ \
@@ -184,7 +215,6 @@ COMPAT_GO_SKIP_ENTRIES := \
 	^TestCatalogServers$$/^upstream_calls$$ \
 	^TestPlatformBearerNeverOpensTheWebAPI$$/^the_same_token_opens_ \
 	^TestPlatformBearerNeverOpensTheWebAPI$$/^a_bad_token_on_ \
-	^TestCLIServers$$/^sync_of_a_personal-auth_server_uses_ \
 	^TestCatalogSearch$$/^the_recorded_queries$$ \
 	^TestCatalogSearch$$/^searching_every_usable_server_ \
 	^TestCatalogSearch$$/^limit_is_respected$$ \
@@ -199,7 +229,20 @@ COMPAT_GO_SKIP_ENTRIES := \
 	^TestCLIServers$$/^reindex_rebuilds_.*$$/^search_ \
 	^TestConfigOpenAICompatibleEmbedder$$/^a_query_is_embedded_ \
 	^TestConfigOpenAICompatibleEmbedder$$/^with_the_embedder_down_.*$$/^text_search_over_MCP_ \
-	^TestConfigModelDirMissing$$/^text_search_over_MCP_
+	^TestConfigModelDirMissing$$/^text_search_over_MCP_ \
+	^TestConnectionsConnectFlow$$/^the_connection_serves_calls_ \
+	^TestConnectionsConnectFlow$$/^a_disconnected_person_no_longer_gets_calls_through$$ \
+	^TestConnectionsPAT$$/^a_stored_token_reaches_the_upstream_ \
+	^TestConnectionsPAT$$/^a_new_token_replaces_the_old_one$$ \
+	^TestConnectionsPAT$$/^the_upstream_rejecting_the_token_ \
+	^TestConnectionsPAT$$/^an_unconnected_person_is_told_where_to_connect, \
+	^TestConnectionsArePersonal$$/^a_person_without_a_connection_is_told_ \
+	^TestConnectionsArePersonal$$/^each_call_carries_the_caller \
+	^TestConnectionsArePersonal$$/^one_person \
+	^TestConnectionsArePersonal$$/^the_agent_learns_each_person \
+	^TestConnectionsConfigChange$$/^a_changed_ \
+	^TestConnectionsConfigChange$$/^after_a_changed_upstream_URL_ \
+	^TestConnectionsConfigChange$$/^other_scopes_or_a_changed_
 
 space := $(subst ,, )
 COMPAT_GO_SKIP := $(subst $(space),|,$(strip $(COMPAT_GO_SKIP_ENTRIES)))
@@ -209,12 +252,13 @@ COMPAT_GO_RUN := ^($(subst $(space),|,$(strip $(COMPAT_GO_TESTS))))$$
 # compat-go and e2e-flows-go: config-errors (milestone 1), audit-login-via, create-user-keeps-role
 # and oidc-binding-kept (milestone 2), create-server-sync-exit (milestone 3), reindex-wording
 # and vector-kept-on-failed-reembedding and stale-removal-rechecks-catalog (milestone 4; their
-# scenarios, TestSearchFailedReembedding and TestSearchStaleRemoval, need no /mcp). Left out, each
-# until the milestone that implements it: token-429-retry-after and request-id-on-refusals (the
-# /mcp route, milestone 6), oauth-state-kept (connections, milestone 5),
+# scenarios, TestSearchFailedReembedding and TestSearchStaleRemoval, need no /mcp) and oauth-state-kept
+# (milestone 5; its scenario, TestConnectionsConnectCallbackRefusals, runs on REST and the fake
+# provider). Left out, each until the milestone that implements it: token-429-retry-after and
+# request-id-on-refusals (the /mcp route, milestone 6),
 # ready-before-serving (its scenario compares a search made at once with a settled one, so it needs
 # /mcp, milestone 6; the Go server already loads the model before it listens).
-COMPAT_GO_FIXED := config-errors,audit-login-via,create-user-keeps-role,oidc-binding-kept,create-server-sync-exit,reindex-wording,vector-kept-on-failed-reembedding,stale-removal-rechecks-catalog
+COMPAT_GO_FIXED := config-errors,audit-login-via,create-user-keeps-role,oidc-binding-kept,create-server-sync-exit,reindex-wording,vector-kept-on-failed-reembedding,stale-removal-rechecks-catalog,oauth-state-kept
 
 # The suite against the Go image. The reference image (mcp-registry:compat-ts) must exist as well:
 # some scenarios compare with it on the same machine, and the new-database scenario starts from it.
@@ -252,19 +296,18 @@ compat:
 e2e-flows:
 	go test -tags "compat e2e" -count=1 -timeout 30m -v -run '^(TestBrowserFlows|TestControl)' ./compat/e2e/
 
-# The browser flows that need only identity and the catalog, against the Go image (build it with
-# compat-image-go; the reference image must exist too, as for compat-go). The flows that wait for a
-# later milestone are not selected, each named here with it:
-#   03-tokens (the token opens /mcp, 6), 09-permissions (a call through /mcp and the call log, 6),
-#   08-connect and 08b-connect-cross-site (OAuth connect, 5), 12-direct-links (the /connections page
-#   asks GET /api/connections, 5).
+# The browser flows that need only identity, the catalog and connections, against the Go image (build
+# it with compat-image-go; the reference image must exist too, as for compat-go). The flows that wait
+# for a later milestone are not selected, each named here with it:
+#   03-tokens (the token opens /mcp, 6), 09-permissions (a call through /mcp and the call log, 6).
 # TestControlOperationsAgainstARealStack is not run for the same reason (it uses /mcp, 6); the control
 # API's other tests are image independent and run in e2e-flows. Same guard, same specs, only the
 # selection differs: the arguments go through E2E_PLAYWRIGHT_ARGS, which refuses the ways to run
 # fewer tests silently. An E2E_PLAYWRIGHT_ARGS given on the make command line replaces the list.
 E2E_GO_SPECS := 00-guard-selftest.spec.ts 01-first-start-link.spec.ts 02-oidc-login.spec.ts \
 	04-create-server.spec.ts 05-form-errors.spec.ts 06-hide-tool.spec.ts 07-edit-conflict.spec.ts \
-	10-disable-person.spec.ts 11-session-expiry.spec.ts
+	08-connect.spec.ts 08b-connect-cross-site.spec.ts 10-disable-person.spec.ts 11-session-expiry.spec.ts \
+	12-direct-links.spec.ts
 e2e-flows-go:
 	@docker image inspect mcp-registry:compat-go >/dev/null 2>&1 || { echo "e2e-flows-go: the image mcp-registry:compat-go is missing: run make compat-image-go"; exit 1; }
 	COMPAT_IMAGE=mcp-registry:compat-go COMPAT_CLI=mcp-registry COMPAT_FIXED=$(COMPAT_GO_FIXED) \
