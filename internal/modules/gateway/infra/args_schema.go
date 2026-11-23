@@ -1,0 +1,140 @@
+package infra
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
+
+	"github.com/santhosh-tekuri/jsonschema/v6"
+)
+
+// dialect is the JSON Schema dialect a tool schema is compiled as.
+type dialect struct {
+	draft *jsonschema.Draft
+	// meta is the canonical $schema written into the compiled copy, so that the library never
+	// meets a spelling it does not know (no trailing #, the http twin, a non-string value).
+	meta string
+	// refSiblings is true for the drafts in which a library ignores the keywords next to $ref
+	// (draft-07 and older): the reference's validator evaluates them in every dialect.
+	refSiblings bool
+}
+
+var (
+	dialect202012 = dialect{jsonschema.Draft2020, "https://json-schema.org/draft/2020-12/schema", false}
+	dialect201909 = dialect{jsonschema.Draft2019, "https://json-schema.org/draft/2019-09/schema", false}
+	// draft-06 is compiled as draft-07, as the reference does (one engine for both).
+	dialectDraft7 = dialect{jsonschema.Draft7, "http://json-schema.org/draft-07/schema#", true}
+)
+
+// maxDialectEcho is how much of an unsupported $schema value an error text quotes.
+const maxDialectEcho = 200
+
+// dialectOf is the reference's declaredDialect: absent or not a string is 2020-12, one trailing #
+// is ignored, http and https are the same, anything else is unsupported.
+func dialectOf(schema map[string]any) (dialect, error) {
+	declared, isString := schema["$schema"].(string)
+	if !isString {
+		return dialect202012, nil
+	}
+	switch strings.TrimSuffix(declared, "#") {
+	case "https://json-schema.org/draft/2020-12/schema", "http://json-schema.org/draft/2020-12/schema":
+		return dialect202012, nil
+	case "https://json-schema.org/draft/2019-09/schema", "http://json-schema.org/draft/2019-09/schema":
+		return dialect201909, nil
+	case "https://json-schema.org/draft-07/schema", "http://json-schema.org/draft-07/schema",
+		"https://json-schema.org/draft-06/schema", "http://json-schema.org/draft-06/schema":
+		return dialectDraft7, nil
+	}
+	shown := declared
+	if r := []rune(shown); len(r) > maxDialectEcho {
+		shown = string(r[:maxDialectEcho])
+	}
+	return dialect{}, fmt.Errorf("JSON Schema declares an unsupported dialect (%q); supported: 2020-12, 2019-09, draft-07, draft-06", shown)
+}
+
+// Keys whose value is a schema, a list of schemas, or a map of schemas (the reference's
+// ONE_SCHEMA, SCHEMA_LIST and SCHEMA_MAP). Only these positions are walked.
+var (
+	oneSchemaKeys = []string{
+		"additionalProperties", "additionalItems", "unevaluatedProperties", "unevaluatedItems",
+		"items", "contains", "propertyNames", "not", "if", "then", "else", "contentSchema",
+	}
+	schemaListKeys = []string{"allOf", "anyOf", "oneOf", "prefixItems", "items"}
+	schemaMapKeys  = []string{"properties", "$defs", "definitions", "dependentSchemas", "dependencies"}
+)
+
+// prepare decodes a tool's input schema (numbers exact) and returns the copy to compile: patterns
+// are removed (ReDoS), the top-level $id is removed (two tools may share one), $schema is the
+// canonical form of the chosen dialect, and for draft-07 a $ref's siblings are kept evaluated. The
+// input bytes are never touched.
+func prepare(raw json.RawMessage) (any, *dialect, error) {
+	doc, err := jsonschema.UnmarshalJSON(strings.NewReader(string(raw)))
+	if err != nil {
+		return nil, nil, errors.New("the schema is not valid JSON")
+	}
+	root, ok := doc.(map[string]any)
+	if !ok {
+		return nil, nil, errors.New("the schema is not an object")
+	}
+	d, err := dialectOf(root)
+	if err != nil {
+		return nil, nil, err
+	}
+	walk(root, d)
+	delete(root, "$id")
+	root["$schema"] = d.meta
+	return root, &d, nil
+}
+
+func walk(node any, d dialect) {
+	obj, ok := node.(map[string]any)
+	if !ok {
+		return
+	}
+	delete(obj, "pattern")
+	if _, has := obj["patternProperties"]; has {
+		// The properties the pattern would have allowed must not become additional ones.
+		delete(obj, "patternProperties")
+		delete(obj, "additionalProperties")
+		delete(obj, "unevaluatedProperties")
+	}
+	if d.refSiblings {
+		liftRefSiblings(obj)
+	}
+	for _, k := range oneSchemaKeys {
+		if child, ok := obj[k].(map[string]any); ok {
+			walk(child, d)
+		}
+	}
+	for _, k := range schemaListKeys {
+		if list, ok := obj[k].([]any); ok {
+			for _, child := range list {
+				walk(child, d)
+			}
+		}
+	}
+	for _, k := range schemaMapKeys {
+		if m, ok := obj[k].(map[string]any); ok {
+			for _, child := range m {
+				walk(child, d)
+			}
+		}
+	}
+}
+
+// liftRefSiblings turns {"$ref": X, ...rest} into {...rest, "allOf": [..., {"$ref": X}]}: the
+// library follows draft-07 and ignores the keywords next to a $ref, the reference does not.
+func liftRefSiblings(obj map[string]any) {
+	ref, has := obj["$ref"].(string)
+	if !has || len(obj) == 1 {
+		return
+	}
+	delete(obj, "$ref")
+	lifted := map[string]any{"$ref": ref}
+	if list, ok := obj["allOf"].([]any); ok {
+		obj["allOf"] = append(list, lifted)
+		return
+	}
+	obj["allOf"] = []any{lifted}
+}

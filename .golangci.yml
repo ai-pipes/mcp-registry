@@ -43,6 +43,8 @@ linters:
               desc: deps-only-in-infra, Unicode normalisation belongs to the local embedder in modules/search/infra
             - pkg: golang.org/x/term
               desc: deps-only-in-infra, terminal handling belongs to the composition (internal/platform)
+            - pkg: github.com/santhosh-tekuri/jsonschema
+              desc: deps-only-in-infra, argument validation lives in modules/gateway/infra
             - pkg: crypto
               desc: deps-only-in-infra, use a port (SecretBox, Pkce...) implemented in infra
         no-mcp-sdk-outside-transport:

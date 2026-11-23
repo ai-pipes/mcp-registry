@@ -149,6 +149,9 @@ var archFixtures = []struct{ rule, fixture, component, badImport string }{
 	{"deps-only-in-infra (tokenizer in another module's infra)", "embedder-libs-other-infra-tokenizers", "catalog-infra", "github.com/daulet/tokenizers"},
 	{"deps-only-in-infra (x/text in another module's infra)", "embedder-libs-other-infra-xtext", "catalog-infra", "golang.org/x/text/unicode/norm"},
 	{"deps-only-in-infra (x/term is the composition's, not even infra's)", "deps-only-in-infra-term", "catalog-infra", "golang.org/x/term"},
+	// The JSON Schema library is gateway/infra's alone: not an app layer, not another module's infra.
+	{"deps-only-in-infra (JSON Schema library)", "deps-only-in-infra-jsonschema", "catalog-app", "github.com/santhosh-tekuri/jsonschema/v6"},
+	{"deps-only-in-infra (JSON Schema library in another module's infra)", "jsonschema-other-infra", "catalog-infra", "github.com/santhosh-tekuri/jsonschema/v6"},
 	{"modules-via-index", "modules-via-index", "gateway-infra", modPath + "modules/catalog/domain"},
 	{"migrations-only-platform", "migrations-only-platform", "catalog-infra", "github.com/ai-pipes/mcp-registry/apps/server/migrations"},
 	// platform-leaves: modules reach platform only through the leaves, and only from http and infra.
@@ -283,12 +286,13 @@ func TestDepguardDeniesStdlibCrypto(t *testing.T) {
 }
 
 // TestDepguardDeniesTheEmbedderLibraries is the second line of the vendor rule for the local
-// embedder's libraries (go-arch-lint has the first): a domain package importing each is refused.
+// embedder's libraries and the JSON Schema library (go-arch-lint has the first): a domain package importing each is refused.
 func TestDepguardDeniesTheEmbedderLibraries(t *testing.T) {
 	for _, tc := range []struct{ fixture, pkg string }{
 		{"deps-only-in-infra-depguard-onnx", "github.com/yalue/onnxruntime_go"},
 		{"deps-only-in-infra-depguard-tokenizers", "github.com/daulet/tokenizers"},
 		{"deps-only-in-infra-depguard-xtext", "golang.org/x/text/unicode/norm"},
+		{"deps-only-in-infra-depguard-jsonschema", "github.com/santhosh-tekuri/jsonschema/v6"},
 	} {
 		t.Run(tc.fixture, func(t *testing.T) { depguardDenies(t, tc.fixture, tc.pkg) })
 	}
