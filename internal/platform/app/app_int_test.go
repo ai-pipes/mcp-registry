@@ -69,6 +69,8 @@ func baseConfig(url string, key []byte) config.Config {
 	return config.Config{
 		Port: 1, DatabaseURL: config.NewSecret(url), PublicURL: "http://localhost:3000", TrustProxyHops: 1,
 		SecretsKey: config.NewSecretBytes(key), LogLevel: "info",
+		// What config.Load always sets (its defaults): the gateway module refuses to start without.
+		UpstreamMaxResponseBytes: 1 << 20, MCPMaxBodyBytes: 1 << 20, CallLogRetentionDays: 90,
 	}
 }
 

@@ -84,6 +84,11 @@ func Run(ctx context.Context, o Options) int {
 		pool.Close()
 		return 1
 	}
+	// The gateway's calls in flight are cancelled when the shutdown begins (and write their
+	// transport_error row before the pool closes).
+	callsCtx, cancelCalls := context.WithCancel(context.Background())
+	defer cancelCalls()
+	rt.CallsContext = callsCtx
 	asm, err := assemble(modulesOf(o.modules, rt))
 	if err != nil {
 		// The text names an event type or a command, never data.
@@ -144,7 +149,7 @@ func Run(ctx context.Context, o Options) int {
 		exit = 1
 	}
 
-	return shutdown(o, logger, srv, pool, []func(context.Context) error{stopWorker, stopScheduler}, asm.closers, exit)
+	return shutdown(o, logger, srv, pool, cancelCalls, []func(context.Context) error{stopWorker, stopScheduler}, asm.closers, exit)
 }
 
 // databasePassword is the PGPASSWORD_FILE value for db.Open, nil when unset.
@@ -313,10 +318,14 @@ func stopAllThenClose(ctx context.Context, stops, closers []func(context.Context
 }
 
 // shutdown stops accepting connections and drains requests while the worker and the scheduler
-// stop, all under one limit; then the closers of the modules run, then the pool is closed, only
+// stop, all under one limit (the gateway's calls in flight are cancelled first); then the closers of the modules run, then the pool is closed, only
 // after every one of them has returned (a request or a job in flight still uses it). exit is the
 // code to return when it all goes well.
-func shutdown(o Options, logger *slog.Logger, srv *http.Server, pool *pgxpool.Pool, stops []func(context.Context) error, closers []func(context.Context) error, exit int) int {
+func shutdown(o Options, logger *slog.Logger, srv *http.Server, pool *pgxpool.Pool, cancelCalls func(), stops []func(context.Context) error, closers []func(context.Context) error, exit int) int {
+	// Calls in flight end now (an upstream call blocked for minutes would otherwise hold the
+	// drain until the limit); each still writes its log row, which needs the pool, and the pool
+	// is closed below only after every request has returned.
+	cancelCalls()
 	ctx, cancel := context.WithTimeout(context.Background(), shutdownLimitOf(o))
 	defer cancel()
 	err := stopAllThenClose(ctx, append(stops, srv.Shutdown), closers)

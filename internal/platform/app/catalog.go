@@ -21,11 +21,13 @@ const (
 
 // catalogWiring is the catalog module built from the runtime. Building it makes no request.
 type catalogWiring struct {
-	rt       Runtime
-	id       identityWiring
-	deps     catalog.Deps
-	service  *catalog.Service
-	creds    *lateSyncCredentials // bound to the connections service by newConnectionsWiring
+	rt      Runtime
+	id      identityWiring
+	deps    catalog.Deps
+	service *catalog.Service
+	creds   *lateSyncCredentials // bound to the connections service by newConnectionsWiring
+	// upstream is the one client of the process: the gateway shares it.
+	upstream kernel.UpstreamClient
 	interval time.Duration
 }
 
@@ -37,7 +39,7 @@ type failedSync struct {
 
 func newCatalogWiring(rt Runtime, id identityWiring) catalogWiring {
 	// The one client of the process: it holds no state between operations, and the catalog (the
-	// scheduler, the REST sync, the CLI) is the only user until the gateway arrives.
+	// scheduler, the REST sync, the CLI) and the gateway (call_tool) share it.
 	return catalogWiringOver(rt, id, catinfra.NewPg(rt.Pool), upstream.New(upstream.Options{}))
 }
 
@@ -58,7 +60,7 @@ func catalogWiringOver(rt Runtime, id identityWiring, repos catinfra.Repos, clie
 		Logger:           rt.Logger,
 	}
 	return catalogWiring{
-		rt: rt, id: id, deps: deps, service: catalog.New(deps), creds: creds,
+		rt: rt, id: id, deps: deps, service: catalog.New(deps), creds: creds, upstream: client,
 		interval: time.Duration(rt.Config.SyncIntervalHours) * time.Hour,
 	}
 }

@@ -38,11 +38,36 @@ type mcpFake struct {
 	hold    chan struct{} // when set, tools/list blocks until it is closed or the request ends
 	listed  atomic.Int32  // tools/list requests that arrived
 	arrived chan struct{} // one signal per tools/list request
+
+	// call answers tools/call (the gateway's call_tool tests); nil answers 202 like any other
+	// method. It runs outside the lock.
+	call        func(c upstreamCall) callAnswer
+	calls       []upstreamCall // every tools/call that arrived, in order
+	callArrived chan struct{}  // one signal per tools/call request
+}
+
+// upstreamCall is one tools/call as the fake saw it: the Authorization header, the tool name and
+// the raw arguments.
+type upstreamCall struct {
+	Auth string
+	Name string
+	Args string
+}
+
+// callAnswer is what the fake sends for a tools/call: a non-zero Status answers with that bare
+// HTTP status (401 rejects the credential); otherwise Result is the JSON-RPC result object, or
+// RPCError the JSON-RPC error object (code and message). Hold, when set, blocks the answer until it
+// is closed or the request ends (a call in flight at shutdown).
+type callAnswer struct {
+	Status   int
+	Result   string
+	RPCError string
+	Hold     chan struct{}
 }
 
 func newMCPFake(t *testing.T, tools ...string) *mcpFake {
 	t.Helper()
-	f := &mcpFake{tools: tools, arrived: make(chan struct{}, 64)}
+	f := &mcpFake{tools: tools, arrived: make(chan struct{}, 64), callArrived: make(chan struct{}, 256)}
 	f.srv = httptest.NewServer(f)
 	t.Cleanup(f.srv.Close)
 	return f
@@ -55,6 +80,15 @@ func (f *mcpFake) setReject(v bool) { f.mu.Lock(); f.reject = v; f.mu.Unlock() }
 func (f *mcpFake) setDown(v bool) { f.mu.Lock(); f.down = v; f.mu.Unlock() }
 
 func (f *mcpFake) setHold(c chan struct{}) { f.mu.Lock(); f.hold = c; f.mu.Unlock() }
+
+func (f *mcpFake) setCall(fn func(upstreamCall) callAnswer) { f.mu.Lock(); f.call = fn; f.mu.Unlock() }
+
+// seenCalls is a copy of the tools/call requests that arrived.
+func (f *mcpFake) seenCalls() []upstreamCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.calls)
+}
 
 func (f *mcpFake) authHeaders() []string {
 	f.mu.Lock()
@@ -76,12 +110,18 @@ func (f *mcpFake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		ID     json.RawMessage `json:"id"`
 		Method string          `json:"method"`
 		Params struct {
-			ProtocolVersion string `json:"protocolVersion"`
+			ProtocolVersion string          `json:"protocolVersion"`
+			Name            string          `json:"name"`
+			Arguments       json.RawMessage `json:"arguments"`
 		} `json:"params"`
 	}
 	_ = json.Unmarshal(body, &in)
 	f.mu.Lock()
 	down, hold, tools, suffix, reject := f.down, f.hold, slices.Clone(f.tools), f.suffix, f.reject
+	callFn := f.call
+	if in.Method == "tools/call" {
+		f.calls = append(f.calls, upstreamCall{Auth: r.Header.Get("Authorization"), Name: in.Params.Name, Args: string(in.Params.Arguments)})
+	}
 	if in.Method == "tools/list" {
 		f.auths = append(f.auths, r.Header.Get("Authorization"))
 	}
@@ -119,6 +159,32 @@ func (f *mcpFake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			parts[i] = fmt.Sprintf(`{"name":%q,"description":"the %s tool%s","inputSchema":{"type":"object"}}`, n, n, suffix)
 		}
 		reply(`{"tools":[` + strings.Join(parts, ",") + `]}`)
+	case "tools/call":
+		select {
+		case f.callArrived <- struct{}{}:
+		default:
+		}
+		if callFn == nil {
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+		a := callFn(upstreamCall{Auth: r.Header.Get("Authorization"), Name: in.Params.Name, Args: string(in.Params.Arguments)})
+		if a.Hold != nil {
+			select {
+			case <-a.Hold:
+			case <-r.Context().Done():
+				return
+			}
+		}
+		switch {
+		case a.Status != 0:
+			http.Error(w, "refused", a.Status)
+		case a.RPCError != "":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%s,"error":%s}`, in.ID, a.RPCError)
+		default:
+			reply(a.Result)
+		}
 	default:
 		w.WriteHeader(http.StatusAccepted)
 	}

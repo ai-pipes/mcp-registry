@@ -36,7 +36,7 @@ func testBox(t *testing.T) kernel.SecretBox {
 func bareRuntime(t *testing.T) Runtime {
 	t.Helper()
 	return Runtime{
-		Config: config.Config{PublicURL: "http://localhost:3000"},
+		Config: config.Config{PublicURL: "http://localhost:3000", UpstreamMaxResponseBytes: 1 << 20, MCPMaxBodyBytes: 1 << 20, CallLogRetentionDays: 90},
 		Clock:  kernel.SystemClock{}, Logger: discardLogger(), Version: "1.2.3",
 		Box: testBox(t), Audit: &countingAudit{},
 	}
@@ -68,12 +68,12 @@ func (*memPendingConnects) Consume(context.Context, string, string) (*condomain.
 	return nil, nil
 }
 
-// connectionsPaths is the route table of the server's own module list (the last module); like the
+// connectionsPaths is the route table of the server's own module list (the fifth module); like the
 // catalog's, it is compared with the one served over in-memory stores.
 func connectionsPaths(t *testing.T, e *wiringEnv) []httpx.Route {
 	t.Helper()
 	all := modules(bareRuntime(t))
-	composed := all[len(all)-1].Routes
+	composed := all[4].Routes
 	if len(composed) != 5 {
 		t.Fatalf("connections registers %d routes, want 5", len(composed))
 	}
@@ -195,11 +195,11 @@ func TestRedirectURIFollowsPublicURLLikeTheReference(t *testing.T) {
 	}
 }
 
-// The default list assembles with connections last, the catalog bound to it, and no event or
-// handler of its own.
-func TestTheDefaultModuleListHasConnectionsLast(t *testing.T) {
+// The default list assembles with connections fifth (the gateway follows), the catalog bound to
+// it, and no event or handler of its own.
+func TestTheDefaultModuleListHasConnectionsFifth(t *testing.T) {
 	got := modules(bareRuntime(t))
-	last := got[len(got)-1]
+	last := got[4]
 	var paths []string
 	for _, r := range last.Routes {
 		paths = append(paths, r.Method+" "+r.Path)

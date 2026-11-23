@@ -24,9 +24,9 @@ func say(s string) http.Handler {
 
 // Building the modules makes no request (the CLI builds them for every command): a Runtime
 // without a pool is enough.
-func TestTheDefaultModuleListIsIdentityThenThePlatformRoutesThenTheCatalogThenSearchThenConnections(t *testing.T) {
+func TestTheDefaultModuleListIsIdentityThenThePlatformRoutesThenTheCatalogThenSearchThenConnectionsThenTheGateway(t *testing.T) {
 	got := modules(bareRuntime(t))
-	if len(got) != 5 {
+	if len(got) != 6 {
 		t.Fatalf("modules() = %d entries", len(got))
 	}
 	paths := func(m Module) (out []string) {
@@ -51,6 +51,14 @@ func TestTheDefaultModuleListIsIdentityThenThePlatformRoutesThenTheCatalogThenSe
 		s.Sweeps[0].Every != 5*time.Minute || len(s.Commands) != 1 || s.Commands[0].Name != "reindex" ||
 		s.BeforeServing == nil || len(s.Closers) != 1 {
 		t.Errorf("search module: %+v", s)
+	}
+	// The gateway is last: /mcp and the call list with identity's guards, the daily retention.
+	if p := paths(got[5]); !slices.Contains(p, "POST /mcp") || !slices.Contains(p, "GET /mcp") || !slices.Contains(p, "GET /api/calls") {
+		t.Errorf("gateway routes: %v", p)
+	}
+	if g := got[5]; len(g.Jobs) != 1 || g.Jobs[0].Name != "gateway-retention" || g.Jobs[0].Every != 24*time.Hour ||
+		len(g.Handlers) != 0 || len(g.Emits) != 0 || len(g.Closers) != 0 || len(g.Commands) != 0 {
+		t.Errorf("gateway module: %+v", g)
 	}
 	if len(got[0].Jobs) != 1 || got[0].Jobs[0].Every != 24*time.Hour || got[0].FirstStart == nil {
 		t.Errorf("identity job or first start: %+v", got[0])

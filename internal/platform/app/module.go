@@ -118,6 +118,10 @@ type Runtime struct {
 	Audit   kernel.AuditLog // the Postgres audit log (platform.audit_log)
 	Box     kernel.SecretBox
 	Version string
+	// CallsContext is cancelled when the server starts to shut down: the gateway's calls in
+	// flight end then (and write their `transport_error` row, which needs the pool, so the pool
+	// is closed only after the requests have drained). Nil for the CLI, which runs no calls.
+	CallsContext context.Context
 }
 
 // newRuntime builds the Runtime for cfg over an open pool. The box seals with SECRETS_KEY and
@@ -142,13 +146,15 @@ func newRuntime(cfg config.Config, logger *slog.Logger, pool *pgxpool.Pool, vers
 // (audit, version) follow, since they use identity's session guards; then the catalog, then search
 // (it reads the catalog through the catalog's public API), then connections (the catalog's
 // synchronisation reads personal credentials through it: the catalog is built first and bound to
-// the connections service afterwards). The other modules join in later milestones. Tests pick modules by name or position from the end of the list: append, never
-// insert.
+// the connections service afterwards), then the gateway (the call log, `/mcp`; it needs all of
+// them). Tests pick modules by name or position from the end of the list: append, never insert.
 func modules(rt Runtime) []Module {
 	id := newIdentityWiring(rt)
 	cat := newCatalogWiring(rt, id)
 	con := newConnectionsWiring(rt, id, cat)
-	return []Module{id.module(), platformModule(rt, id), cat.module(), newSearchWiring(rt, cat).module(), con.module()}
+	srch := newSearchWiring(rt, cat)
+	gw := newGatewayWiring(rt, id, cat, con, srch)
+	return []Module{id.module(), platformModule(rt, id), cat.module(), srch.module(), con.module(), gw.module()}
 }
 
 // platformModule is the platform's own REST routes, guarded with identity's session checks:
