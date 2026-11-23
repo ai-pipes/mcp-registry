@@ -11,6 +11,12 @@ import (
 	"unicode/utf8"
 )
 
+// Every message is decoded ONCE, into maps keyed by the exact JSON keys: as JSON.parse reads a
+// body (the reference), keys are case-sensitive and the last of duplicate keys wins (that is what
+// encoding/json does for a map; a struct would match keys case-insensitively). The header checks,
+// the dispatch and the tools all read these same maps, so no check sees another value than the
+// one that runs.
+//
 // The shapes of JSON-RPC messages and the envelope of the 2026-07-28 revision, as the reference's
 // SDK (@modelcontextprotocol/server 2.4.0) judges them: JSONRPCRequestSchema and friends are
 // strict objects, an id is a string or an integer, params (when present) an object whose _meta
@@ -35,7 +41,7 @@ type message struct {
 	kind   msgKind
 	id     json.RawMessage // the raw id; nil when absent
 	method string
-	params json.RawMessage // nil when absent
+	params map[string]json.RawMessage // the params object by exact key; nil when absent
 	meta   map[string]json.RawMessage
 	// echo is the id the reference echoes in a refusal (echoableRequestId): the id of an object
 	// whose method is a string and whose id is a string or a number; "null" otherwise.
@@ -75,10 +81,8 @@ func parseMessage(raw json.RawMessage) message {
 			if kindOf(params) != "object" {
 				return m
 			}
-			m.params = bytes.TrimSpace(params)
-			var p map[string]json.RawMessage
-			_ = json.Unmarshal(params, &p)
-			if metaRaw, ok := p["_meta"]; ok {
+			_ = json.Unmarshal(params, &m.params) // an object (checked above)
+			if metaRaw, ok := m.params["_meta"]; ok {
 				if kindOf(metaRaw) != "object" {
 					return m
 				}
@@ -211,12 +215,12 @@ func isModern(version string) bool { return version >= modernRevision }
 // nameOf is the params.name of a tools/call (the source of the Mcp-Name header), ok false when it
 // is not a string.
 func (m message) nameOf() (string, bool) {
-	var p map[string]json.RawMessage
-	if json.Unmarshal(m.params, &p) != nil || kindOf(p["name"]) != "string" {
+	raw := m.params["name"]
+	if kindOf(raw) != "string" {
 		return "", false
 	}
 	var name string
-	return name, json.Unmarshal(p["name"], &name) == nil
+	return name, json.Unmarshal(raw, &name) == nil
 }
 
 var base64Canonical = regexp.MustCompile(`^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$`)

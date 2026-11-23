@@ -494,13 +494,10 @@ func errorBody(id json.RawMessage, e rpcErr) []byte {
 func (x *exchange) classic(m message) outcome {
 	switch m.method {
 	case "initialize":
-		var p struct {
-			ProtocolVersion any `json:"protocolVersion"`
-		}
-		_ = json.Unmarshal(m.params, &p)
 		version := latestClassic
-		if v, ok := p.ProtocolVersion.(string); ok && slices.Contains(classicRevisions, v) {
-			version = v
+		var asked string
+		if raw := m.params["protocolVersion"]; kindOf(raw) == "string" && json.Unmarshal(raw, &asked) == nil && slices.Contains(classicRevisions, asked) {
+			version = asked
 		}
 		return outcome{result: x.h.initializeResult(version)}
 	case "ping":

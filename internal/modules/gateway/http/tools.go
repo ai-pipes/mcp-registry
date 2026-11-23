@@ -51,20 +51,19 @@ const msgInternal = "Internal error."
 
 // toolsCall serves tools/call: an unknown tool name is a JSON-RPC error, everything else a result.
 func (x *exchange) toolsCall(m message) outcome {
-	var p struct {
-		Name      *string         `json:"name"`
-		Arguments json.RawMessage `json:"arguments"`
-	}
-	if json.Unmarshal(m.params, &p) != nil || p.Name == nil {
+	// The name and the arguments are read from the one parsed message (exact keys, the last
+	// duplicate wins), the same values the Mcp-Name check saw.
+	name, ok := m.nameOf()
+	if !ok {
 		return outcome{err: &rpcErr{Code: codeInvalidParams, Message: msgInvalidParams}}
 	}
 	var args map[string]json.RawMessage
-	if p.Arguments != nil {
-		if kindOf(p.Arguments) != "object" || json.Unmarshal(p.Arguments, &args) != nil {
+	if raw, present := m.params["arguments"]; present {
+		if kindOf(raw) != "object" || json.Unmarshal(raw, &args) != nil {
 			return outcome{err: &rpcErr{Code: codeInvalidParams, Message: msgInvalidParams}}
 		}
 	}
-	ctx, name := x.r.Context(), *p.Name
+	ctx := x.r.Context()
 	var run func() ([]byte, error)
 	switch name {
 	case "list_servers":
