@@ -95,8 +95,8 @@ jobs:
           retention-days: 7
 
   # `make go-verify`: golangci-lint, go-arch-lint, go vet (also with the compat tags) and go test.
-  # Node is needed only because the Makefile reads the version from apps/server/package.json; no
-  # pnpm install is involved.
+  # The version (VERSION) and the model fetch no longer use Node; the Node setup stays installed for
+  # now (no pnpm install is involved) and may go in a later CI cleanup.
   go:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -133,7 +133,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      # make native-model and the version read use node.
+      # Neither the version (VERSION) nor make native-model use Node any more; the setup stays for now.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
@@ -208,7 +208,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      # make reads the version from apps/server/package.json with node.
+      # The version comes from VERSION, no longer from node; the Node setup stays for now.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
