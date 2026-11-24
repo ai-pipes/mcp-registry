@@ -145,7 +145,7 @@ func (w keysWiring) rotate(ctx context.Context, cio CLIIO, args []string) error 
 	if ctx.Err() != nil {
 		return CommandError(msgInterrupted)
 	}
-	verdict, err := w.resealCheck(ctx, crypto.Keys{Current: current, Previous: old})
+	verdict, err := w.resealCheck(ctx, crypto.NewKeys(current, old))
 	if err != nil {
 		return interrupted(ctx, err)
 	}

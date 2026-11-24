@@ -43,13 +43,13 @@ func TestJudgeFourOutcomes(t *testing.T) {
 		keys   crypto.Keys
 		want   string
 	}{
-		{"absent", nil, crypto.Keys{Current: cur}, crypto.KeyCheckAbsent},
-		{"ok", sealWith(t, cur, checkPlain), crypto.Keys{Current: cur, Previous: old}, crypto.KeyCheckOK},
-		{"needs rotation", sealWith(t, old, checkPlain), crypto.Keys{Current: cur, Previous: old}, crypto.KeyCheckNeedsRotation},
-		{"foreign key", sealWith(t, other, checkPlain), crypto.Keys{Current: cur, Previous: old}, crypto.KeyCheckMismatch},
-		{"old key without previous", sealWith(t, old, checkPlain), crypto.Keys{Current: cur}, crypto.KeyCheckMismatch},
-		{"right key, other text", sealWith(t, cur, "something else"), crypto.Keys{Current: cur}, crypto.KeyCheckMismatch},
-		{"garbage", []byte("short"), crypto.Keys{Current: cur}, crypto.KeyCheckMismatch},
+		{"absent", nil, crypto.NewKeys(cur, nil), crypto.KeyCheckAbsent},
+		{"ok", sealWith(t, cur, checkPlain), crypto.NewKeys(cur, old), crypto.KeyCheckOK},
+		{"needs rotation", sealWith(t, old, checkPlain), crypto.NewKeys(cur, old), crypto.KeyCheckNeedsRotation},
+		{"foreign key", sealWith(t, other, checkPlain), crypto.NewKeys(cur, old), crypto.KeyCheckMismatch},
+		{"old key without previous", sealWith(t, old, checkPlain), crypto.NewKeys(cur, nil), crypto.KeyCheckMismatch},
+		{"right key, other text", sealWith(t, cur, "something else"), crypto.NewKeys(cur, nil), crypto.KeyCheckMismatch},
+		{"garbage", []byte("short"), crypto.NewKeys(cur, nil), crypto.KeyCheckMismatch},
 	}
 	for _, c := range cases {
 		if got := crypto.Judge(c.sealed, c.keys); got != c.want {
@@ -84,10 +84,10 @@ func TestJudgeOpensTheValueSealedByTypeScript(t *testing.T) {
 	if v.KeyCheck.Plain != checkPlain {
 		t.Fatalf("vector plain %q", v.KeyCheck.Plain)
 	}
-	if got := crypto.Judge(sealed, crypto.Keys{Current: key}); got != crypto.KeyCheckOK {
+	if got := crypto.Judge(sealed, crypto.NewKeys(key, nil)); got != crypto.KeyCheckOK {
 		t.Fatalf("Judge = %q, want ok", got)
 	}
-	if got := crypto.Judge(sealed, crypto.Keys{Current: randKey(t)}); got != crypto.KeyCheckMismatch {
+	if got := crypto.Judge(sealed, crypto.NewKeys(randKey(t), nil)); got != crypto.KeyCheckMismatch {
 		t.Fatalf("Judge with another key = %q, want mismatch", got)
 	}
 }

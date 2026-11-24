@@ -194,7 +194,7 @@ func RunCLI(ctx context.Context, o CLIOptions) int {
 	}
 
 	if command.Guard != GuardNone {
-		verdict, err := crypto.Inspect(ctx, pool, crypto.Keys{Current: cfg.SecretsKey.Reveal(), Previous: cfg.SecretsKeyOld.Reveal()})
+		verdict, err := crypto.Inspect(ctx, pool, crypto.NewKeys(cfg.SecretsKey.Reveal(), cfg.SecretsKeyOld.Reveal()))
 		if err != nil {
 			return fail("secrets key check failed")
 		}

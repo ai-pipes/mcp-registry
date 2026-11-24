@@ -298,7 +298,7 @@ func TestRotateSecretsKeyKeyCheckVerdicts(t *testing.T) {
 			t.Fatalf("%+v", r)
 		}
 		keys := func(cur, prev []byte) string {
-			v, err := crypto.Inspect(context.Background(), e.pool(), crypto.Keys{Current: cur, Previous: prev})
+			v, err := crypto.Inspect(context.Background(), e.pool(), crypto.NewKeys(cur, prev))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -437,7 +437,7 @@ func TestResetKeyCheck(t *testing.T) {
 		t.Error("the check is still there")
 	}
 	// The next start records the configured key again.
-	if v, err := crypto.Verify(context.Background(), e.pool(), crypto.Keys{Current: e.next}); err != nil || v != crypto.KeyCheckCreated {
+	if v, err := crypto.Verify(context.Background(), e.pool(), crypto.NewKeys(e.next, nil)); err != nil || v != crypto.KeyCheckCreated {
 		t.Errorf("verify: %q %v", v, err)
 	}
 	e.sql(`delete from platform.key_check`)

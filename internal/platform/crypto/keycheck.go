@@ -25,12 +25,47 @@ const (
 // apps/server/src/platform/crypto/key-check.ts (pinned by a test that reads that file).
 const keyCheckPlain = "mcp-registry key check v1"
 
-// Keys are the configured secrets keys: SECRETS_KEY and, while rotating, SECRETS_KEY_OLD. Raw
-// bytes: the type prints, logs and encodes as "[Redacted]" through every verb (the pattern of
-// config.SecretBytes), so a key cannot reach a log line or an error by accident. Limit: fmt writes an unexported field of
-// another struct by reflection without calling methods, so a Keys held in such a field prints its
-// bytes raw (config.SecretBytes avoids it by holding a pointer); never keep Keys that way.
-type Keys struct{ Current, Previous []byte }
+// Keys are the configured secrets keys: SECRETS_KEY and, while rotating, SECRETS_KEY_OLD. The raw
+// bytes sit behind an unexported pointer, and the type prints, logs and encodes as "[Redacted]"
+// through every verb (the pattern of config.SecretBytes), however the holder is declared: fmt
+// writes the fields of a struct it may not call methods on by reflection, and a pointer is
+// written as an address at most. The bytes sit one pointer deeper than that: a verb that does not
+// suit a pointer (%s, %q, %d) makes fmt print "%!s(*T=" and then the dereferenced value of the
+// first pointer, so that value must hold nothing but another pointer. The zero value is "no keys"; the type is not comparable on
+// purpose. Copies of a Keys share the same immutable bytes; NewKeys copies its inputs.
+type Keys struct {
+	_ [0]func() // not comparable: == would compare addresses, never the keys
+	v *keyBox
+}
+
+// keyBox holds only a pointer (see Keys); keyPair holds the bytes.
+type keyBox struct{ p *keyPair }
+
+type keyPair struct{ current, previous []byte }
+
+// NewKeys wraps copies of current and previous (nil or empty previous: no previous key).
+func NewKeys(current, previous []byte) Keys {
+	return Keys{v: &keyBox{p: &keyPair{
+		current:  append([]byte(nil), current...),
+		previous: append([]byte(nil), previous...),
+	}}}
+}
+
+// Current is the key new secrets are sealed with, nil for the zero value.
+func (k Keys) current() []byte {
+	if k.v == nil {
+		return nil
+	}
+	return k.v.p.current
+}
+
+// Previous is the key being rotated away from, nil when there is none.
+func (k Keys) previous() []byte {
+	if k.v == nil || len(k.v.p.previous) == 0 {
+		return nil
+	}
+	return k.v.p.previous
+}
 
 const keysRedacted = "[Redacted]"
 
@@ -67,10 +102,10 @@ func Judge(sealed []byte, k Keys) string {
 	if sealed == nil {
 		return KeyCheckAbsent
 	}
-	if opensToPlain(k.Current, sealed) {
+	if opensToPlain(k.current(), sealed) {
 		return KeyCheckOK
 	}
-	if k.Previous != nil && opensToPlain(k.Previous, sealed) {
+	if k.previous() != nil && opensToPlain(k.previous(), sealed) {
 		return KeyCheckNeedsRotation
 	}
 	return KeyCheckMismatch
@@ -103,7 +138,7 @@ func Verify(ctx context.Context, pool *pgxpool.Pool, k Keys) (string, error) {
 	if existing != nil {
 		return settled(existing, k), nil
 	}
-	box, err := NewAESGCMBox(k.Current, nil)
+	box, err := NewAESGCMBox(k.current(), nil)
 	if err != nil {
 		return "", fmt.Errorf("key check: %w", err)
 	}
@@ -146,17 +181,17 @@ func ResealCheck(ctx context.Context, pool *pgxpool.Pool, k Keys) (string, error
 	if existing == nil {
 		return KeyCheckAbsent, nil
 	}
-	if k.Previous == nil {
-		if opensToPlain(k.Current, existing) {
+	if k.previous() == nil {
+		if opensToPlain(k.current(), existing) {
 			return kernel.ResealCurrent, nil
 		}
 		return kernel.ResealUnreadable, nil
 	}
-	from, err := NewAESGCMBox(k.Previous, nil)
+	from, err := NewAESGCMBox(k.previous(), nil)
 	if err != nil {
 		return "", fmt.Errorf("key check: %w", err)
 	}
-	to, err := NewAESGCMBox(k.Current, nil)
+	to, err := NewAESGCMBox(k.current(), nil)
 	if err != nil {
 		return "", fmt.Errorf("key check: %w", err)
 	}

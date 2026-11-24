@@ -275,7 +275,7 @@ func prepare(ctx context.Context, o Options, logger *slog.Logger, pool *pgxpool.
 	}
 	logger.Info("migrations applied", "applied", applied)
 
-	verdict, err := crypto.Verify(context.WithoutCancel(ctx), pool, crypto.Keys{Current: o.Config.SecretsKey.Reveal(), Previous: o.Config.SecretsKeyOld.Reveal()})
+	verdict, err := crypto.Verify(context.WithoutCancel(ctx), pool, crypto.NewKeys(o.Config.SecretsKey.Reveal(), o.Config.SecretsKeyOld.Reveal()))
 	if err != nil {
 		logging.Fatal(logger, "secrets key check failed", logging.ErrAttr(err))
 		return startRefused
