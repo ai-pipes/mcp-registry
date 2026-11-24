@@ -710,9 +710,13 @@ func TestKeyRotationWaitsForATokenRenewalHoldingTheRowLock(t *testing.T) {
 			renewed := make(chan error, 1)
 			var written domain.SealedTokens
 			go func() {
-				renewed <- s.Connections.WithLock(ctx, userA, "gitea", func(_ context.Context, cur *domain.Connection) (*domain.Connection, error) {
+				renewed <- s.Connections.WithLock(ctx, userA, "gitea", func(lctx context.Context, cur *domain.Connection) (*domain.Connection, error) {
 					close(inside)
-					<-release // the provider call of the renewal
+					select { // the provider call of the renewal; a failed test must not leave it holding the connection
+					case <-release:
+					case <-lctx.Done():
+						return nil, lctx.Err()
+					}
 					next := t0.Add(2 * time.Hour)
 					written = domain.SealedTokens{Access: seal(c.renewalWith, "A-renewed"), Refresh: seal(c.renewalWith, "R-renewed"), ExpiresAt: &next}
 					cur.Refreshed(written, t0.Add(time.Minute))

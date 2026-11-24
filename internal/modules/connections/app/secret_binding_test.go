@@ -144,3 +144,30 @@ func TestAnAuthorizeURLChangeBetweenTheReadsIsCaughtByTheNextResolve(t *testing.
 	r, err = h.resolve("alice", "gitea")
 	wantFailure(t, r, err, app.FailureExpired)
 }
+
+// Decided consequence: the revoke URL is a destination of the secret but not part of the
+// fingerprint, so a change of ONLY the revoke URL between the configuration read and the secret
+// read makes a renewal `unavailable` (before the single-read change it went through). Nothing is
+// stored or sent; the next call, with the configuration read again, renews normally.
+func TestARevokeURLOnlyChangeBetweenTheReadsMakesTheRenewalUnavailable(t *testing.T) {
+	h := newHarness(t)
+	h.withRevokeURL()
+	h.seedOAuth(tp(at(-1000)), "R1", "alice")
+	h.dir.onSecret = func() {
+		h.dir.edit("gitea", func(g *fakeServer) {
+			o := *g.oauth
+			o.RevokeURL = sp("https://other.example.com/revoke")
+			g.oauth = &o
+		})
+	}
+	r, err := h.resolve("alice", "gitea")
+	wantFailure(t, r, err, app.FailureUnavailable)
+	if len(h.oauth.refreshed()) != 0 {
+		t.Fatalf("the provider was called: %v", h.oauth.refreshSecrets)
+	}
+	h.dir.onSecret = nil
+	r, err = h.resolve("alice", "gitea")
+	if err != nil || r.Failure != "" {
+		t.Fatalf("%v %v", r, err)
+	}
+}

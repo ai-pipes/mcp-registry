@@ -143,10 +143,15 @@ func TestClientSecretForZeroWhenUnsetMovedAndErrorsNeverCarryIt(t *testing.T) {
 	if v, ok := s.Value(); err != nil || moved || !ok || v != "SECRETMARK" {
 		t.Fatalf("%v %v %v", ok, moved, err)
 	}
-	// the catalog is asked with the configuration the caller holds, once
-	if len(f.targetOf) != 1 || f.targetOf[0].Slug != "gitea" || f.targetOf[0].URL != "https://Up.example/mcp?x=1" ||
-		f.targetOf[0].Auth.Kind != catalog.AuthOAuthUser || f.targetOf[0].Auth.OAuth == nil || f.targetOf[0].Auth.OAuth.TokenURL != "https://idp/t" {
-		t.Fatalf("target %+v", f.targetOf)
+	// the catalog is asked once, with the whole configuration the caller holds
+	want := *oauthTarget("gitea")
+	want.Name = "" // the directory's config has no display name
+	if len(f.targetOf) != 1 {
+		t.Fatalf("target reads %d", len(f.targetOf))
+	}
+	got := f.targetOf[0]
+	if got.Slug != want.Slug || got.URL != want.URL || got.Auth.Kind != want.Auth.Kind || !reflect.DeepEqual(got.Auth.OAuth, want.Auth.OAuth) {
+		t.Fatalf("target %+v, want %+v", got, want)
 	}
 	if s, moved, err := d.ClientSecretFor(context.Background(), cfg("yt")); err != nil || moved || s != (app.ClientSecret{}) {
 		t.Fatalf("unset must be the zero value, not moved: %v %v %v", s, moved, err)
