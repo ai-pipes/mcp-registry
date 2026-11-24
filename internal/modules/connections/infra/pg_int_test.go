@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -767,5 +768,35 @@ func TestKeyRotationWaitsForATokenRenewalHoldingTheRowLock(t *testing.T) {
 				t.Fatalf("refresh under the new key: %q %v", r, err)
 			}
 		})
+	}
+}
+
+// A stored EMPTY access value (no writer of either server produces one: only a corrupt or foreign
+// row has it) reads as "no bytes", and writing the row back sends NULL, which the not-null column
+// refuses: the rewrite fails and the stored row stays as it was. This is the handling the code had
+// before Sealed held its bytes privately (the old cloneSealed also turned an empty value into nil,
+// pinned by running this test against 943b1d5); it is kept, not changed, by the hardening.
+func TestAnEmptyStoredAccessValueKeepsItsPreviousHandling(t *testing.T) {
+	pool, s := setup(t)
+	ctx := ctxT(t)
+	if _, err := pool.Exec(ctx, `insert into connections.connections (user_id, server, kind, access, refresh, expires_at, status, issued_for, revoke_url, updated_at)
+	  values ($1, 'empty-access', 'pat', $2, null, null, 'ready', $3, null, '2026-11-22 10:00:00+00')`, userA, []byte{}, fpOAuth); err != nil {
+		t.Fatal(err)
+	}
+	c, err := s.Connections.Get(ctx, userA, "empty-access")
+	if err != nil || c == nil || !c.AccessToken().IsEmpty() {
+		t.Fatalf("an empty stored access value reads as no bytes: %v %v", c, err)
+	}
+	err = s.Connections.WithLock(ctx, userA, "empty-access", func(_ context.Context, c *domain.Connection) (*domain.Connection, error) { return c, nil })
+	if err == nil || !strings.Contains(err.Error(), "23502") {
+		t.Fatalf("writing it back must be refused by the not-null column, as before: %v", err)
+	}
+	var isNull bool
+	var n int
+	if err := pool.QueryRow(ctx, `select access is null, length(access) from connections.connections where user_id = $1 and server = 'empty-access'`, userA).Scan(&isNull, &n); err != nil {
+		t.Fatal(err)
+	}
+	if isNull || n != 0 {
+		t.Fatalf("the stored row changed: null=%v length=%d", isNull, n)
 	}
 }
