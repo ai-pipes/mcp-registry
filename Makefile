@@ -223,10 +223,12 @@ e2e-flows-go:
 		go test -tags "compat e2e" -count=1 -timeout 30m -v -run '^TestBrowserFlows$$' ./compat/e2e/
 
 # Proves the suite can fail: runs named scenarios against the reference image (the published 1.0.1,
-# REFERENCE_IMAGE) behind a distorting proxy (compat/selfcheck). Slow; CI runs it daily
-# (compat-selfcheck.yml), not on pull requests.
+# REFERENCE_IMAGE) behind a distorting proxy (compat/selfcheck). The base is SELFCHECK_BASE when the
+# caller sets it (environment or make command line), else harness.ReferenceImage (COMPAT_REFERENCE_IMAGE,
+# else the published reference); the published reference is pulled either way. Slow; CI runs it
+# daily (compat-selfcheck.yml), not on pull requests.
 compat-selfcheck: compat-reference
-	SELFCHECK_BASE=$(REFERENCE_IMAGE) go test -tags "compat selfcheck" -count=1 -timeout 90m -v ./compat/selfcheck/
+	go test -tags "compat selfcheck" -count=1 -timeout 90m -v ./compat/selfcheck/
 
 go-build:
 	go build -ldflags "-X main.version=$(VERSION)" -o bin/mcp-registry ./cmd/mcp-registry

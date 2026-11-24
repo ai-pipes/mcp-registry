@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"testing"
 )
@@ -22,11 +23,16 @@ const referenceImageVar = "COMPAT_REFERENCE_IMAGE"
 // CheckUpdateAllowed refuses -update unless COMPAT_REFERENCE=1 AND the image under test (see
 // DefaultImage) is the reference image: the built-in default reference (the published 1.0.1 pinned
 // by digest, which is not the default image under test), or exactly the value of
-// COMPAT_REFERENCE_IMAGE when that is set. Without the second condition `COMPAT_IMAGE=<go image>
+// COMPAT_REFERENCE_IMAGE when that is set, which must then be pinned by digest too. Without the second condition `COMPAT_IMAGE=<go image>
 // make compat` with -update would rewrite the goldens from the server they are meant to judge.
 func CheckUpdateAllowed(update bool) error {
 	return checkUpdate(update, os.Getenv("COMPAT_REFERENCE"), os.Getenv(referenceImageVar), DefaultImage())
 }
+
+// pinnedByDigest matches an image reference that ends in a sha256 digest: the default reference is
+// one, and a reference named in COMPAT_REFERENCE_IMAGE must be one for -update, so that a tag (or
+// the image under test renamed) cannot pass for the reference.
+var pinnedByDigest = regexp.MustCompile(`@sha256:[0-9a-f]{64}$`)
 
 // checkUpdate is CheckUpdateAllowed over explicit inputs.
 func checkUpdate(update bool, reference, referenceImage, image string) error {
@@ -38,6 +44,9 @@ func checkUpdate(update bool, reference, referenceImage, image string) error {
 	}
 	want := defaultReferenceImage
 	if referenceImage != "" {
+		if !pinnedByDigest.MatchString(referenceImage) {
+			return fmt.Errorf("-update refused: COMPAT_REFERENCE_IMAGE %q is not pinned by digest (<name>@sha256:<64 hex>); goldens come only from a reference whose content a tag cannot change", referenceImage)
+		}
 		want = referenceImage
 	}
 	if image != want {

@@ -40,6 +40,8 @@ const dbImage = "pgvector/pgvector:pg17@sha256:b513c48566e4777cd3370451400000c78
 // `docker buildx imagetools inspect ghcr.io/ai-pipes/mcp-registry:1.0.1`). The harness never pulls
 // it: `make compat-reference` does (and checks the digest), CI runs that target. The Makefile
 // (REFERENCE_IMAGE) and compat/selfcheck/Dockerfile repeat the value; a test keeps them equal.
+// Dependabot does not watch a Go constant (nor that Makefile line): a new reference is pinned by hand,
+// in all three places, only by the rules for a release of the reference (CONTRIBUTING.md).
 // referenceCLI is how its CLI is invoked.
 const (
 	defaultReferenceImage = "ghcr.io/ai-pipes/mcp-registry:1.0.1@sha256:42726e227e5c2522b35c28c41e1feb6ceb8471ba3447ec5399a6c0559a72baf9"
