@@ -15,7 +15,7 @@ import (
 )
 
 // Verbs are the fmt verbs every holding is printed with.
-var Verbs = []string{"%v", "%+v", "%#v", "%s", "%q", "%x", "%d"}
+var Verbs = []string{"%v", "%+v", "%#v", "%s", "%q", "%x", "%X", "%d", "%o", "%b", "%c", "%U"}
 
 // Forbidden is every form in which one of the plain values must not appear in an output: the value
 // itself, its hex (lower and upper case), base64 (standard, raw, URL, raw URL), the start of its

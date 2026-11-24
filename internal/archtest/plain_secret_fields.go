@@ -34,6 +34,10 @@ var secretWords = map[string]bool{
 	"secret": true, "secrets": true, "token": true, "tokens": true, "password": true, "passwd": true,
 	"apikey": true, "verifier": true, "nonce": true, "cookie": true, "sealed": true, "plain": true,
 	"credential": true, "credentials": true, "code": true, "state": true, "access": true, "refresh": true,
+	// An API or encryption key, an Authorization header value, a sign-in link (its URL carries the
+	// code). Header (a header NAME in every field of the tree today), URL alone and keys (the JSON
+	// object keys of two parsers) are not words.
+	"key": true, "authorization": true, "link": true,
 }
 
 // printableTypes are the field types fmt, slog and encoding/json write raw.
@@ -180,7 +184,7 @@ func secretName(name string) bool {
 	}
 	if len(w) >= 2 {
 		pair := w[len(w)-2] + last
-		return pair == "apikey" || pair == "sessionid"
+		return pair == "sessionid" || pair == "linkurl"
 	}
 	return false
 }

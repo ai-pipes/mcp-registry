@@ -24,6 +24,10 @@ var plainSecretAllowlist = map[string]string{ //nolint:gosec // G101: the keys n
 	"modules/identity/infra/oidctest.Provider.ClientSecret": "the fake identity provider of the tests and the browser flows (test support)",
 	"modules/identity/infra/oidctest.Grant.Nonce":           "the fake identity provider of the tests (test support)",
 	"modules/identity/infra/oidctest.Tamper.Nonce":          "the fake identity provider of the tests (test support)",
+	"modules/catalog/domain.AuthorizeParam.Key":             "the NAME of an extra authorize query parameter, not a key",
+	"modules/gateway/http.envelopeIssue.Key":                "the NAME of a JSON key of a request envelope, in an error answer",
+	"modules/identity/infra.entry.key":                      "a rate limiter's key: the client address it counts",
+	"archtest.FieldViolation.Key":                           "this check's own allowlist key (a field path)",
 }
 
 func TestPlainSecretFieldIsReported(t *testing.T) {
@@ -55,7 +59,9 @@ func TestSecretNameWords(t *testing.T) {
 	for name, want := range map[string]bool{
 		"AccessToken": true, "ClientSecret": true, "CodeVerifier": true, "SessionID": true, "APIKey": true,
 		"apiKey": true, "access_token": true, "Nonce": true, "state": true, "SealedSecret": true,
+		"EncryptionKey": true, "Key": true, "Authorization": true, "LoginLinkURL": true, "Link": true,
 		"TokenURL": false, "TokenID": false, "CodeHash": false, "IDHash": false, "SecretSet": false, "Status": false,
+		"Header": false, "URL": false, "PublicURL": false, "KeyID": false,
 	} {
 		if got := secretName(name); got != want {
 			t.Errorf("secretName(%q) = %v, want %v", name, got, want)
