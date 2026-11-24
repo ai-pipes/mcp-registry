@@ -3,14 +3,25 @@
 package harness
 
 import (
+	"os"
+	"path/filepath"
+	"regexp"
 	"slices"
+	"strings"
 	"testing"
 )
 
 func TestReferenceImageFollowsItsVariable(t *testing.T) {
 	t.Setenv(referenceImageVar, "")
-	if got := ReferenceImage(); got != defaultImage {
-		t.Fatalf("default reference %q, want %q", got, defaultImage)
+	t.Setenv("COMPAT_IMAGE", "")
+	if got := ReferenceImage(); got != defaultReferenceImage {
+		t.Fatalf("default reference %q, want %q", got, defaultReferenceImage)
+	}
+	if ReferenceImage() == DefaultImage() {
+		t.Fatalf("the default reference %q is the default image under test", ReferenceImage())
+	}
+	if got := ReferenceCLI(); got != "node dist/cli.js" {
+		t.Fatalf("reference CLI %q", got)
 	}
 	t.Setenv(referenceImageVar, "ref:custom")
 	t.Setenv("COMPAT_IMAGE", "under:test")
@@ -28,5 +39,33 @@ func TestReferenceRunArgvHasNoNetworkAndReadOnlyMounts(t *testing.T) {
 	}
 	if argv[len(argv)-1] != "ref:img" {
 		t.Fatalf("the image must come last before the arguments: %v", argv)
+	}
+}
+
+// The reference is the published 1.0.1, pinned by the digest of its multi-arch index, and every
+// place that names it names the same pin: the Makefile (compat-reference, the parity run, the
+// self-check base) and the default base of compat/selfcheck/Dockerfile.
+func TestTheReferenceIsPinnedByDigestTheSameEverywhere(t *testing.T) {
+	pinned := regexp.MustCompile(`^ghcr\.io/ai-pipes/mcp-registry:1\.0\.1@sha256:[0-9a-f]{64}$`)
+	if !pinned.MatchString(defaultReferenceImage) {
+		t.Fatalf("defaultReferenceImage %q is not the published 1.0.1 pinned by digest", defaultReferenceImage)
+	}
+	for _, c := range []struct{ file, prefix string }{
+		{filepath.Join("..", "..", "Makefile"), "REFERENCE_IMAGE := "},
+		{filepath.Join("..", "selfcheck", "Dockerfile"), "ARG BASE="},
+	} {
+		raw, err := os.ReadFile(c.file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var found []string
+		for line := range strings.Lines(string(raw)) {
+			if v, ok := strings.CutPrefix(strings.TrimSpace(line), c.prefix); ok {
+				found = append(found, v)
+			}
+		}
+		if len(found) != 1 || found[0] != defaultReferenceImage {
+			t.Errorf("%s: %q lines %q, want exactly one with %q", c.file, c.prefix, found, defaultReferenceImage)
+		}
 	}
 }

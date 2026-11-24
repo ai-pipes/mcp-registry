@@ -3,7 +3,7 @@ GO_ARCH_LINT := github.com/fe3dback/go-arch-lint@v1.19.2
 GOFUMPT := mvdan.cc/gofumpt@v0.12.0
 VERSION := $(shell node -p "require('./apps/server/package.json').version")
 
-.PHONY: native-libs native-model go-test-onnx go-test-onnx-parity go-vet-onnx go-lint-onnx go-verify-onnx compat compat-selfcheck compat-schemas compat-image-ts compat-image-go compat-go e2e-flows e2e-flows-go go-lint go-lint-new go-fmt-check go-arch-lint go-verify go-test-int go-build print-go-arch-lint print-golangci-lint
+.PHONY: native-libs native-model go-test-onnx go-test-onnx-parity go-vet-onnx go-lint-onnx go-verify-onnx compat compat-selfcheck compat-schemas compat-reference print-reference-image compat-image-ts compat-image-go compat-go e2e-flows e2e-flows-go go-lint go-lint-new go-fmt-check go-arch-lint go-verify go-test-int go-build print-go-arch-lint print-golangci-lint
 
 go-lint:
 	go run $(GOLANGCI_LINT) run
@@ -41,7 +41,7 @@ go-verify: go-lint go-arch-lint
 	go test -tags "compat e2e" -count=1 -run '^(TestControl(Refuses|Echo)|TestPlaywrightArgs)' ./compat/e2e/
 	# Docker-free tests of the suite itself (none boots a stack; they pass with the Docker socket
 	# unreachable). A test that needs no Docker is added here by name.
-	go test -tags compat -count=1 -run '^(TestAppArgsPublishTheContainerPortAndKeepFileContentOffTheCommandLine|TestAppEnvReadsTheEnvironment|TestCheckUpdate|TestCheckUpdateAllowedReadsTheEnvironment|TestCLIResultStringMasksTokensAndLinkCodes|TestDefaultImageAndCLIFollowTheEnvironment|TestDoChunkedExpectingEarlyRefusalSendsNoContentLength|TestDoExpectingEarlyRefusalReturnsTheAnswerWhateverHappenedToTheWrite|TestErrorNamesSchemaAndPath|TestEveryContractHasASchema|TestEveryDeviationHasADescriptionAndIsUsedByAScenario|TestFinishSavesTheLogOnlyForAFailedTest|TestFixedFollowsTheEnvironment|TestListSuffixAndUnknownName|TestLogFileName|TestLoopbackHostResolution|TestOneOffCLIContainerNeverPutsAValueOnTheCommandLine|TestOtherFormatsAreAsserted|TestParseAppEnv|TestParseFixed|TestPortTakenRecognisesDockersMessages|TestPublicHostAndExtraHostsReachTheContainerArguments|TestRedactTruncates|TestResponseDecode|TestSaveLogDoesNothingWithoutADirectory|TestSchemaRejectsExtraAndMissingFields|TestScrubRemovesCredentialShapes|TestScrubRemovesTheContentOfSecretFiles|TestSecretValuesListTheBareDatabasePasswordToo|TestServerViewWithSecretFieldIsRejected|TestUpdateRefusesNonReferenceImage|TestURLFormatsAreAsserted|TestWriteLogScrubsAndCreatesTheDirectory)$$' ./compat/harness/
+	go test -tags compat -count=1 -run '^(TestAppArgsPublishTheContainerPortAndKeepFileContentOffTheCommandLine|TestAppEnvReadsTheEnvironment|TestCheckUpdate|TestCheckUpdateAllowedReadsTheEnvironment|TestCLIResultStringMasksTokensAndLinkCodes|TestDefaultImageAndCLIFollowTheEnvironment|TestDoChunkedExpectingEarlyRefusalSendsNoContentLength|TestDoExpectingEarlyRefusalReturnsTheAnswerWhateverHappenedToTheWrite|TestErrorNamesSchemaAndPath|TestEveryContractHasASchema|TestEveryDeviationHasADescriptionAndIsUsedByAScenario|TestFinishSavesTheLogOnlyForAFailedTest|TestFixedFollowsTheEnvironment|TestListSuffixAndUnknownName|TestLogFileName|TestLoopbackHostResolution|TestOneOffCLIContainerNeverPutsAValueOnTheCommandLine|TestOtherFormatsAreAsserted|TestParseAppEnv|TestParseFixed|TestPortTakenRecognisesDockersMessages|TestPublicHostAndExtraHostsReachTheContainerArguments|TestRedactTruncates|TestReferenceImageFollowsItsVariable|TestResponseDecode|TestSaveLogDoesNothingWithoutADirectory|TestSchemaRejectsExtraAndMissingFields|TestScrubRemovesCredentialShapes|TestScrubRemovesTheContentOfSecretFiles|TestSecretValuesListTheBareDatabasePasswordToo|TestServerViewWithSecretFieldIsRejected|TestTheReferenceIsPinnedByDigestTheSameEverywhere|TestUpdateRefusesNonReferenceImage|TestURLFormatsAreAsserted|TestWriteLogScrubsAndCreatesTheDirectory)$$' ./compat/harness/
 	go test -tags compat -count=1 -run '^(TestAuditPagingProblem|TestCreateServerSyncFailureProblem|TestMCPReaderIsLenient|TestRetryAfterProblem|TestSearchReadyProblem|TestToolFixtureCopiesEqualTheOriginals)$$' ./compat/
 	go test ./...
 	$(MAKE) go-test-int
@@ -58,6 +58,26 @@ go-test-int:
 compat-schemas:
 	node --experimental-strip-types packages/contracts/scripts/export-json-schema.mjs compat/schemas
 
+# The reference implementation the suite compares with (vectors, rankings, the database hand-over,
+# the goldens, the embedder parity run, the self-check base): the published TypeScript image 1.0.1,
+# pinned by the digest of its multi-arch index (linux/amd64, linux/arm64). The harness's
+# defaultReferenceImage (compat/harness/stack.go) and compat/selfcheck/Dockerfile hold the same
+# value; a Docker-free test keeps the three equal. compat-reference pulls it anonymously and checks
+# that the local image carries that digest. The suite with the reference as the image under test:
+#   make compat COMPAT_IMAGE="$$(make -s print-reference-image)"
+REFERENCE_IMAGE := ghcr.io/ai-pipes/mcp-registry:1.0.1@sha256:42726e227e5c2522b35c28c41e1feb6ceb8471ba3447ec5399a6c0559a72baf9
+REFERENCE_REPO := $(firstword $(subst :, ,$(REFERENCE_IMAGE)))
+REFERENCE_DIGEST := $(lastword $(subst @, ,$(REFERENCE_IMAGE)))
+
+compat-reference:
+	docker pull -q $(REFERENCE_IMAGE)
+	@docker image inspect -f '{{range .RepoDigests}}{{println .}}{{end}}' $(REFERENCE_IMAGE) | grep -qx '$(REFERENCE_REPO)@$(REFERENCE_DIGEST)' || \
+		{ echo "compat-reference: the local image does not carry $(REFERENCE_REPO)@$(REFERENCE_DIGEST)"; exit 1; }
+
+print-reference-image:
+	@echo $(REFERENCE_IMAGE)
+
+# The TypeScript image built from this tree (the default image under test until the switchover).
 compat-image-ts:
 	docker build -t mcp-registry:compat-ts .
 
@@ -148,13 +168,14 @@ COMPAT_GO_RUN := ^($(subst $(space),|,$(strip $(COMPAT_GO_TESTS))))$$
 # after a start). All twelve.
 COMPAT_GO_FIXED := config-errors,audit-login-via,create-user-keeps-role,oidc-binding-kept,create-server-sync-exit,reindex-wording,vector-kept-on-failed-reembedding,stale-removal-rechecks-catalog,oauth-state-kept,request-id-on-refusals,token-429-retry-after,ready-before-serving
 
-# The suite against the Go image. The reference image (mcp-registry:compat-ts) must exist as well:
-# some scenarios compare with it on the same machine, and the new-database scenario starts from it.
+# The suite against the Go image. The reference image (REFERENCE_IMAGE, make compat-reference) must
+# exist as well: some scenarios compare with it on the same machine, and the new-database scenario
+# starts from it.
 # Before it runs, the pattern is
 # listed (nothing is started): it must match exactly the scenarios named in COMPAT_GO_TESTS, so a
 # renamed or mistyped scenario fails here instead of passing by running nothing.
 compat-go:
-	@docker image inspect mcp-registry:compat-ts >/dev/null 2>&1 || { echo "compat-go: the reference image mcp-registry:compat-ts is missing: run make compat-image-ts"; exit 1; }
+	@docker image inspect $(REFERENCE_IMAGE) >/dev/null 2>&1 || { echo "compat-go: the reference image $(REFERENCE_IMAGE) is missing: run make compat-reference"; exit 1; }
 	@docker image inspect mcp-registry:compat-go >/dev/null 2>&1 || { echo "compat-go: the image mcp-registry:compat-go is missing: run make compat-image-go"; exit 1; }
 	@listed="$$(go test -tags compat -count=1 -list '$(COMPAT_GO_RUN)' ./compat/ | grep -c '^Test')"; \
 	if [ "$$listed" != "$(words $(COMPAT_GO_TESTS))" ]; then \
@@ -184,8 +205,7 @@ compat:
 e2e-flows:
 	go test -tags "compat e2e" -count=1 -timeout 30m -v -run '^(TestBrowserFlows|TestControl)' ./compat/e2e/
 
-# All twelve browser flows against the Go image (build it with compat-image-go; the reference image
-# must exist too, as for compat-go): identity, the catalog, connections, and since milestone 6 the
+# All twelve browser flows against the Go image (build it with compat-image-go): identity, the catalog, connections, and since milestone 6 the
 # token on /mcp (03-tokens) and a call through /mcp with the call log (09-permissions).
 # TestControlOperationsAgainstARealStack is not run: the control API's tests are image independent and
 # run in e2e-flows. Same guard, same specs: the arguments go through E2E_PLAYWRIGHT_ARGS, which refuses
@@ -201,10 +221,11 @@ e2e-flows-go:
 		E2E_PLAYWRIGHT_ARGS='$(E2E_GO_SPECS)' \
 		go test -tags "compat e2e" -count=1 -timeout 30m -v -run '^TestBrowserFlows$$' ./compat/e2e/
 
-# Proves the suite can fail: runs named scenarios against the reference image behind a distorting
-# proxy (compat/selfcheck). Slow; CI runs it daily (compat-selfcheck.yml), not on pull requests.
-compat-selfcheck: compat-image-ts
-	go test -tags "compat selfcheck" -count=1 -timeout 90m -v ./compat/selfcheck/
+# Proves the suite can fail: runs named scenarios against the reference image (the published 1.0.1,
+# REFERENCE_IMAGE) behind a distorting proxy (compat/selfcheck). Slow; CI runs it daily
+# (compat-selfcheck.yml), not on pull requests.
+compat-selfcheck: compat-reference
+	SELFCHECK_BASE=$(REFERENCE_IMAGE) go test -tags "compat selfcheck" -count=1 -timeout 90m -v ./compat/selfcheck/
 
 go-build:
 	go build -ldflags "-X main.version=$(VERSION)" -o bin/mcp-registry ./cmd/mcp-registry
@@ -251,8 +272,8 @@ go-test-onnx: native-libs native-model
 
 go-verify-onnx: go-vet-onnx go-lint-onnx go-test-onnx
 
-# Vector parity with the reference, linux containers only: the reference image (mcp-registry:compat-ts)
-# makes the vectors of the committed texts with Node (--network none), then the tagged test runs in a
+# Vector parity with the reference, linux containers only: the reference image (REFERENCE_IMAGE,
+# make compat-reference) makes the vectors of the committed texts with Node (--network none), then the tagged test runs in a
 # golang container of the same architecture with the linux native libraries, so both sides run the
 # same ONNX Runtime build on the same machine. Vectors depend on the CPU, so they are never committed.
 PARITY_DIR := $(abspath $(NATIVE_ROOT))/parity
@@ -269,12 +290,12 @@ ONNX_GEN := /repo/internal/modules/search/infra/onnx/testdata
 PARITY_GO_IMAGE := golang:1.27-bookworm@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea
 
 go-test-onnx-parity:
-	@docker image inspect mcp-registry:compat-ts >/dev/null 2>&1 || { echo "go-test-onnx-parity: the reference image mcp-registry:compat-ts is missing; build it with: make compat-image-ts"; exit 1; }
+	@docker image inspect $(REFERENCE_IMAGE) >/dev/null 2>&1 || { echo "go-test-onnx-parity: the reference image $(REFERENCE_IMAGE) is missing; pull it with: make compat-reference"; exit 1; }
 	$(MAKE) native-libs NATIVE_PLATFORM=$(PARITY_LINUX)
 	$(MAKE) native-model
 	mkdir -p $(PARITY_DIR)
 	rm -f $(PARITY_DIR)/node-vectors.json $(PARITY_DIR)/go-test.log
-	docker run --rm --network none --user "$$(id -u):$$(id -g)" -e HOME=/tmp -v "$(CURDIR)":/repo:ro -v "$(PARITY_DIR)":/out mcp-registry:compat-ts \
+	docker run --rm --network none --user "$$(id -u):$$(id -g)" -e HOME=/tmp -v "$(CURDIR)":/repo:ro -v "$(PARITY_DIR)":/out $(REFERENCE_IMAGE) \
 		node $(ONNX_GEN)/gen/vectors.mjs /app/apps/server/node_modules/@huggingface/transformers/dist/transformers.node.mjs \
 		/app/models $(ONNX_GEN)/reference.json /out/node-vectors.json
 	docker run --rm --network none -v "$(CURDIR)":/src:ro -v "$$(go env GOMODCACHE)":/gomod:ro -v "$(PARITY_DIR)":/out:ro \

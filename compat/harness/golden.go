@@ -15,12 +15,13 @@ import (
 
 var update = flag.Bool("update", false, "rewrite golden files (only with COMPAT_REFERENCE=1)")
 
-// referenceImageVar names the image CI declares as the reference when it is not the built-in
-// default (a differently tagged build of the TypeScript image).
+// referenceImageVar names another reference image than the built-in default (the published 1.0.1
+// pinned by digest), e.g. a differently tagged build of the TypeScript image.
 const referenceImageVar = "COMPAT_REFERENCE_IMAGE"
 
 // CheckUpdateAllowed refuses -update unless COMPAT_REFERENCE=1 AND the image under test (see
-// DefaultImage) is the reference image: the built-in default tag, or exactly the value of
+// DefaultImage) is the reference image: the built-in default reference (the published 1.0.1 pinned
+// by digest, which is not the default image under test), or exactly the value of
 // COMPAT_REFERENCE_IMAGE when that is set. Without the second condition `COMPAT_IMAGE=<go image>
 // make compat` with -update would rewrite the goldens from the server they are meant to judge.
 func CheckUpdateAllowed(update bool) error {
@@ -35,7 +36,7 @@ func checkUpdate(update bool, reference, referenceImage, image string) error {
 	if reference != "1" {
 		return errors.New("-update needs COMPAT_REFERENCE=1: golden files come only from the reference image")
 	}
-	want := defaultImage
+	want := defaultReferenceImage
 	if referenceImage != "" {
 		want = referenceImage
 	}

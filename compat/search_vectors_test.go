@@ -9,7 +9,7 @@ package compat_test
 //
 // The reference is produced at test time, on the same host: compat/golden/gen-embeddings.mjs runs
 // @huggingface/transformers directly (not the server's code) inside a container of the REFERENCE
-// image (harness.ReferenceImage: COMPAT_REFERENCE_IMAGE, else the built-in default tag), which holds
+// image (harness.ReferenceImage: COMPAT_REFERENCE_IMAGE, else the published 1.0.1 pinned by digest), which holds
 // Node, the library and the baked-in model; the container has no network. No vectors are committed:
 // the q8 model's vectors differ between CPUs of the same architecture by up to about 0.015 (found
 // when goldens recorded on an Apple Silicon Mac failed on the GitHub arm64 runner: 39 of 84 vectors

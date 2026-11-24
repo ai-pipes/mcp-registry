@@ -291,13 +291,15 @@ func TestCheckUpdate(t *testing.T) {
 		wantErr                          string // "" = allowed
 	}{
 		{"no update needs nothing", false, "", "", "go-image:1", ""},
-		{"update without the reference flag", true, "", "", defaultImage, "COMPAT_REFERENCE=1"},
-		{"update of the default image", true, "1", "", defaultImage, ""},
-		{"update of another image with only the flag", true, "1", "", "go-image:1", "reference image is \"" + defaultImage + "\""},
+		{"update without the reference flag", true, "", "", defaultReferenceImage, "COMPAT_REFERENCE=1"},
+		{"update of the default reference", true, "1", "", defaultReferenceImage, ""},
+		{"the default image under test is not the reference", true, "1", "", defaultImage, "reference image is \"" + defaultReferenceImage + "\""},
+		{"the reference by tag alone is not the pinned one", true, "1", "", "ghcr.io/ai-pipes/mcp-registry:1.0.1", "reference image is \"" + defaultReferenceImage + "\""},
+		{"update of another image with only the flag", true, "1", "", "go-image:1", "reference image is \"" + defaultReferenceImage + "\""},
 		{"update of the named reference image", true, "1", "ts-ref:7", "ts-ref:7", ""},
-		{"the default is not the reference once another is named", true, "1", "ts-ref:7", defaultImage, "reference image is \"ts-ref:7\""},
+		{"the default is not the reference once another is named", true, "1", "ts-ref:7", defaultReferenceImage, "reference image is \"ts-ref:7\""},
 		{"another image than the named one", true, "1", "ts-ref:7", "go-image:1", "reference image is \"ts-ref:7\""},
-		{"the flag must be exactly 1", true, "true", "", defaultImage, "COMPAT_REFERENCE=1"},
+		{"the flag must be exactly 1", true, "true", "", defaultReferenceImage, "COMPAT_REFERENCE=1"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -316,8 +318,12 @@ func TestCheckUpdateAllowedReadsTheEnvironment(t *testing.T) {
 	t.Setenv("COMPAT_REFERENCE", "1")
 	t.Setenv("COMPAT_REFERENCE_IMAGE", "")
 	t.Setenv("COMPAT_IMAGE", "")
+	if err := CheckUpdateAllowed(true); err == nil {
+		t.Fatal("-update was allowed against the default image under test, which is not the reference")
+	}
+	t.Setenv("COMPAT_IMAGE", defaultReferenceImage)
 	if err := CheckUpdateAllowed(true); err != nil {
-		t.Fatalf("the default image: %v", err)
+		t.Fatalf("the default reference under test: %v", err)
 	}
 	t.Setenv("COMPAT_IMAGE", "go-image:1")
 	if err := CheckUpdateAllowed(true); err == nil {

@@ -12,21 +12,23 @@ import (
 )
 
 // ReferenceImage is the reference implementation the suite compares the image under test with on
-// the same machine: COMPAT_REFERENCE_IMAGE when set, else the built-in default tag (the same notion
-// the -update guard uses). It may be the image under test itself.
-func ReferenceImage() string { return envOr(referenceImageVar, defaultImage) }
+// the same machine: COMPAT_REFERENCE_IMAGE when set, else the published 1.0.1 pinned by digest
+// (defaultReferenceImage; the same notion the -update guard uses). It may be the image under test
+// itself.
+func ReferenceImage() string { return envOr(referenceImageVar, defaultReferenceImage) }
 
 // ReferenceCLI is the invocation prefix of the reference image's CLI. The reference is always the
 // TypeScript image, whatever COMPAT_CLI says about the image under test.
-func ReferenceCLI() string { return defaultCLI }
+func ReferenceCLI() string { return referenceCLI }
 
 // RequireReferenceImage fails the test with a clear message when the reference image is not in the
-// local Docker image store. Nothing is pulled: the reference is built by `make compat-image-ts`.
+// local Docker image store. Nothing is pulled here: `make compat-reference` pulls the published
+// reference and checks its digest.
 func RequireReferenceImage(t *testing.T) string {
 	t.Helper()
 	image := ReferenceImage()
 	if _, err := dockerErr("image", "inspect", "-f", "{{.Id}}", image); err != nil {
-		t.Fatalf("the reference image %q is not present locally (%v): build it with `make compat-image-ts`, or name another one in COMPAT_REFERENCE_IMAGE; vectors and rankings are compared with the reference image on the same machine", image, err)
+		t.Fatalf("the reference image %q is not present locally (%v): pull it with `make compat-reference`, or name another one in COMPAT_REFERENCE_IMAGE; vectors and rankings are compared with the reference image on the same machine", image, err)
 	}
 	return image
 }
