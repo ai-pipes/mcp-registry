@@ -298,7 +298,7 @@ func TestSyncCredentialsMapConnectionsAnswersToTheCatalogsFailures(t *testing.T)
 		res  connections.CredentialResult
 		want catalog.PersonalCredential
 	}{
-		{"a secret", connections.CredentialResult{Secret: "tok"}, catalog.PersonalCredential{Secret: "tok"}},
+		{"a secret", connections.CredentialResult{Secret: kernel.NewSecret("tok")}, catalog.PersonalCredential{Secret: "tok"}},
 		{"needs_connection", connections.CredentialResult{Failure: connections.FailureNeedsConnection}, catalog.PersonalCredential{Failure: catalog.CredentialNeedsConnection}},
 		{"expired", connections.CredentialResult{Failure: connections.FailureExpired}, catalog.PersonalCredential{Failure: catalog.CredentialExpired}},
 		{"unavailable", connections.CredentialResult{Failure: connections.FailureUnavailable}, catalog.PersonalCredential{Failure: catalog.CredentialUnavailable}},

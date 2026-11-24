@@ -194,8 +194,8 @@ func (c *Client) run(parent context.Context, t kernel.UpstreamTarget, fn func(*s
 	return nil
 }
 
-func maps(h map[string]string) map[string]string {
-	out := make(map[string]string, len(h))
+func maps(h kernel.UpstreamHeaders) kernel.UpstreamHeaders {
+	out := make(kernel.UpstreamHeaders, len(h))
 	for k, v := range h {
 		out[k] = v
 	}

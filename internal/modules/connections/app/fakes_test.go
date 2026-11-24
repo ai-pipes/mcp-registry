@@ -180,7 +180,7 @@ func mustSeal(t testing.TB, b kernel.SecretBox, plain string) domain.Sealed {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return domain.Sealed(s)
+	return domain.NewSealed(s)
 }
 
 // fakeStore keeps snapshots like a database: WithLock holds one mutex per key while the callback
@@ -342,7 +342,7 @@ func (p *fakePending) Insert(c context.Context, pc domain.PendingConnect) error 
 	p.j.add("pending.insert")
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.m[pc.State()] = pc
+	p.m[pc.State().Reveal()] = pc
 	return nil
 }
 
@@ -512,8 +512,8 @@ type exchangeCall struct {
 func newOAuth(j *journal, v *violations) *fakeOAuth {
 	return &fakeOAuth{
 		j: j, v: v,
-		next:        app.TokenSet{AccessToken: "A-new", RefreshToken: "R-new"},
-		exchangeOut: app.TokenSet{AccessToken: "A1", RefreshToken: "R1"},
+		next:        app.TokenSet{AccessToken: kernel.NewSecret("A-new"), RefreshToken: kernel.NewSecret("R-new")},
+		exchangeOut: app.TokenSet{AccessToken: kernel.NewSecret("A1"), RefreshToken: kernel.NewSecret("R1")},
 	}
 }
 
@@ -521,7 +521,7 @@ func (o *fakeOAuth) AuthorizeURL(_ catalog.OAuthClientConfig, in app.AuthorizeIn
 	if o.authErr != nil {
 		return "", o.authErr
 	}
-	return "https://idp.example.com/authorize?state=" + in.State + "&code_challenge=" + in.CodeChallenge + "&redirect_uri=" + in.RedirectURI, nil
+	return "https://idp.example.com/authorize?state=" + in.State.Reveal() + "&code_challenge=" + in.CodeChallenge + "&redirect_uri=" + in.RedirectURI, nil
 }
 
 func (o *fakeOAuth) ExchangeCode(c context.Context, _ catalog.OAuthClientConfig, secret app.ClientSecret, in app.ExchangeInput) (app.TokenSet, error) {
@@ -529,7 +529,7 @@ func (o *fakeOAuth) ExchangeCode(c context.Context, _ catalog.OAuthClientConfig,
 	o.j.add("oauth.exchange")
 	sv, set := secret.Value()
 	o.mu.Lock()
-	o.exchangeCalls = append(o.exchangeCalls, exchangeCall{in.Code, in.CodeVerifier, in.RedirectURI, sv, set})
+	o.exchangeCalls = append(o.exchangeCalls, exchangeCall{in.Code.Reveal(), in.CodeVerifier.Reveal(), in.RedirectURI, sv, set})
 	err, out := o.exchangeErr, o.exchangeOut
 	o.mu.Unlock()
 	if err != nil {
@@ -538,7 +538,8 @@ func (o *fakeOAuth) ExchangeCode(c context.Context, _ catalog.OAuthClientConfig,
 	return out, nil
 }
 
-func (o *fakeOAuth) Refresh(c context.Context, _ catalog.OAuthClientConfig, secret app.ClientSecret, refreshToken string) (app.TokenSet, error) {
+func (o *fakeOAuth) Refresh(c context.Context, _ catalog.OAuthClientConfig, secret app.ClientSecret, refresh kernel.Secret) (app.TokenSet, error) {
+	refreshToken := refresh.Reveal()
 	// The provider call is the one thing allowed under the lock: not a violation.
 	o.j.add("oauth.refresh")
 	sv, set := secret.Value()
@@ -563,7 +564,8 @@ func (o *fakeOAuth) Refresh(c context.Context, _ catalog.OAuthClientConfig, secr
 	return next, nil
 }
 
-func (o *fakeOAuth) Revoke(c context.Context, cfg catalog.OAuthClientConfig, secret app.ClientSecret, token string) error {
+func (o *fakeOAuth) Revoke(c context.Context, cfg catalog.OAuthClientConfig, secret app.ClientSecret, revoked kernel.Secret) error {
+	token := revoked.Reveal()
 	o.v.check(c, "oauth.revoke")
 	o.j.add("oauth.revoke")
 	sv, _ := secret.Value()
@@ -849,7 +851,7 @@ func (h *harness) connect(p identity.Principal, server string) {
 	if err != nil {
 		h.t.Fatal(err)
 	}
-	if _, err := app.CompleteConnect(ctx, h.d, app.CompleteConnectCommand{Principal: p, State: stateOf(url), Code: "the-code"}); err != nil {
+	if _, err := app.CompleteConnect(ctx, h.d, app.CompleteConnectCommand{Principal: p, State: kernel.NewSecret(stateOf(url)), Code: kernel.NewSecret("the-code")}); err != nil {
 		h.t.Fatal(err)
 	}
 }

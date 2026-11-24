@@ -25,17 +25,17 @@ func TestReseal(t *testing.T) {
 	sNew, _ := newB.Seal("secret")
 	sOther, _ := fakeBox{"zzz"}.Seal("secret")
 
-	if o := kernel.Reseal(sNew, oldB, newB); o.Kind != "current" || o.Sealed != nil {
+	if o := kernel.Reseal(sNew, oldB, newB); o.Kind != "current" || o.Sealed.IsSet() {
 		t.Fatalf("current: %+v", o)
 	}
 	o := kernel.Reseal(sOld, oldB, newB)
 	if o.Kind != "resealed" {
 		t.Fatalf("resealed: %+v", o)
 	}
-	if p, err := newB.Open(o.Sealed); err != nil || p != "secret" {
+	if p, err := newB.Open(o.Sealed.Reveal()); err != nil || p != "secret" {
 		t.Fatalf("new key opens result: %q %v", p, err)
 	}
-	if o := kernel.Reseal(sOther, oldB, newB); o.Kind != "unreadable" || o.Sealed != nil {
+	if o := kernel.Reseal(sOther, oldB, newB); o.Kind != "unreadable" || o.Sealed.IsSet() {
 		t.Fatalf("unreadable: %+v", o)
 	}
 }
@@ -46,7 +46,7 @@ func (failingSeal) Seal(string) ([]byte, error) { return nil, errors.New("seal f
 
 func TestResealSealFailureIsUnreadable(t *testing.T) {
 	sOld, _ := fakeBox{"old"}.Seal("secret")
-	if o := kernel.Reseal(sOld, fakeBox{"old"}, failingSeal{fakeBox{"new"}}); o.Kind != "unreadable" || o.Sealed != nil {
+	if o := kernel.Reseal(sOld, fakeBox{"old"}, failingSeal{fakeBox{"new"}}); o.Kind != "unreadable" || o.Sealed.IsSet() {
 		t.Fatalf("got %+v", o)
 	}
 }

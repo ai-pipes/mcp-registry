@@ -142,6 +142,8 @@ func (h *handlers) start(w http.ResponseWriter, r *http.Request) {
 	}{u})
 }
 
+// patRequest is the wire form of the body (a decoding DTO): the token is wrapped into a
+// kernel.Secret as soon as it is validated, and the DTO is never kept or printed.
 type patRequest struct {
 	Token *string `json:"token"`
 }
@@ -168,7 +170,7 @@ func (h *handlers) savePAT(w http.ResponseWriter, r *http.Request) {
 		notFound(w, slug)
 		return
 	}
-	if err := app.SavePAT(detached(r), h.d, app.SavePATCommand{Principal: p, Server: slug, Token: token}); err != nil {
+	if err := app.SavePAT(detached(r), h.d, app.SavePATCommand{Principal: p, Server: slug, Token: kernel.NewSecret(token)}); err != nil {
 		httpx.WriteDomainError(w, r, err)
 		return
 	}
@@ -235,7 +237,7 @@ func (h *handlers) callback(w http.ResponseWriter, r *http.Request) {
 		toPage(w, "error=invalid_state")
 		return
 	}
-	res, err := app.CompleteConnect(detached(r), h.d, app.CompleteConnectCommand{Principal: p, State: state, Code: code})
+	res, err := app.CompleteConnect(detached(r), h.d, app.CompleteConnectCommand{Principal: p, State: kernel.NewSecret(state), Code: kernel.NewSecret(code)})
 	if err != nil {
 		if de, isDomain := kernel.AsDomainError(err); isDomain {
 			// An unknown code is exchange_failed, as in the reference.

@@ -18,11 +18,12 @@ type Principal = identity.Principal
 
 const redacted = "[redacted]"
 
-// TokenSet is what the OAuth provider gave back: raw tokens, so it prints redacted on every path.
-// RefreshToken is empty when the provider sent none; ExpiresAt is nil when it did not say.
+// TokenSet is what the OAuth provider gave back: raw tokens, so it prints redacted on every path,
+// and each token is a kernel.Secret, so it prints nothing however it is held. RefreshToken is
+// unset (or empty) when the provider sent none; ExpiresAt is nil when it did not say.
 type TokenSet struct {
-	AccessToken  string
-	RefreshToken string
+	AccessToken  kernel.Secret
+	RefreshToken kernel.Secret
 	ExpiresAt    *time.Time
 }
 
@@ -48,17 +49,15 @@ func (TokenSet) MarshalText() ([]byte, error) { return []byte(redacted), nil }
 var redactedJSON = []byte(`"` + redacted + `"`)
 
 // ClientSecret is the OAuth client secret of a server. The zero value is a public client (none).
-// It prints redacted on every path; read it with Value.
-type ClientSecret struct {
-	value string
-	set   bool
-}
+// It prints redacted on every path, however it is held (the value is a kernel.Secret); read it
+// with Value.
+type ClientSecret struct{ value kernel.Secret }
 
 // NewClientSecret is a client secret (a public client is the zero value, not an empty secret).
-func NewClientSecret(v string) ClientSecret { return ClientSecret{value: v, set: true} }
+func NewClientSecret(v string) ClientSecret { return ClientSecret{value: kernel.NewSecret(v)} }
 
 // Value is the secret and whether there is one.
-func (s ClientSecret) Value() (string, bool) { return s.value, s.set }
+func (s ClientSecret) Value() (string, bool) { return s.value.Reveal(), s.value.IsSet() }
 
 // String is "[redacted]".
 func (ClientSecret) String() string { return redacted }
@@ -79,10 +78,11 @@ func (ClientSecret) MarshalJSON() ([]byte, error) { return redactedJSON, nil }
 func (ClientSecret) MarshalText() ([]byte, error) { return []byte(redacted), nil }
 
 // AuthorizeInput is what AuthorizeURL needs besides the server's OAuth configuration. State is a
-// secret (it is the one-time proof of the callback), so it prints redacted.
+// secret (it is the one-time proof of the callback), so it prints redacted and is a
+// kernel.Secret. The challenge is public (it travels in the URL).
 type AuthorizeInput struct {
 	RedirectURI   string
-	State         string
+	State         kernel.Secret
 	CodeChallenge string
 }
 
@@ -105,8 +105,8 @@ func (AuthorizeInput) MarshalText() ([]byte, error) { return []byte(redacted), n
 // ExchangeInput is the code exchange of the callback. Code and CodeVerifier are secrets, so it
 // prints redacted. RedirectURI is exactly the one sent with the authorize request.
 type ExchangeInput struct {
-	Code         string
-	CodeVerifier string
+	Code         kernel.Secret
+	CodeVerifier kernel.Secret
 	RedirectURI  string
 }
 
@@ -155,10 +155,10 @@ type OAuthClient interface {
 	// ExchangeCode swaps the code for tokens. Any error means the provider did not authorise.
 	ExchangeCode(ctx context.Context, cfg catalog.OAuthClientConfig, secret ClientSecret, in ExchangeInput) (TokenSet, error)
 	// Refresh returns *TokenEndpointError for an error answer, any other error for no answer.
-	Refresh(ctx context.Context, cfg catalog.OAuthClientConfig, secret ClientSecret, refreshToken string) (TokenSet, error)
+	Refresh(ctx context.Context, cfg catalog.OAuthClientConfig, secret ClientSecret, refreshToken kernel.Secret) (TokenSet, error)
 	// Revoke is RFC 7009; it is only called when the connection may be revoked at the server's
 	// revoke URL. An error is ignored by the caller.
-	Revoke(ctx context.Context, cfg catalog.OAuthClientConfig, secret ClientSecret, token string) error
+	Revoke(ctx context.Context, cfg catalog.OAuthClientConfig, secret ClientSecret, token kernel.Secret) error
 }
 
 // ServerConfig is an active server's configuration as far as personal credentials care. No secret.

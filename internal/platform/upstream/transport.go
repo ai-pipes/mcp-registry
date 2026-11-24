@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"sort"
 	"sync/atomic"
+
+	"github.com/ai-pipes/mcp-registry/internal/kernel"
 )
 
 // operation is the state of one upstream operation: its deadline, what the HTTP layer saw and the
@@ -13,7 +15,7 @@ import (
 type operation struct {
 	ctx     context.Context // the operation's deadline; cancelled when the byte limit is passed
 	cancel  context.CancelFunc
-	headers map[string]string
+	headers kernel.UpstreamHeaders
 	limit   int64
 
 	bytes        atomic.Int64
@@ -71,7 +73,7 @@ func (g *guard) RoundTrip(req *http.Request) (*http.Response, error) {
 	sort.Strings(keys) // names that differ only in case: the same winner every time
 	for _, k := range keys {
 		if !protocolHeaders[http.CanonicalHeaderKey(k)] {
-			r.Header.Set(k, op.headers[k])
+			r.Header.Set(k, op.headers[k].Reveal())
 		}
 	}
 	if pv := op.protocol.Load(); pv != nil {

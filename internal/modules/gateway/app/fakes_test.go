@@ -333,7 +333,7 @@ var epoch = time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
 func newHarness() *harness {
 	h := &harness{
 		cat:   &fakeCatalog{tools: map[string]catalog.ToolView{}, servers: map[string]*catalog.ServerCallTarget{}, secrets: map[string]string{}},
-		creds: &fakeCreds{results: []connections.CredentialResult{{Secret: "tok-1"}}},
+		creds: &fakeCreds{results: []connections.CredentialResult{{Secret: kernel.NewSecret("tok-1")}}},
 		val:   &fakeValidator{},
 		log:   &fakeLog{},
 		quota: &fakeQuota{},

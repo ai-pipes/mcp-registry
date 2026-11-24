@@ -197,7 +197,7 @@ func secretFor(ctx context.Context, d Deps, server *catalog.ServerCallTarget, us
 		return "", nil, err
 	}
 	if r.Ok() {
-		return r.Secret, nil, nil
+		return r.Secret.Reveal(), nil, nil
 	}
 	e, err := credentialFailure(d, server, domain.CredentialFailure(r.Failure))
 	return "", &e, err
@@ -228,7 +228,7 @@ func publicURL(d Deps) string { return strings.TrimRight(d.PublicURL, "/") }
 func attempt(ctx context.Context, d Deps, server *catalog.ServerCallTarget, tool string, args json.RawMessage, secret string) (res ended, unauthorized bool, err error) {
 	target := kernel.UpstreamTarget{
 		URL:              server.URL,
-		Headers:          catalog.HeaderFor(server.Auth, secret),
+		Headers:          catalog.HeaderFor(server.Auth, kernel.NewSecret(secret)),
 		Timeout:          time.Duration(server.TimeoutMs) * time.Millisecond,
 		MaxResponseBytes: d.MaxResponseBytes,
 	}

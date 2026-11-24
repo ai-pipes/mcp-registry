@@ -80,7 +80,7 @@ func (c *lateSyncCredentials) PersonalSecret(ctx context.Context, server catalog
 	}
 	switch res.Failure {
 	case "":
-		return catalog.PersonalCredential{Secret: res.Secret}, nil
+		return catalog.PersonalCredential{Secret: res.Secret.Reveal()}, nil
 	case connections.FailureNeedsConnection:
 		return catalog.PersonalCredential{Failure: catalog.CredentialNeedsConnection}, nil
 	case connections.FailureExpired:

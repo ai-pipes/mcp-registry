@@ -51,10 +51,8 @@ func scanConnection(row pgx.Row) (*domain.Connection, error) {
 		return nil, err
 	}
 	s.Kind, s.Status = domain.Kind(kind), domain.Status(status)
-	s.Access = domain.Sealed(access)
-	if len(refresh) > 0 {
-		s.Refresh = domain.Sealed(refresh)
-	}
+	s.Access = domain.NewSealed(access)
+	s.Refresh = domain.NewSealed(refresh) // none when NULL or empty
 	s.ExpiresAt, s.RevokeURL, s.UpdatedAt = msPtr(expires), revokeURL, ms(updated)
 	return domain.Restore(s), nil
 }
@@ -71,8 +69,8 @@ const upsertSQL = `insert into connections.connections
 func upsert(ctx context.Context, tx pgx.Tx, c *domain.Connection) error {
 	s := c.Snapshot()
 	var refresh any // NULL, never an empty bytea
-	if len(s.Refresh) > 0 {
-		refresh = []byte(s.Refresh)
+	if !s.Refresh.IsEmpty() {
+		refresh = s.Refresh.Bytes()
 	}
 	var expires any
 	if e := msPtr(s.ExpiresAt); e != nil {
@@ -82,7 +80,7 @@ func upsert(ctx context.Context, tx pgx.Tx, c *domain.Connection) error {
 	if s.RevokeURL != nil {
 		revoke = *s.RevokeURL
 	}
-	_, err := tx.Exec(ctx, upsertSQL, s.UserID, s.Server, string(s.Kind), []byte(s.Access), refresh, expires,
+	_, err := tx.Exec(ctx, upsertSQL, s.UserID, s.Server, string(s.Kind), s.Access.Bytes(), refresh, expires,
 		string(s.Status), s.IssuedFor, revoke, ms(s.UpdatedAt))
 	return err
 }

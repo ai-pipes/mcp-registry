@@ -41,7 +41,7 @@ func ResealServerSecrets(ctx context.Context, servers ServerRepository, from, to
 				summary.Failed = append(summary.Failed, slug)
 				break
 			}
-			replaced, err := servers.ReplaceSealedSecret(ctx, slug, sealed, out.Sealed)
+			replaced, err := servers.ReplaceSealedSecret(ctx, slug, sealed, out.Sealed.Reveal())
 			if err != nil {
 				return summary, err
 			}

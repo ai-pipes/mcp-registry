@@ -65,11 +65,11 @@ func resealOne(ctx context.Context, store ConnectionStore, from, to kernel.Secre
 		}
 		access := c.AccessToken()
 		refresh := c.RefreshToken()
-		a := kernel.Reseal([]byte(access), from, to)
+		a := kernel.Reseal(access.Bytes(), from, to)
 		parts := []kernel.ResealOutcome{a}
 		var r kernel.ResealOutcome
-		if len(refresh) > 0 {
-			r = kernel.Reseal([]byte(refresh), from, to)
+		if !refresh.IsEmpty() {
+			r = kernel.Reseal(refresh.Bytes(), from, to)
 			parts = append(parts, r)
 		}
 		allCurrent := true
@@ -88,10 +88,10 @@ func resealOne(ctx context.Context, store ConnectionStore, from, to kernel.Secre
 		}
 		newAccess, newRefresh := access, refresh
 		if a.Kind == kernel.ResealResealed {
-			newAccess = domain.Sealed(a.Sealed)
+			newAccess = domain.NewSealed(a.Sealed.Reveal())
 		}
-		if len(refresh) > 0 && r.Kind == kernel.ResealResealed {
-			newRefresh = domain.Sealed(r.Sealed)
+		if !refresh.IsEmpty() && r.Kind == kernel.ResealResealed {
+			newRefresh = domain.NewSealed(r.Sealed.Reveal())
 		}
 		if err := c.ReplaceSealed(newAccess, newRefresh); err != nil {
 			return nil, fmt.Errorf("connections: re-seal %s/%s: %w", k.UserID, k.Server, err)

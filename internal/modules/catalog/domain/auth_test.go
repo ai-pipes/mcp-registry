@@ -187,31 +187,39 @@ func TestParseAuthCopiesInput(t *testing.T) {
 	}
 }
 
+func plainHeaders(h kernel.UpstreamHeaders) map[string]string {
+	out := make(map[string]string, len(h))
+	for k, v := range h {
+		out[k] = v.Reveal()
+	}
+	return out
+}
+
 func TestHeaderFor(t *testing.T) {
-	h := domain.HeaderFor(sharedMode("X-API-Key", "{secret}"), "k")
-	if !reflect.DeepEqual(h, kernel.UpstreamHeaders{"X-API-Key": "k"}) {
+	h := domain.HeaderFor(sharedMode("X-API-Key", "{secret}"), kernel.NewSecret("k"))
+	if !reflect.DeepEqual(plainHeaders(h), map[string]string{"X-API-Key": "k"}) {
 		t.Fatal(h)
 	}
-	h = domain.HeaderFor(patMode("Authorization", "Bearer {secret}"), "t")
-	if !reflect.DeepEqual(h, kernel.UpstreamHeaders{"Authorization": "Bearer t"}) {
+	h = domain.HeaderFor(patMode("Authorization", "Bearer {secret}"), kernel.NewSecret("t"))
+	if !reflect.DeepEqual(plainHeaders(h), map[string]string{"Authorization": "Bearer t"}) {
 		t.Fatal(h)
 	}
-	h = domain.HeaderFor(oauthMode(baseOAuth()), "tok")
-	if !reflect.DeepEqual(h, kernel.UpstreamHeaders{"Authorization": "Bearer tok"}) {
+	h = domain.HeaderFor(oauthMode(baseOAuth()), kernel.NewSecret("tok"))
+	if !reflect.DeepEqual(plainHeaders(h), map[string]string{"Authorization": "Bearer tok"}) {
 		t.Fatal(h)
 	}
 	// the secret is inserted literally, every occurrence of the placeholder is replaced
-	h = domain.HeaderFor(sharedMode("H", "k={secret}&{secret}"), "a$&b$'{secret}")
-	if h["H"] != "k=a$&b$'{secret}&a$&b$'{secret}" {
-		t.Fatal(h["H"])
+	h = domain.HeaderFor(sharedMode("H", "k={secret}&{secret}"), kernel.NewSecret("a$&b$'{secret}"))
+	if h["H"].Reveal() != "k=a$&b$'{secret}&a$&b$'{secret}" {
+		t.Fatal(h["H"].Reveal())
 	}
 	for _, m := range []domain.AuthMode{{Kind: domain.AuthNone}, {Kind: domain.AuthNone, Header: "X", Template: "{secret}"}} {
-		h := domain.HeaderFor(m, "ignored")
+		h := domain.HeaderFor(m, kernel.NewSecret("ignored"))
 		if h == nil || len(h) != 0 {
 			t.Fatalf("none gives an empty non-nil map, got %#v", h)
 		}
 	}
-	if strings.Contains(domain.HeaderFor(sharedMode("H", "{secret}"), "topsecret").String(), "topsecret") {
+	if strings.Contains(domain.HeaderFor(sharedMode("H", "{secret}"), kernel.NewSecret("topsecret")).String(), "topsecret") {
 		t.Fatal("headers must redact themselves")
 	}
 }

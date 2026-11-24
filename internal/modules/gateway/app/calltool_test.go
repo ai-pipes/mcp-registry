@@ -181,7 +181,7 @@ func TestSharedSecretHeader(t *testing.T) {
 	if _, err := h.call(context.Background(), "gitea.create_issue", `{}`); err != nil {
 		t.Fatal(err)
 	}
-	if got := h.up.calls[0].target.Headers["X-API-Key"]; got != "key s3" {
+	if got := h.up.calls[0].target.Headers["X-API-Key"].Reveal(); got != "key s3" {
 		t.Fatalf("header %q", got)
 	}
 	if len(h.creds.calls) != 0 {
@@ -246,7 +246,7 @@ func TestASharedSecretIsNotSentWithAConfigurationItDoesNotBelongTo(t *testing.T)
 				t.Fatal(err)
 			}
 			for _, c := range h.up.calls {
-				t.Errorf("upstream called at %s, carrying the new key: %v", c.target.URL, c.target.Headers["X-API-Key"] == "key new-key")
+				t.Errorf("upstream called at %s, carrying the new key: %v", c.target.URL, c.target.Headers["X-API-Key"].Reveal() == "key new-key")
 			}
 			wantText(t, res, "Gitea is unavailable.")
 			h.wantOneRow(t, domain.OutcomeTransportError)
@@ -315,7 +315,7 @@ func TestAnUnknownCredentialFailureIsUnexpected(t *testing.T) {
 func TestPersonalCredentialIsResolvedForTheTargetRead(t *testing.T) {
 	h := newHarness()
 	h.cat.servers["gitea"].Auth = patAuth
-	h.creds.results = []connections.CredentialResult{{Secret: "pat-1"}}
+	h.creds.results = []connections.CredentialResult{{Secret: kernel.NewSecret("pat-1")}}
 	if _, err := h.call(context.Background(), "gitea.create_issue", `{}`); err != nil {
 		t.Fatal(err)
 	}
@@ -323,7 +323,7 @@ func TestPersonalCredentialIsResolvedForTheTargetRead(t *testing.T) {
 	if c.userID != "u-alice" || c.force || c.target.Slug != "gitea" || c.target.URL != "https://gitea.example.com/mcp" {
 		t.Fatalf("resolve %+v", c)
 	}
-	if got := h.up.calls[0].target.Headers["X-Token"]; got != "token pat-1" {
+	if got := h.up.calls[0].target.Headers["X-Token"].Reveal(); got != "token pat-1" {
 		t.Fatalf("header %q", got)
 	}
 }
@@ -467,14 +467,14 @@ func oauthServer(h *harness) {
 func TestA401OnOAuthRefreshesOnceAndRetriesWithTheNewSecret(t *testing.T) {
 	h := newHarness()
 	oauthServer(h)
-	h.creds.results = []connections.CredentialResult{{Secret: "old"}, {Secret: "new"}}
+	h.creds.results = []connections.CredentialResult{{Secret: kernel.NewSecret("old")}, {Secret: kernel.NewSecret("new")}}
 	h.up.steps = []upstreamStep{unauthorized(), okResult(`{"content":[]}`)}
 	if _, err := h.call(context.Background(), "gitea.create_issue", `{}`); err != nil {
 		t.Fatal(err)
 	}
 	h.wantOneRow(t, domain.OutcomeOK)
-	if h.up.calls[0].target.Headers["Authorization"] != "Bearer old" || h.up.calls[1].target.Headers["Authorization"] != "Bearer new" {
-		t.Fatalf("headers %v %v", h.up.calls[0].target.Headers["Authorization"], h.up.calls[1].target.Headers["Authorization"])
+	if h.up.calls[0].target.Headers["Authorization"].Reveal() != "Bearer old" || h.up.calls[1].target.Headers["Authorization"].Reveal() != "Bearer new" {
+		t.Fatalf("headers %v %v", h.up.calls[0].target.Headers["Authorization"].Reveal(), h.up.calls[1].target.Headers["Authorization"].Reveal())
 	}
 	// Both resolves carry the whole target the gateway read, not just its slug.
 	if len(h.creds.calls) != 2 || h.creds.calls[0].force || !h.creds.calls[1].force {
@@ -494,7 +494,7 @@ func TestA401OnOAuthRefreshesOnceAndRetriesWithTheNewSecret(t *testing.T) {
 func TestASecond401ExpiresTheConnection(t *testing.T) {
 	h := newHarness()
 	oauthServer(h)
-	h.creds.results = []connections.CredentialResult{{Secret: "old"}, {Secret: "new"}}
+	h.creds.results = []connections.CredentialResult{{Secret: kernel.NewSecret("old")}, {Secret: kernel.NewSecret("new")}}
 	h.up.steps = []upstreamStep{unauthorized(), unauthorized()}
 	res, err := h.call(context.Background(), "gitea.create_issue", `{}`)
 	if err != nil {
@@ -512,7 +512,7 @@ func TestASecond401ExpiresTheConnection(t *testing.T) {
 func TestA401ThenTheSameSecretIsUnavailableNotExpired(t *testing.T) {
 	h := newHarness()
 	oauthServer(h)
-	h.creds.results = []connections.CredentialResult{{Secret: "same"}}
+	h.creds.results = []connections.CredentialResult{{Secret: kernel.NewSecret("same")}}
 	h.up.steps = []upstreamStep{unauthorized()}
 	res, err := h.call(context.Background(), "gitea.create_issue", `{}`)
 	if err != nil {
@@ -539,7 +539,7 @@ func TestA401ThenARefusedRefresh(t *testing.T) {
 		t.Run(string(c.failure), func(t *testing.T) {
 			h := newHarness()
 			oauthServer(h)
-			h.creds.results = []connections.CredentialResult{{Secret: "old"}, {Failure: c.failure}}
+			h.creds.results = []connections.CredentialResult{{Secret: kernel.NewSecret("old")}, {Failure: c.failure}}
 			h.up.steps = []upstreamStep{unauthorized()}
 			res, err := h.call(context.Background(), "gitea.create_issue", `{}`)
 			if err != nil {
@@ -557,7 +557,7 @@ func TestA401ThenARefusedRefresh(t *testing.T) {
 func TestTheRetryMayTimeOut(t *testing.T) {
 	h := newHarness()
 	oauthServer(h)
-	h.creds.results = []connections.CredentialResult{{Secret: "old"}, {Secret: "new"}}
+	h.creds.results = []connections.CredentialResult{{Secret: kernel.NewSecret("old")}, {Secret: kernel.NewSecret("new")}}
 	h.up.steps = []upstreamStep{unauthorized(), {err: kernel.NewUpstreamError(kernel.UpstreamTimeout)}}
 	res, err := h.call(context.Background(), "gitea.create_issue", `{}`)
 	if err != nil {
@@ -571,7 +571,7 @@ func TestTheRetryMayTimeOut(t *testing.T) {
 func TestTheRetryUsesTheTargetReadBeforeTheCall(t *testing.T) {
 	h := newHarness()
 	oauthServer(h)
-	h.creds.results = []connections.CredentialResult{{Secret: "old"}, {Secret: "new"}}
+	h.creds.results = []connections.CredentialResult{{Secret: kernel.NewSecret("old")}, {Secret: kernel.NewSecret("new")}}
 	h.up.steps = []upstreamStep{{wait: func(context.Context) error {
 		delete(h.cat.servers, "gitea") // gone while the call is in flight
 		return kernel.NewUpstreamError(kernel.UpstreamUnauthorized)
@@ -601,7 +601,7 @@ func TestUnexpectedFailuresAreReturnedAndLoggedAsTransportError(t *testing.T) {
 		"refresh resolve": func(h *harness) {
 			oauthServer(h)
 			h.up.steps = []upstreamStep{unauthorized()}
-			h.creds.results = []connections.CredentialResult{{Secret: "o"}}
+			h.creds.results = []connections.CredentialResult{{Secret: kernel.NewSecret("o")}}
 			h.creds.err = nil
 		},
 	}
@@ -612,7 +612,7 @@ func TestUnexpectedFailuresAreReturnedAndLoggedAsTransportError(t *testing.T) {
 			if name == "refresh resolve" {
 				// the first resolve works, the forced one fails
 				h.creds.err = nil
-				h.creds.results = []connections.CredentialResult{{Secret: "o"}}
+				h.creds.results = []connections.CredentialResult{{Secret: kernel.NewSecret("o")}}
 				first := true
 				h.d.Credentials = &failSecond{fakeCreds: h.creds, boom: boom, first: &first}
 			}

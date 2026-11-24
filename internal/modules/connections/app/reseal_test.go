@@ -38,21 +38,21 @@ func TestResealConnections(t *testing.T) {
 		}
 		plain := func(user, server string) (string, string) {
 			s, _ := h.store.snap(user, server)
-			a, err := newBox.Open(s.Access)
+			a, err := newBox.Open(s.Access.Bytes())
 			if err != nil {
 				t.Fatal(err)
 			}
 			var r string
-			if len(s.Refresh) > 0 {
-				if r, err = newBox.Open(s.Refresh); err != nil {
+			if len(s.Refresh.Bytes()) > 0 {
+				if r, err = newBox.Open(s.Refresh.Bytes()); err != nil {
 					t.Fatal(err)
 				}
 			}
-			if _, err := oldBox.Open(s.Access); err == nil {
+			if _, err := oldBox.Open(s.Access.Bytes()); err == nil {
 				t.Fatal("the old key still opens the access token")
 			}
-			if len(s.Refresh) > 0 {
-				if _, err := oldBox.Open(s.Refresh); err == nil {
+			if len(s.Refresh.Bytes()) > 0 {
+				if _, err := oldBox.Open(s.Refresh.Bytes()); err == nil {
 					t.Fatal("the old key still opens the refresh token")
 				}
 			}
@@ -114,10 +114,10 @@ func TestResealConnections(t *testing.T) {
 			t.Fatalf("%+v", sum)
 		}
 		s, _ := h.store.snap("u1", "gitea")
-		if a, _ := newBox.Open(s.Access); a != "A1" {
+		if a, _ := newBox.Open(s.Access.Bytes()); a != "A1" {
 			t.Fatal("access")
 		}
-		if r, _ := newBox.Open(s.Refresh); r != "R1" {
+		if r, _ := newBox.Open(s.Refresh.Bytes()); r != "R1" {
 			t.Fatal("refresh")
 		}
 	})

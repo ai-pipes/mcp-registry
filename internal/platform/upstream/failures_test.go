@@ -285,7 +285,7 @@ func TestRedirectsAreNotFollowed(t *testing.T) {
 			http.Redirect(w, r, other.url(), status)
 		}))
 		_, err := newClient().ListTools(context.Background(), kernel.UpstreamTarget{
-			URL: srv.URL, Headers: map[string]string{"Authorization": "Bearer x"}, Timeout: 5 * time.Second, MaxResponseBytes: mib,
+			URL: srv.URL, Headers: hdr(map[string]string{"Authorization": "Bearer x"}), Timeout: 5 * time.Second, MaxResponseBytes: mib,
 		})
 		srv.Close()
 		_ = wantKind(t, err, kernel.UpstreamTransport)
@@ -312,7 +312,7 @@ func TestUnreachableAndInvalidURLsAreTransport(t *testing.T) {
 	for _, u := range []string{"http://" + addr + "/mcp", "not a url", "", "ftp://example.com/mcp", "http:///mcp", "http://%zz/"} {
 		t.Run(u, func(t *testing.T) {
 			_, err := newClient().ListTools(context.Background(), kernel.UpstreamTarget{
-				URL: u, Headers: map[string]string{"Authorization": "Bearer x"}, Timeout: 3 * time.Second, MaxResponseBytes: mib,
+				URL: u, Headers: hdr(map[string]string{"Authorization": "Bearer x"}), Timeout: 3 * time.Second, MaxResponseBytes: mib,
 			})
 			_ = wantKind(t, err, kernel.UpstreamTransport)
 		})
@@ -322,7 +322,7 @@ func TestUnreachableAndInvalidURLsAreTransport(t *testing.T) {
 func TestInvalidHeaderIsTransportAndNeverQuoted(t *testing.T) {
 	f := newFake(t)
 	_, err := newClient().ListTools(context.Background(), target(f, func(tg *kernel.UpstreamTarget) {
-		tg.Headers = map[string]string{"Authorization": "Bearer bad\nvalue-xyz"}
+		tg.Headers = hdr(map[string]string{"Authorization": "Bearer bad\nvalue-xyz"})
 	}))
 	ue := wantKind(t, err, kernel.UpstreamTransport)
 	if strings.Contains(fmt.Sprintf("%v %+v %#v", ue, ue, ue), "value-xyz") {
@@ -384,7 +384,7 @@ func TestErrorTextsCarryNothingOfTheExchange(t *testing.T) {
 		f.set(func(c *cfg) { c.failStatus = status })
 		_, err := newClient().ListTools(context.Background(), target(f, func(tg *kernel.UpstreamTarget) {
 			tg.URL = u
-			tg.Headers = map[string]string{"Authorization": "Bearer header-secret-456"}
+			tg.Headers = hdr(map[string]string{"Authorization": "Bearer header-secret-456"})
 		}))
 		ue := kindOf(t, err)
 		for _, shown := range []string{ue.Error(), fmt.Sprintf("%v|%+v|%#v|%s", err, err, err, err)} {
@@ -414,7 +414,7 @@ func TestCertificatesAreVerified(t *testing.T) {
 	}))
 	defer srv.Close()
 	_, err := newClient().ListTools(context.Background(), kernel.UpstreamTarget{
-		URL: srv.URL, Headers: map[string]string{"Authorization": "Bearer x"}, Timeout: 5 * time.Second, MaxResponseBytes: mib,
+		URL: srv.URL, Headers: hdr(map[string]string{"Authorization": "Bearer x"}), Timeout: 5 * time.Second, MaxResponseBytes: mib,
 	})
 	_ = wantKind(t, err, kernel.UpstreamTransport)
 }
@@ -442,7 +442,7 @@ func TestInteroperatesWithTheSDKServer(t *testing.T) {
 		h.ServeHTTP(w, r)
 	}))
 	defer srv.Close()
-	tg := kernel.UpstreamTarget{URL: srv.URL, Headers: map[string]string{"Authorization": "Bearer sdk-tok"}, Timeout: 10 * time.Second, MaxResponseBytes: mib}
+	tg := kernel.UpstreamTarget{URL: srv.URL, Headers: hdr(map[string]string{"Authorization": "Bearer sdk-tok"}), Timeout: 10 * time.Second, MaxResponseBytes: mib}
 
 	tools, err := newClient().ListTools(context.Background(), tg)
 	if err != nil {
@@ -566,7 +566,7 @@ func TestProtocolHeadersWinOverTargetHeaders(t *testing.T) {
 		"Content-Length":       "1",
 		"Host":                 "evil.example",
 	}
-	if _, err := newClient().ListTools(context.Background(), target(f, func(tg *kernel.UpstreamTarget) { tg.Headers = hostile })); err != nil {
+	if _, err := newClient().ListTools(context.Background(), target(f, func(tg *kernel.UpstreamTarget) { tg.Headers = hdr(hostile) })); err != nil {
 		t.Fatal(err)
 	}
 	for i, r := range f.requests() {
@@ -719,7 +719,7 @@ func TestAHeaderValueWithANULIsTransportAndNotQuoted(t *testing.T) {
 	f := newFake(t)
 	f.set(func(c *cfg) { c.tools = rawTools(1) })
 	nul := func(tg *kernel.UpstreamTarget) {
-		tg.Headers = map[string]string{"Authorization": "Bearer sek\x00ret-value"}
+		tg.Headers = hdr(map[string]string{"Authorization": "Bearer sek\x00ret-value"})
 	}
 	for name, err := range operations(t, f, nul) {
 		ue := wantKind(t, err, kernel.UpstreamTransport)

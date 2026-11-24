@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ai-pipes/mcp-registry/internal/kernel"
 	"github.com/ai-pipes/mcp-registry/internal/modules/catalog"
 	"github.com/ai-pipes/mcp-registry/internal/modules/connections/app"
 )
@@ -25,7 +26,7 @@ func (h *harness) expectOf(moved bool) *app.ServerConfig {
 func TestResolveWithTheExpectedConfigurationBehavesAsBefore(t *testing.T) {
 	h := newHarness(t)
 	h.seedOAuth(tp(at(-1000)), "R1", "alice") // a refresh is due
-	h.oauth.next = app.TokenSet{AccessToken: "A2", ExpiresAt: tp(at(3_600_000))}
+	h.oauth.next = app.TokenSet{AccessToken: kernel.NewSecret("A2"), ExpiresAt: tp(at(3_600_000))}
 	r, err := app.ResolveForSending(ctx, h.d, app.ResolveQuery{UserID: "alice"}, *h.expectOf(false))
 	wantOK(t, r, err, "A2")
 	if got := h.oauth.refreshed(); !slices.Equal(got, []string{"R1"}) {
@@ -70,7 +71,7 @@ func TestTwoCallersWithDifferentExpectationsEachGetTheirOwnAnswer(t *testing.T) 
 	gate := make(chan struct{})
 	h.oauth.gate = gate
 	h.oauth.refreshFn = func(_ context.Context, rt string) (app.TokenSet, error) {
-		return app.TokenSet{AccessToken: "new-" + rt, ExpiresAt: tp(at(3_600_000))}, nil
+		return app.TokenSet{AccessToken: kernel.NewSecret("new-" + rt), ExpiresAt: tp(at(3_600_000))}, nil
 	}
 	type out struct {
 		r   app.CredentialResult
@@ -167,7 +168,7 @@ func TestCallersThatLoadedDifferentConfigurationsDoNotShareARenewal(t *testing.T
 	gate := make(chan struct{})
 	h.oauth.gate = gate
 	h.oauth.refreshFn = func(_ context.Context, rt string) (app.TokenSet, error) {
-		return app.TokenSet{AccessToken: "new-" + rt, ExpiresAt: tp(at(3_600_000))}, nil
+		return app.TokenSet{AccessToken: kernel.NewSecret("new-" + rt), ExpiresAt: tp(at(3_600_000))}, nil
 	}
 	type out struct {
 		r   app.CredentialResult
@@ -203,7 +204,7 @@ func TestCallersThatLoadedDifferentConfigurationsDoNotShareARenewal(t *testing.T
 	close(gate)
 	l, f := <-leader, <-follower
 	wantOK(t, l.r, l.err, "new-R1")
-	if f.err != nil || f.r.Secret != "" {
+	if f.err != nil || f.r.Secret.Reveal() != "" {
 		t.Fatalf("the follower got a secret issued under the other configuration: %+v %v", f.r, f.err)
 	}
 	if f.r.Failure != app.FailureExpired {
@@ -251,7 +252,7 @@ func TestResolveForSendingWithoutAConfigurationIsRefused(t *testing.T) {
 	h.seedOAuth(tp(at(3_600_000)), "R1", "alice")
 	h.j.reset()
 	r, err := app.ResolveForSending(ctx, h.d, app.ResolveQuery{UserID: "alice", Server: "gitea"}, app.ServerConfig{})
-	if err == nil || r.Secret != "" {
+	if err == nil || r.Secret.Reveal() != "" {
 		t.Fatalf("got %v, %v", r, err)
 	}
 	if len(h.j.all()) != 0 {

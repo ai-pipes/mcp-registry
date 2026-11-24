@@ -153,10 +153,10 @@ func TestClientSecretForZeroWhenUnsetMovedAndErrorsNeverCarryIt(t *testing.T) {
 	if got.Slug != want.Slug || got.URL != want.URL || got.Auth.Kind != want.Auth.Kind || !reflect.DeepEqual(got.Auth.OAuth, want.Auth.OAuth) {
 		t.Fatalf("target %+v, want %+v", got, want)
 	}
-	if s, moved, err := d.ClientSecretFor(context.Background(), cfg("yt")); err != nil || moved || s != (app.ClientSecret{}) {
+	if s, moved, err := d.ClientSecretFor(context.Background(), cfg("yt")); err != nil || moved || !reflect.DeepEqual(s, app.ClientSecret{}) {
 		t.Fatalf("unset must be the zero value, not moved: %v %v %v", s, moved, err)
 	}
-	if s, moved, err := d.ClientSecretFor(context.Background(), cfg("gone")); err != nil || !moved || s != (app.ClientSecret{}) {
+	if s, moved, err := d.ClientSecretFor(context.Background(), cfg("gone")); err != nil || !moved || !reflect.DeepEqual(s, app.ClientSecret{}) {
 		t.Fatalf("moved must carry no secret: %v %v %v", s, moved, err)
 	}
 	f.secretEr = fmt.Errorf("cannot open SECRETMARK with this key")

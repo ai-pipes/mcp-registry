@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ai-pipes/mcp-registry/internal/kernel"
 	"github.com/ai-pipes/mcp-registry/internal/modules/catalog"
 	"github.com/ai-pipes/mcp-registry/internal/modules/connections/app"
 	"github.com/ai-pipes/mcp-registry/internal/modules/connections/domain"
@@ -19,15 +20,15 @@ import (
 
 func wantOK(t *testing.T, r app.CredentialResult, err error, secret string) {
 	t.Helper()
-	if err != nil || r.Failure != "" || r.Secret != secret {
+	if err != nil || r.Failure != "" || r.Secret.Reveal() != secret {
 		t.Fatalf("got (failure %q, err %v), want the secret %q", r.Failure, err, secret)
 	}
 }
 
 func wantFailure(t *testing.T, r app.CredentialResult, err error, f app.CredentialFailure) {
 	t.Helper()
-	if err != nil || r.Failure != f || r.Secret != "" {
-		t.Fatalf("got (failure %q, secret set %v, err %v), want failure %q", r.Failure, r.Secret != "", err, f)
+	if err != nil || r.Failure != f || r.Secret.Reveal() != "" {
+		t.Fatalf("got (failure %q, secret set %v, err %v), want failure %q", r.Failure, r.Secret.Reveal() != "", err, f)
 	}
 }
 
@@ -63,21 +64,21 @@ func TestResolveFreshTokenIsUsedWithoutRefreshing(t *testing.T) {
 func TestResolveRefreshesAheadAndStoresSealed(t *testing.T) {
 	h := newHarness(t)
 	h.seedOAuth(tp(at(30_000)), "R1", "alice")
-	h.oauth.next = app.TokenSet{AccessToken: "A2", ExpiresAt: tp(at(3_600_000))}
+	h.oauth.next = app.TokenSet{AccessToken: kernel.NewSecret("A2"), ExpiresAt: tp(at(3_600_000))}
 	r, err := h.resolve("alice", "gitea")
 	wantOK(t, r, err, "A2")
 	if got := h.oauth.refreshed(); !slices.Equal(got, []string{"R1"}) {
 		t.Fatalf("refreshed: %v", got)
 	}
 	row, _ := h.store.snap("alice", "gitea")
-	if bytes.Contains(row.Access, []byte("A2")) {
+	if bytes.Contains(row.Access.Bytes(), []byte("A2")) {
 		t.Fatal("the new access token is stored in plain text")
 	}
-	if got, err := h.box.Open(row.Access); err != nil || got != "A2" {
+	if got, err := h.box.Open(row.Access.Bytes()); err != nil || got != "A2" {
 		t.Fatalf("stored access: %q %v", got, err)
 	}
 	// Hub and Gitea do not rotate by default: the old refresh token is kept.
-	if got, err := h.box.Open(row.Refresh); err != nil || got != "R1" {
+	if got, err := h.box.Open(row.Refresh.Bytes()); err != nil || got != "R1" {
 		t.Fatalf("stored refresh: %q %v", got, err)
 	}
 	if row.ExpiresAt == nil || !row.ExpiresAt.Equal(at(3_600_000)) {
@@ -97,7 +98,7 @@ func TestResolveSequenceConfigBeforeLockProviderInsideAuditAfter(t *testing.T) {
 	// success: config read, then the secret (one read judges it and its destination), then the lock with the provider call and the write
 	h.seedOAuth(tp(at(-1000)), "R1", "alice")
 	h.j.reset()
-	h.oauth.next = app.TokenSet{AccessToken: "A2", RefreshToken: "R2", ExpiresAt: tp(at(3_600_000))}
+	h.oauth.next = app.TokenSet{AccessToken: kernel.NewSecret("A2"), RefreshToken: kernel.NewSecret("R2"), ExpiresAt: tp(at(3_600_000))}
 	if r, err := h.resolve("alice", "gitea"); err != nil || r.Failure != "" {
 		t.Fatal(r.Failure, err)
 	}
@@ -140,7 +141,7 @@ func TestResolveSequenceConfigBeforeLockProviderInsideAuditAfter(t *testing.T) {
 func TestResolveNothingButTheRowAndTheProviderUnderTheLock(t *testing.T) {
 	h := newHarness(t)
 	h.seedOAuth(tp(at(-1000)), "R1", "alice")
-	h.oauth.next = app.TokenSet{AccessToken: "A2", ExpiresAt: tp(at(3_600_000))}
+	h.oauth.next = app.TokenSet{AccessToken: kernel.NewSecret("A2"), ExpiresAt: tp(at(3_600_000))}
 	if r, err := h.resolve("alice", "gitea"); err != nil || r.Failure != "" {
 		t.Fatal(r.Failure, err)
 	}
@@ -158,7 +159,7 @@ func TestResolveNothingButTheRowAndTheProviderUnderTheLock(t *testing.T) {
 	if _, err := h.resolve("alice", "gitea"); err != nil {
 		t.Fatal(err)
 	}
-	if err := app.SavePAT(ctx, h.d, app.SavePATCommand{Principal: alice, Server: "yt", Token: "p"}); err != nil {
+	if err := app.SavePAT(ctx, h.d, app.SavePATCommand{Principal: alice, Server: "yt", Token: kernel.NewSecret("p")}); err != nil {
 		t.Fatal(err)
 	}
 	if err := app.MarkExpired(ctx, h.d, app.MarkExpiredCommand{UserID: "alice", Server: "yt"}); err != nil {
@@ -190,7 +191,7 @@ func TestResolveParallelCallsOneOneTimeRefreshToken(t *testing.T) {
 			return app.TokenSet{}, &app.TokenEndpointError{Status: 400, Code: "invalid_grant"}
 		}
 		used[rt] = true
-		return app.TokenSet{AccessToken: "A2", RefreshToken: "R2", ExpiresAt: tp(at(3_600_000))}, nil
+		return app.TokenSet{AccessToken: kernel.NewSecret("A2"), RefreshToken: kernel.NewSecret("R2"), ExpiresAt: tp(at(3_600_000))}, nil
 	}
 	gate := make(chan struct{})
 	h.oauth.gate = gate
@@ -222,7 +223,7 @@ func TestResolveParallelCallsOneOneTimeRefreshToken(t *testing.T) {
 		t.Fatalf("provider calls: %v, want exactly one with R1", got)
 	}
 	row, _ := h.store.snap("alice", "gitea")
-	if got, _ := h.box.Open(row.Refresh); got != "R2" {
+	if got, _ := h.box.Open(row.Refresh.Bytes()); got != "R2" {
 		t.Fatalf("stored refresh token: %q", got)
 	}
 	if h.status("alice", "gitea") != domain.StatusReady || len(h.audit.expired()) != 0 {
@@ -234,7 +235,7 @@ func TestResolveTwoProcessesTheRowLockLetsOneRefresh(t *testing.T) {
 	h := newHarness(t)
 	h.v.setStrict(false) // calls overlap on purpose
 	h.seedOAuth(tp(at(-1000)), "R1", "alice")
-	h.oauth.next = app.TokenSet{AccessToken: "A2", RefreshToken: "R2", ExpiresAt: tp(at(3_600_000))}
+	h.oauth.next = app.TokenSet{AccessToken: kernel.NewSecret("A2"), RefreshToken: kernel.NewSecret("R2"), ExpiresAt: tp(at(3_600_000))}
 	gate := make(chan struct{})
 	h.oauth.gate = gate
 	h.oauth.entered = make(chan string, 4)
@@ -272,7 +273,7 @@ func TestResolveTwoProcessesTheRowLockLetsOneRefresh(t *testing.T) {
 func TestResolveForceRefresh(t *testing.T) {
 	h := newHarness(t)
 	h.seedOAuth(tp(at(3_600_000)), "R1", "alice")
-	h.oauth.next = app.TokenSet{AccessToken: "A2", ExpiresAt: tp(at(3_600_000))}
+	h.oauth.next = app.TokenSet{AccessToken: kernel.NewSecret("A2"), ExpiresAt: tp(at(3_600_000))}
 	r, err := h.resolveForced("alice", "gitea")
 	wantOK(t, r, err, "A2")
 	if got := h.oauth.refreshed(); !slices.Equal(got, []string{"R1"}) {
@@ -284,7 +285,7 @@ func TestResolveForceRefresh(t *testing.T) {
 	// it finds the row changed after it read it and takes the new token instead of refreshing a
 	// third time.
 	h.clock.set(at(1000))
-	h.oauth.next = app.TokenSet{AccessToken: "A3", ExpiresAt: tp(at(3_600_000))}
+	h.oauth.next = app.TokenSet{AccessToken: kernel.NewSecret("A3"), ExpiresAt: tp(at(3_600_000))}
 	gate := make(chan struct{})
 	h.oauth.gate = gate
 	h.oauth.entered = make(chan string, 4)
@@ -407,7 +408,7 @@ func TestResolveProviderAnswersAndNoAnswers(t *testing.T) {
 			t.Fatal("expiry audited")
 		}
 		h.oauth.refreshFn = nil
-		h.oauth.next = app.TokenSet{AccessToken: "A2", ExpiresAt: tp(at(3_600_000))}
+		h.oauth.next = app.TokenSet{AccessToken: kernel.NewSecret("A2"), ExpiresAt: tp(at(3_600_000))}
 		r, err = h.resolve("alice", "gitea")
 		wantOK(t, r, err, "A2")
 		if got := h.oauth.refreshed(); !slices.Equal(got, []string{"R1", "R1"}) {
@@ -447,7 +448,7 @@ func TestResolveProviderAnswersAndNoAnswers(t *testing.T) {
 			t.Fatal("changed or audited")
 		}
 		h.oauth.refreshFn = nil
-		h.oauth.next = app.TokenSet{AccessToken: "A2", ExpiresAt: tp(at(3_600_000))}
+		h.oauth.next = app.TokenSet{AccessToken: kernel.NewSecret("A2"), ExpiresAt: tp(at(3_600_000))}
 		r, err := h.resolve("alice", "gitea")
 		wantOK(t, r, err, "A2")
 	})
@@ -485,7 +486,7 @@ func TestResolveProviderAnswersAndNoAnswers(t *testing.T) {
 
 func snapshotsEqual(a, b domain.Snapshot) bool {
 	return a.UserID == b.UserID && a.Server == b.Server && a.IssuedFor == b.IssuedFor && a.Kind == b.Kind && a.Status == b.Status &&
-		bytes.Equal(a.Access, b.Access) && bytes.Equal(a.Refresh, b.Refresh) && a.UpdatedAt.Equal(b.UpdatedAt) &&
+		bytes.Equal(a.Access.Bytes(), b.Access.Bytes()) && bytes.Equal(a.Refresh.Bytes(), b.Refresh.Bytes()) && a.UpdatedAt.Equal(b.UpdatedAt) &&
 		((a.ExpiresAt == nil) == (b.ExpiresAt == nil)) && (a.ExpiresAt == nil || a.ExpiresAt.Equal(*b.ExpiresAt))
 }
 
@@ -495,7 +496,7 @@ func TestResolveKeyMismatch(t *testing.T) {
 		h.seedOAuth(tp(at(3_600_000)), "R1", "alice")
 		h.box.failOpenOf("A1")
 		r, err := h.resolve("alice", "gitea")
-		if err == nil || r.Secret != "" || r.Failure != "" {
+		if err == nil || r.Secret.Reveal() != "" || r.Failure != "" {
 			t.Fatalf("got (%q, %q, %v), want an error", r.Failure, r.Secret, err)
 		}
 	})
@@ -572,7 +573,7 @@ func TestResolveConfigChange(t *testing.T) {
 		r, err = h2.resolve("alice", "gitea")
 		wantFailure(t, r, err, app.FailureExpired)
 
-		if err := app.SavePAT(ctx, h2.d, app.SavePATCommand{Principal: alice, Server: "yt", Token: "p"}); err != nil {
+		if err := app.SavePAT(ctx, h2.d, app.SavePATCommand{Principal: alice, Server: "yt", Token: kernel.NewSecret("p")}); err != nil {
 			t.Fatal(err)
 		}
 		yt := h2.dir.find("yt")
@@ -611,7 +612,7 @@ func TestResolveConfigChange(t *testing.T) {
 
 func TestResolvePAT(t *testing.T) {
 	h := newHarness(t)
-	if err := app.SavePAT(ctx, h.d, app.SavePATCommand{Principal: alice, Server: "yt", Token: padded}); err != nil {
+	if err := app.SavePAT(ctx, h.d, app.SavePATCommand{Principal: alice, Server: "yt", Token: kernel.NewSecret(padded)}); err != nil {
 		t.Fatal(err)
 	}
 	r, err := h.resolve("alice", "yt")
@@ -626,7 +627,7 @@ func TestResolvePAT(t *testing.T) {
 
 func TestMarkExpired(t *testing.T) {
 	h := newHarness(t)
-	if err := app.SavePAT(ctx, h.d, app.SavePATCommand{Principal: alice, Server: "yt", Token: "p"}); err != nil {
+	if err := app.SavePAT(ctx, h.d, app.SavePATCommand{Principal: alice, Server: "yt", Token: kernel.NewSecret("p")}); err != nil {
 		t.Fatal(err)
 	}
 	h.audit.mu.Lock()
@@ -691,7 +692,7 @@ func TestResolveDifferentPeopleDoNotBlockEachOther(t *testing.T) {
 	aliceIn := make(chan struct{})
 	aliceGo := make(chan struct{})
 	h.oauth.refreshFn = func(_ context.Context, _ string) (app.TokenSet, error) {
-		return app.TokenSet{AccessToken: "A2", ExpiresAt: tp(at(3_600_000))}, nil
+		return app.TokenSet{AccessToken: kernel.NewSecret("A2"), ExpiresAt: tp(at(3_600_000))}, nil
 	}
 	// Hold the first refresh to arrive (alice's: bob starts after alice is inside).
 	var first atomic.Bool
@@ -720,7 +721,7 @@ func TestResolveCancelledCallerReturnsWhileTheRefreshCompletes(t *testing.T) {
 	h := newHarness(t)
 	h.v.setStrict(false) // calls overlap on purpose
 	h.seedOAuth(tp(at(-1000)), "R1", "alice")
-	h.oauth.next = app.TokenSet{AccessToken: "A2", RefreshToken: "R2", ExpiresAt: tp(at(3_600_000))}
+	h.oauth.next = app.TokenSet{AccessToken: kernel.NewSecret("A2"), RefreshToken: kernel.NewSecret("R2"), ExpiresAt: tp(at(3_600_000))}
 	gate := make(chan struct{})
 	h.oauth.gate = gate
 	h.oauth.entered = make(chan string, 4)
@@ -756,7 +757,7 @@ func TestResolveCancelledCallerReturnsWhileTheRefreshCompletes(t *testing.T) {
 		t.Fatalf("provider calls: %v", got)
 	}
 	row, _ := h.store.snap("alice", "gitea")
-	if got, _ := h.box.Open(row.Refresh); got != "R2" {
+	if got, _ := h.box.Open(row.Refresh.Bytes()); got != "R2" {
 		t.Fatalf("stored refresh token %q", got)
 	}
 }
@@ -783,7 +784,7 @@ func bothInFlight(t *testing.T, h *harness, a, b app.ResolveQuery) (string, stri
 	gate := make(chan struct{})
 	h.oauth.gate = gate
 	h.oauth.refreshFn = func(_ context.Context, rt string) (app.TokenSet, error) {
-		return app.TokenSet{AccessToken: "new-" + rt, ExpiresAt: tp(at(3_600_000))}, nil
+		return app.TokenSet{AccessToken: kernel.NewSecret("new-" + rt), ExpiresAt: tp(at(3_600_000))}, nil
 	}
 	type out struct {
 		r   app.CredentialResult
@@ -811,7 +812,7 @@ func bothInFlight(t *testing.T, h *harness, a, b app.ResolveQuery) (string, stri
 		if o.err != nil || o.r.Failure != "" {
 			t.Fatal(o.r.Failure, o.err)
 		}
-		got[i] = o.r.Secret
+		got[i] = o.r.Secret.Reveal()
 	}
 	return got[0], got[1]
 }

@@ -9,6 +9,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/ai-pipes/mcp-registry/internal/kernel"
 	"github.com/ai-pipes/mcp-registry/internal/modules/catalog"
 	"github.com/ai-pipes/mcp-registry/internal/modules/connections/app"
 	"github.com/ai-pipes/mcp-registry/internal/modules/connections/domain"
@@ -34,10 +35,10 @@ func TestStartConnect(t *testing.T) {
 		if pc.UserID() != "alice" || pc.Server() != "gitea" || !pc.ExpiresAt().Equal(at(600_000)) {
 			t.Fatalf("pending: %v", pc)
 		}
-		if pc.State() != stateOf(url) {
+		if pc.State().Reveal() != stateOf(url) {
 			t.Fatalf("the state in the URL %q is not the stored one", stateOf(url))
 		}
-		if !strings.Contains(url, "code_challenge=S256("+pc.CodeVerifier()+")") {
+		if !strings.Contains(url, "code_challenge=S256("+pc.CodeVerifier().Reveal()+")") {
 			t.Fatalf("challenge: %s", url)
 		}
 		if !strings.Contains(url, "redirect_uri="+h.d.RedirectURI) {
@@ -121,7 +122,7 @@ func TestCompleteConnect(t *testing.T) {
 		if !row.UpdatedAt.Equal(t0) {
 			t.Fatal("updatedAt")
 		}
-		if bytes.Contains(row.Access, []byte("A1")) || bytes.Contains(row.Refresh, []byte("R1")) {
+		if bytes.Contains(row.Access.Bytes(), []byte("A1")) || bytes.Contains(row.Refresh.Bytes(), []byte("R1")) {
 			t.Fatal("tokens stored in plain text")
 		}
 		recs := h.audit.all()
@@ -135,10 +136,10 @@ func TestCompleteConnect(t *testing.T) {
 
 	t.Run("a provider that sends no refresh token or expiry", func(t *testing.T) {
 		h := newHarness(t)
-		h.oauth.exchangeOut = app.TokenSet{AccessToken: "A1"}
+		h.oauth.exchangeOut = app.TokenSet{AccessToken: kernel.NewSecret("A1")}
 		h.connect(alice, "gitea")
 		row, _ := h.store.snap("alice", "gitea")
-		if len(row.Refresh) != 0 || row.ExpiresAt != nil || row.RevokeURL != nil {
+		if len(row.Refresh.Bytes()) != 0 || row.ExpiresAt != nil || row.RevokeURL != nil {
 			t.Fatalf("row: %v", row)
 		}
 	})
@@ -156,7 +157,7 @@ func TestCompleteConnect(t *testing.T) {
 	t.Run("someone else's state fails, saves nothing and is NOT consumed: the starter finishes it", func(t *testing.T) {
 		h := newHarness(t)
 		state := stateOf(startURL(t, h, "gitea"))
-		_, err := app.CompleteConnect(ctx, h.d, app.CompleteConnectCommand{Principal: bob, State: state, Code: "c"})
+		_, err := app.CompleteConnect(ctx, h.d, app.CompleteConnectCommand{Principal: bob, State: kernel.NewSecret(state), Code: kernel.NewSecret("c")})
 		if code(err) != "invalid_state" || err.Error() != "connect attempt is unknown or expired" {
 			t.Fatalf("%v", err)
 		}
@@ -167,7 +168,7 @@ func TestCompleteConnect(t *testing.T) {
 			t.Fatal("the starter's state was consumed by someone else's callback")
 		}
 		// Decided deviation oauth-state-kept: the starter completes the same connect.
-		res, err := app.CompleteConnect(ctx, h.d, app.CompleteConnectCommand{Principal: alice, State: state, Code: "c"})
+		res, err := app.CompleteConnect(ctx, h.d, app.CompleteConnectCommand{Principal: alice, State: kernel.NewSecret(state), Code: kernel.NewSecret("c")})
 		if err != nil || res.Server != "gitea" {
 			t.Fatalf("%v %v", res, err)
 		}
@@ -181,16 +182,16 @@ func TestCompleteConnect(t *testing.T) {
 
 	t.Run("an unknown or used state is invalid_state", func(t *testing.T) {
 		h := newHarness(t)
-		_, err := app.CompleteConnect(ctx, h.d, app.CompleteConnectCommand{Principal: alice, State: "nope", Code: "c"})
+		_, err := app.CompleteConnect(ctx, h.d, app.CompleteConnectCommand{Principal: alice, State: kernel.NewSecret("nope"), Code: kernel.NewSecret("c")})
 		if code(err) != "invalid_state" {
 			t.Fatal(code(err))
 		}
 		state := stateOf(startURL(t, h, "gitea"))
-		if _, err := app.CompleteConnect(ctx, h.d, app.CompleteConnectCommand{Principal: alice, State: state, Code: "c"}); err != nil {
+		if _, err := app.CompleteConnect(ctx, h.d, app.CompleteConnectCommand{Principal: alice, State: kernel.NewSecret(state), Code: kernel.NewSecret("c")}); err != nil {
 			t.Fatal(err)
 		}
 		before := len(h.oauth.exchanged())
-		_, err = app.CompleteConnect(ctx, h.d, app.CompleteConnectCommand{Principal: alice, State: state, Code: "c"})
+		_, err = app.CompleteConnect(ctx, h.d, app.CompleteConnectCommand{Principal: alice, State: kernel.NewSecret(state), Code: kernel.NewSecret("c")})
 		if code(err) != "invalid_state" || len(h.oauth.exchanged()) != before {
 			t.Fatal("a replay was accepted")
 		}
@@ -218,7 +219,7 @@ func TestCompleteConnect(t *testing.T) {
 				h := newHarness(t)
 				state := stateOf(startURL(t, h, "gitea"))
 				r.arrange(h)
-				_, err := app.CompleteConnect(ctx, h.d, app.CompleteConnectCommand{Principal: alice, State: state, Code: "c"})
+				_, err := app.CompleteConnect(ctx, h.d, app.CompleteConnectCommand{Principal: alice, State: kernel.NewSecret(state), Code: kernel.NewSecret("c")})
 				if code(err) != r.want {
 					t.Fatalf("%s, want %s", code(err), r.want)
 				}
@@ -243,7 +244,7 @@ func TestCompleteConnect(t *testing.T) {
 		state := stateOf(startURL(t, h, "gitea"))
 		h.gitea().groups = []string{"dev"}
 		outsider := who("carol", "ops")
-		_, err := app.CompleteConnect(ctx, h.d, app.CompleteConnectCommand{Principal: outsider, State: state, Code: "c"})
+		_, err := app.CompleteConnect(ctx, h.d, app.CompleteConnectCommand{Principal: outsider, State: kernel.NewSecret(state), Code: kernel.NewSecret("c")})
 		if code(err) != "invalid_state" {
 			t.Fatal(code(err))
 		}
@@ -262,7 +263,7 @@ func TestCompleteConnect(t *testing.T) {
 		h := newHarness(t)
 		state := stateOf(startURL(t, h, "gitea"))
 		h.gitea().oauth = nil
-		_, err := app.CompleteConnect(ctx, h.d, app.CompleteConnectCommand{Principal: alice, State: state, Code: "c"})
+		_, err := app.CompleteConnect(ctx, h.d, app.CompleteConnectCommand{Principal: alice, State: kernel.NewSecret(state), Code: kernel.NewSecret("c")})
 		// The fingerprint no longer matches either; the first refusal in the reference's order wins.
 		if code(err) != "invalid_state" {
 			t.Fatal(code(err))
@@ -272,8 +273,8 @@ func TestCompleteConnect(t *testing.T) {
 	t.Run("an attempt bound to a configuration without an OAuth client is not_found", func(t *testing.T) {
 		h := newHarness(t)
 		h.gitea().oauth = nil
-		h.pending.m["S"] = domain.NewPendingConnect("S", "alice", "gitea", "V", h.fingerprintOf(h.gitea()), t0)
-		_, err := app.CompleteConnect(ctx, h.d, app.CompleteConnectCommand{Principal: alice, State: "S", Code: "c"})
+		h.pending.m["S"] = domain.NewPendingConnect(kernel.NewSecret("S"), "alice", "gitea", kernel.NewSecret("V"), h.fingerprintOf(h.gitea()), t0)
+		_, err := app.CompleteConnect(ctx, h.d, app.CompleteConnectCommand{Principal: alice, State: kernel.NewSecret("S"), Code: kernel.NewSecret("c")})
 		if code(err) != "not_found" || len(h.oauth.exchanged()) != 0 {
 			t.Fatal(code(err))
 		}
@@ -292,7 +293,7 @@ func TestCompleteConnect(t *testing.T) {
 			go func() {
 				defer wg.Done()
 				<-start
-				_, errs[i] = app.CompleteConnect(ctx, h.d, app.CompleteConnectCommand{Principal: alice, State: state, Code: "c"})
+				_, errs[i] = app.CompleteConnect(ctx, h.d, app.CompleteConnectCommand{Principal: alice, State: kernel.NewSecret(state), Code: kernel.NewSecret("c")})
 			}()
 		}
 		close(start)
@@ -316,13 +317,13 @@ func TestCompleteConnect(t *testing.T) {
 		h := newHarness(t)
 		state := stateOf(startURL(t, h, "gitea"))
 		h.dir.secretErr = errors.New("key mismatch")
-		if _, err := app.CompleteConnect(ctx, h.d, app.CompleteConnectCommand{Principal: alice, State: state, Code: "c"}); err == nil || strings.HasPrefix(code(err), "exchange") {
+		if _, err := app.CompleteConnect(ctx, h.d, app.CompleteConnectCommand{Principal: alice, State: kernel.NewSecret(state), Code: kernel.NewSecret("c")}); err == nil || strings.HasPrefix(code(err), "exchange") {
 			t.Fatalf("%v", err)
 		}
 		h2 := newHarness(t)
 		state = stateOf(startURL(t, h2, "gitea"))
 		h2.store.failLock = errors.New("db down")
-		if _, err := app.CompleteConnect(ctx, h2.d, app.CompleteConnectCommand{Principal: alice, State: state, Code: "c"}); err == nil {
+		if _, err := app.CompleteConnect(ctx, h2.d, app.CompleteConnectCommand{Principal: alice, State: kernel.NewSecret(state), Code: kernel.NewSecret("c")}); err == nil {
 			t.Fatal("no error")
 		}
 	})
@@ -331,14 +332,14 @@ func TestCompleteConnect(t *testing.T) {
 func TestSavePAT(t *testing.T) {
 	t.Run("stores a PAT sealed for a pat_user server", func(t *testing.T) {
 		h := newHarness(t)
-		if err := app.SavePAT(ctx, h.d, app.SavePATCommand{Principal: alice, Server: "yt", Token: padded}); err != nil {
+		if err := app.SavePAT(ctx, h.d, app.SavePATCommand{Principal: alice, Server: "yt", Token: kernel.NewSecret(padded)}); err != nil {
 			t.Fatal(err)
 		}
 		row, _ := h.store.snap("alice", "yt")
-		if row.Kind != domain.KindPAT || row.Status != domain.StatusReady || len(row.Refresh) != 0 || row.ExpiresAt != nil || row.RevokeURL != nil {
+		if row.Kind != domain.KindPAT || row.Status != domain.StatusReady || len(row.Refresh.Bytes()) != 0 || row.ExpiresAt != nil || row.RevokeURL != nil {
 			t.Fatalf("row: %v", row)
 		}
-		if bytes.Contains(row.Access, []byte("perm:xyz")) {
+		if bytes.Contains(row.Access.Bytes(), []byte("perm:xyz")) {
 			t.Fatal("plain")
 		}
 		if row.IssuedFor != h.fingerprintOf(h.dir.find("yt")) {
@@ -353,11 +354,11 @@ func TestSavePAT(t *testing.T) {
 	t.Run("replaces any earlier connection, an OAuth one too, with fresh bytes", func(t *testing.T) {
 		h := newHarness(t)
 		h.store.put(domain.ConnectOAuth(domain.OAuthConnect{UserID: "alice", Server: "yt", IssuedFor: "x", Now: t0, Tokens: domain.SealedTokens{Access: mustSeal(t, h.box, "old"), Refresh: mustSeal(t, h.box, "oldr")}}))
-		if err := app.SavePAT(ctx, h.d, app.SavePATCommand{Principal: alice, Server: "yt", Token: "p"}); err != nil {
+		if err := app.SavePAT(ctx, h.d, app.SavePATCommand{Principal: alice, Server: "yt", Token: kernel.NewSecret("p")}); err != nil {
 			t.Fatal(err)
 		}
 		row, _ := h.store.snap("alice", "yt")
-		if row.Kind != domain.KindPAT || len(row.Refresh) != 0 {
+		if row.Kind != domain.KindPAT || len(row.Refresh.Bytes()) != 0 {
 			t.Fatalf("row: %v", row)
 		}
 	})
@@ -377,7 +378,7 @@ func TestSavePAT(t *testing.T) {
 			{"yt", "a\x00b", "invalid_pat"},
 			{"yt", strings.Repeat("x", 4097), "invalid_pat"},
 		} {
-			err := app.SavePAT(ctx, h.d, app.SavePATCommand{Principal: alice, Server: tc.server, Token: tc.token})
+			err := app.SavePAT(ctx, h.d, app.SavePATCommand{Principal: alice, Server: tc.server, Token: kernel.NewSecret(tc.token)})
 			if code(err) != tc.want {
 				t.Fatalf("%s %q: %s, want %s", tc.server, tc.token, code(err), tc.want)
 			}
@@ -385,11 +386,11 @@ func TestSavePAT(t *testing.T) {
 		if h.store.size() != 0 || len(h.audit.all()) != 0 {
 			t.Fatal("something was stored or audited")
 		}
-		err := app.SavePAT(ctx, h.d, app.SavePATCommand{Principal: alice, Server: "gitea", Token: "t"})
+		err := app.SavePAT(ctx, h.d, app.SavePATCommand{Principal: alice, Server: "gitea", Token: kernel.NewSecret("t")})
 		if err == nil || err.Error() != `server "gitea" does not use personal access tokens` {
 			t.Fatalf("message: %v", err)
 		}
-		if err := app.SavePAT(ctx, h.d, app.SavePATCommand{Principal: alice, Server: "yt", Token: strings.Repeat("x", 4096)}); err != nil {
+		if err := app.SavePAT(ctx, h.d, app.SavePATCommand{Principal: alice, Server: "yt", Token: kernel.NewSecret(strings.Repeat("x", 4096))}); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -397,7 +398,7 @@ func TestSavePAT(t *testing.T) {
 	t.Run("a failing store is an error", func(t *testing.T) {
 		h := newHarness(t)
 		h.store.failLock = errors.New("db down")
-		if err := app.SavePAT(ctx, h.d, app.SavePATCommand{Principal: alice, Server: "yt", Token: "p"}); err == nil {
+		if err := app.SavePAT(ctx, h.d, app.SavePATCommand{Principal: alice, Server: "yt", Token: kernel.NewSecret("p")}); err == nil {
 			t.Fatal("no error")
 		}
 		if len(h.audit.all()) != 0 {
@@ -465,7 +466,7 @@ func TestDisconnect(t *testing.T) {
 		h.oauth.mu.Lock()
 		h.oauth.revokeCalls = nil
 		h.oauth.mu.Unlock()
-		if err := app.SavePAT(ctx, h.d, app.SavePATCommand{Principal: alice, Server: "yt", Token: "p"}); err != nil {
+		if err := app.SavePAT(ctx, h.d, app.SavePATCommand{Principal: alice, Server: "yt", Token: kernel.NewSecret("p")}); err != nil {
 			t.Fatal(err)
 		}
 		if err := disconnect(h, "yt"); err != nil {
@@ -710,7 +711,7 @@ func TestListConnections(t *testing.T) {
 	t.Run("every usable personal server with ready, expired or missing", func(t *testing.T) {
 		h := newHarness(t)
 		h.connect(alice, "gitea")
-		if err := app.SavePAT(ctx, h.d, app.SavePATCommand{Principal: alice, Server: "yt", Token: "p"}); err != nil {
+		if err := app.SavePAT(ctx, h.d, app.SavePATCommand{Principal: alice, Server: "yt", Token: kernel.NewSecret("p")}); err != nil {
 			t.Fatal(err)
 		}
 		if err := app.MarkExpired(ctx, h.d, app.MarkExpiredCommand{UserID: "alice", Server: "yt"}); err != nil {
@@ -775,11 +776,11 @@ func TestAuditOutlivesACancelledRequest(t *testing.T) {
 	for name, f := range map[string]run{
 		"connect": func(h *harness, c context.Context) error {
 			state := stateOf(startURL(t, h, "gitea"))
-			_, err := app.CompleteConnect(c, h.d, app.CompleteConnectCommand{Principal: alice, State: state, Code: "c"})
+			_, err := app.CompleteConnect(c, h.d, app.CompleteConnectCommand{Principal: alice, State: kernel.NewSecret(state), Code: kernel.NewSecret("c")})
 			return err
 		},
 		"pat": func(h *harness, c context.Context) error {
-			return app.SavePAT(c, h.d, app.SavePATCommand{Principal: alice, Server: "yt", Token: "p"})
+			return app.SavePAT(c, h.d, app.SavePATCommand{Principal: alice, Server: "yt", Token: kernel.NewSecret("p")})
 		},
 		"disconnect": func(h *harness, c context.Context) error {
 			h.seedOAuth(tp(at(3_600_000)), "R1", "alice")
@@ -812,11 +813,11 @@ func TestAuditOutlivesACancelledRequest(t *testing.T) {
 func TestAuditErrorsPropagate(t *testing.T) {
 	h := newHarness(t)
 	h.audit.err = errors.New("audit down")
-	if err := app.SavePAT(ctx, h.d, app.SavePATCommand{Principal: alice, Server: "yt", Token: "p"}); err == nil {
+	if err := app.SavePAT(ctx, h.d, app.SavePATCommand{Principal: alice, Server: "yt", Token: kernel.NewSecret("p")}); err == nil {
 		t.Fatal("savePat swallowed the audit error")
 	}
 	state := stateOf(startURL(t, h, "gitea"))
-	if _, err := app.CompleteConnect(ctx, h.d, app.CompleteConnectCommand{Principal: alice, State: state, Code: "c"}); err == nil {
+	if _, err := app.CompleteConnect(ctx, h.d, app.CompleteConnectCommand{Principal: alice, State: kernel.NewSecret(state), Code: kernel.NewSecret("c")}); err == nil {
 		t.Fatal("completeConnect swallowed the audit error")
 	}
 	h.seedOAuth(tp(at(3_600_000)), "R1", "alice")
@@ -843,7 +844,7 @@ func TestCompleteConnectRefusesWhenTheConfigurationChangedWhileTheClientSecretWa
 		g.oauth = &o
 		g.clientSecret = "the-new-client-secret"
 	}
-	_, err := app.CompleteConnect(ctx, h.d, app.CompleteConnectCommand{Principal: alice, State: state, Code: "c"})
+	_, err := app.CompleteConnect(ctx, h.d, app.CompleteConnectCommand{Principal: alice, State: kernel.NewSecret(state), Code: kernel.NewSecret("c")})
 	if code(err) != "invalid_state" {
 		t.Fatalf("%v", err)
 	}

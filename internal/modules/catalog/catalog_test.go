@@ -116,7 +116,7 @@ func TestServiceAnswersWhatOtherModulesAsk(t *testing.T) {
 
 func TestHelpersOfTheDomainAreReachable(t *testing.T) {
 	mode := catalog.AuthMode{Kind: catalog.AuthSharedSecret, Header: "Authorization", Template: "Bearer {secret}"}
-	if got := catalog.HeaderFor(mode, "tok")["Authorization"]; got != "Bearer tok" {
+	if got := catalog.HeaderFor(mode, kernel.NewSecret("tok"))["Authorization"].Reveal(); got != "Bearer tok" {
 		t.Fatalf("HeaderFor: %q", got)
 	}
 	server, tool, err := catalog.ParseToolRef("gitea.issue.list")

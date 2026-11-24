@@ -22,6 +22,11 @@ func TestSecretsAreUnprintableHoweverHeld(t *testing.T) {
 	forbidden := append(secrettest.Strings(t, text), secrettest.Forbidden(t, raw)...)
 	secrettest.AssertUnprintable(t, "Secret", kernel.NewSecret(text), forbidden)
 	secrettest.AssertUnprintable(t, "SecretBytes", kernel.NewSecretBytes(raw), forbidden)
+	secrettest.AssertUnprintable(t, "UpstreamHeaders", kernel.UpstreamHeaders{"Authorization": kernel.NewSecret(text)}, forbidden)
+	secrettest.AssertUnprintable(t, "UpstreamTarget", kernel.UpstreamTarget{
+		URL: "https://u.example", Headers: kernel.UpstreamHeaders{"Authorization": kernel.NewSecret(text)},
+	}, forbidden)
+	secrettest.AssertUnprintable(t, "ResealOutcome", kernel.ResealOutcome{Kind: kernel.ResealResealed, Sealed: kernel.NewSecretBytes(raw)}, forbidden)
 }
 
 func TestSecretMarkersAndReveal(t *testing.T) {
