@@ -15,11 +15,11 @@ import (
 // The implementation lives in internal/platform/upstream; catalog (synchronisation) and gateway
 // (call_tool) use it.
 
-// UpstreamHeaders are request headers that carry credentials. It is a map[string]string
-// underneath (literals, indexing, range and conversion work), but every way of printing it
-// (fmt with any verb, slog, JSON, text) shows the header names with "[redacted]" for the
-// values. Read the real values by indexing or ranging.
-type UpstreamHeaders map[string]string
+// UpstreamHeaders are request headers that carry credentials: header name to value. Every way of
+// printing it (fmt with any verb, slog, JSON, text) shows the header names with "[redacted]" for
+// the values, and each value is a Secret, so a map held where fmt cannot call these methods (an
+// unexported field of another struct) shows no value either. Read a value with Reveal.
+type UpstreamHeaders map[string]Secret
 
 const redactedValue = "[redacted]"
 
@@ -69,7 +69,7 @@ func (h UpstreamHeaders) MarshalJSON() ([]byte, error) { return json.Marshal(h.r
 func (h UpstreamHeaders) MarshalText() ([]byte, error) { return []byte(h.String()), nil }
 
 // UpstreamTarget is where and how to reach an upstream for one operation. Headers already carry
-// the credentials, so a target must never be logged or put into an error.
+// the credentials (as Secrets: printing a target shows none).
 type UpstreamTarget struct {
 	URL              string
 	Headers          UpstreamHeaders

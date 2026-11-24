@@ -4,6 +4,7 @@ package infra
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -311,7 +312,7 @@ func TestSessions(t *testing.T) {
 func TestPendingLogins(t *testing.T) {
 	ctx := context.Background()
 	pool, a := setup(t)
-	p := app.PendingLogin{State: "st1", CodeVerifier: "cv", Nonce: "no", ReturnTo: "/x?y=1", ExpiresAt: time.Now().Add(10 * time.Minute).UTC().Truncate(time.Microsecond)}
+	p := app.PendingLogin{State: kernel.NewSecret("st1"), CodeVerifier: kernel.NewSecret("cv"), Nonce: kernel.NewSecret("no"), ReturnTo: "/x?y=1", ExpiresAt: time.Now().Add(10 * time.Minute).UTC().Truncate(time.Microsecond)}
 	if err := a.PendingLogins.Insert(ctx, p); err != nil {
 		t.Fatal(err)
 	}
@@ -319,7 +320,7 @@ func TestPendingLogins(t *testing.T) {
 		t.Fatal("duplicate state must fail")
 	}
 	got := must(a.PendingLogins.Consume(ctx, "st1"))
-	if got == nil || *got != p {
+	if got == nil || !reflect.DeepEqual(*got, p) {
 		t.Fatalf("got %+v want %+v", got, p)
 	}
 	if must(a.PendingLogins.Consume(ctx, "st1")) != nil {
@@ -336,7 +337,7 @@ func TestPendingLogins(t *testing.T) {
 		('old','v','n','/', now() - interval '2 minutes'),
 		('recent','v','n','/', now() - interval '30 seconds'),
 		('live','v','n','/', now() + interval '5 minutes')`)
-	if err := a.PendingLogins.Insert(ctx, app.PendingLogin{State: "new", CodeVerifier: "v", Nonce: "n", ReturnTo: "/", ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
+	if err := a.PendingLogins.Insert(ctx, app.PendingLogin{State: kernel.NewSecret("new"), CodeVerifier: kernel.NewSecret("v"), Nonce: kernel.NewSecret("n"), ReturnTo: "/", ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
 		t.Fatal(err)
 	}
 	for state, want := range map[string]bool{"old": false, "recent": true, "live": true, "new": true} {
@@ -435,7 +436,7 @@ func TestConcurrentConsumeGivesTheRowToExactlyOne(t *testing.T) {
 			t.Fatalf("link round %d: winners = %d, err = %v", round, w, err)
 		}
 		state := "state-" + hash[:4]
-		if err := a.PendingLogins.Insert(ctx, app.PendingLogin{State: state, CodeVerifier: "v", Nonce: "n", ReturnTo: "/", ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
+		if err := a.PendingLogins.Insert(ctx, app.PendingLogin{State: kernel.NewSecret(state), CodeVerifier: kernel.NewSecret("v"), Nonce: kernel.NewSecret("n"), ReturnTo: "/", ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
 			t.Fatal(err)
 		}
 		w, err = race(8, func() (*app.PendingLogin, error) { return a.PendingLogins.Consume(ctx, state) })

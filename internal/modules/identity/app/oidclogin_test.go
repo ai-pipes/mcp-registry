@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ai-pipes/mcp-registry/internal/kernel"
 	"github.com/ai-pipes/mcp-registry/internal/modules/identity/app"
 	"github.com/ai-pipes/mcp-registry/internal/modules/identity/domain"
 )
@@ -28,7 +29,7 @@ func start(t *testing.T, f *fixture, returnTo string) *url.URL {
 }
 
 func callback(f *fixture, state, ip string) (app.OIDCLoginResult, error) {
-	return app.CompleteOIDCLogin(ctx, f.Deps, app.CompleteOIDCLoginInput{State: state, Code: "code-1", IP: ip})
+	return app.CompleteOIDCLogin(ctx, f.Deps, app.CompleteOIDCLoginInput{State: kernel.NewSecret(state), Code: kernel.NewSecret("code-1"), IP: ip})
 }
 
 // oidcLogin runs a whole sign-in with the given claims from 1.1.1.1.
@@ -56,16 +57,16 @@ func TestStartOIDCLoginStoresAPendingLoginAndSendsPKCEStateAndNonce(t *testing.T
 		t.Fatalf("url = %v", u)
 	}
 	p, ok := f.Store.pending[state]
-	if !ok || p.ReturnTo != "/tokens" || p.Nonce != u.Query().Get("nonce") {
+	if !ok || p.ReturnTo != "/tokens" || p.Nonce.Reveal() != u.Query().Get("nonce") {
 		t.Fatalf("pending = %+v", p)
 	}
-	if got := u.Query().Get("code_challenge"); got != f.Deps.Hasher.Base64URL(p.CodeVerifier) {
+	if got := u.Query().Get("code_challenge"); got != f.Deps.Hasher.Base64URL(p.CodeVerifier.Reveal()) {
 		t.Fatalf("challenge = %q", got)
 	}
 	if !p.ExpiresAt.Equal(f.Clock.Now().Add(10 * time.Minute)) {
 		t.Fatalf("expiresAt = %v", p.ExpiresAt)
 	}
-	if state == p.Nonce || state == p.CodeVerifier || p.Nonce == p.CodeVerifier {
+	if state == p.Nonce.Reveal() || state == p.CodeVerifier.Reveal() || p.Nonce.Reveal() == p.CodeVerifier.Reveal() {
 		t.Fatal("state, nonce and verifier must be three different random values")
 	}
 }
@@ -161,14 +162,14 @@ func TestCompleteOIDCLoginCreatesAMemberForTheLoginGroupAndOpensASession(t *test
 	if res.ReturnTo != "/servers" {
 		t.Fatalf("returnTo = %q", res.ReturnTo)
 	}
-	p, err := app.AuthenticateSession(ctx, f.Deps, res.SessionID)
+	p, err := app.AuthenticateSession(ctx, f.Deps, res.SessionID.Reveal())
 	if err != nil || p == nil {
 		t.Fatalf("principal = %v err = %v", p, err)
 	}
 	if p.Role != domain.RoleMember || !slices.Equal(p.Groups, []string{"mcp-users"}) || p.Via != domain.ViaSession {
 		t.Fatalf("principal = %+v", p)
 	}
-	s := f.Store.sessions[f.Deps.Hasher.Hex(res.SessionID)]
+	s := f.Store.sessions[f.Deps.Hasher.Hex(res.SessionID.Reveal())]
 	if s == nil || !s.ExpiresAt.Equal(domain.SessionExpiry(f.Clock.Now())) {
 		t.Fatalf("session = %+v", s)
 	}
@@ -191,7 +192,7 @@ func TestCompleteOIDCLoginAuditsTheSignInWithViaOIDC(t *testing.T) {
 	if e.ActorID == nil || *e.ActorID != onlyUser(t, f).ID || e.Target != nil || len(e.Meta) != 1 || e.Meta["via"] != "oidc" {
 		t.Fatalf("entry = %+v", e)
 	}
-	if strings.Contains(strings.Join(auditText(f), " "), res.SessionID) {
+	if strings.Contains(strings.Join(auditText(f), " "), res.SessionID.Reveal()) {
 		t.Fatal("the session id reached the audit log")
 	}
 }
@@ -266,11 +267,11 @@ func TestCompleteOIDCLoginPassesTheCallbackIssAndTheAttemptSecretsToTheProvider(
 	state := u.Query().Get("state")
 	pending := f.Store.pending[state]
 	iss := "https://id.example"
-	if _, err := app.CompleteOIDCLogin(ctx, f.Deps, app.CompleteOIDCLoginInput{State: state, Code: "c", Iss: &iss, IP: "1.1.1.1"}); err != nil {
+	if _, err := app.CompleteOIDCLogin(ctx, f.Deps, app.CompleteOIDCLoginInput{State: kernel.NewSecret(state), Code: kernel.NewSecret("c"), Iss: &iss, IP: "1.1.1.1"}); err != nil {
 		t.Fatal(err)
 	}
 	got := f.OIDC.LastExchange
-	if got == nil || got.Code != "c" || got.CodeVerifier != pending.CodeVerifier || got.Nonce != pending.Nonce ||
+	if got == nil || got.Code.Reveal() != "c" || got.CodeVerifier.Reveal() != pending.CodeVerifier.Reveal() || got.Nonce.Reveal() != pending.Nonce.Reveal() ||
 		got.Iss == nil || *got.Iss != iss {
 		t.Fatalf("exchange = %+v", got)
 	}

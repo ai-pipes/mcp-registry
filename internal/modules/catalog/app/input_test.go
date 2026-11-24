@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ai-pipes/mcp-registry/internal/kernel"
 	"github.com/ai-pipes/mcp-registry/internal/modules/catalog/app"
 	"github.com/ai-pipes/mcp-registry/internal/modules/catalog/domain"
 )
@@ -236,12 +237,12 @@ func TestSlugLimits(t *testing.T) {
 
 func TestSecretContractLimits(t *testing.T) {
 	// REST create body: secret 1..4096, checked last in schema order.
-	issues := app.ValidateCreateRequest(input("gitea"), ptr(""))
+	issues := app.ValidateCreateRequest(input("gitea"), secretOf(""))
 	equalStrings(t, paths(issues), []string{"secret"})
-	equalStrings(t, paths(app.ValidateCreateRequest(input("gitea"), ptr(strings.Repeat("a", 4097)))), []string{"secret"})
-	equalStrings(t, paths(app.ValidateCreateRequest(input("gitea"), ptr(strings.Repeat("a", 4096)))), []string{})
-	equalStrings(t, paths(app.ValidateCreateRequest(input("gitea"), nil)), []string{})
-	equalStrings(t, paths(app.ValidateCreateRequest(input("", func(f *app.ServerFields) { f.Name = "" }), ptr(""))), []string{"name", "slug", "secret"})
+	equalStrings(t, paths(app.ValidateCreateRequest(input("gitea"), secretOf(strings.Repeat("a", 4097)))), []string{"secret"})
+	equalStrings(t, paths(app.ValidateCreateRequest(input("gitea"), secretOf(strings.Repeat("a", 4096)))), []string{})
+	equalStrings(t, paths(app.ValidateCreateRequest(input("gitea"), kernel.Secret{})), []string{})
+	equalStrings(t, paths(app.ValidateCreateRequest(input("", func(f *app.ServerFields) { f.Name = "" }), secretOf(""))), []string{"name", "slug", "secret"})
 
 	// A CLI create does not go through the REST body contract: a blank secret reaches the domain.
 	h := newHarness()
@@ -277,7 +278,7 @@ func TestURLIsStoredCleaned(t *testing.T) {
 	})}); err != nil {
 		t.Fatal(err)
 	}
-	if h.servers.row(t, "shared").SealedSecret == nil || h.servers.row(t, "shared").URL != "https://mcp.example.com/gitea" {
+	if !h.servers.row(t, "shared").SealedSecret.IsSet() || h.servers.row(t, "shared").URL != "https://mcp.example.com/gitea" {
 		t.Fatalf("row = %+v", h.servers.row(t, "shared"))
 	}
 }

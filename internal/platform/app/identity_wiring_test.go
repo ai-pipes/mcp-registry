@@ -49,7 +49,7 @@ func (memTokens) FindByHash(context.Context, string) (*idapp.TokenRecord, error)
 type memPending struct{ idapp.PendingLoginRepository }
 
 func (memPending) Consume(_ context.Context, state string) (*idapp.PendingLogin, error) {
-	return &idapp.PendingLogin{State: state, ReturnTo: "/", ExpiresAt: time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC)}, nil
+	return &idapp.PendingLogin{State: kernel.NewSecret(state), ReturnTo: "/", ExpiresAt: time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC)}, nil
 }
 
 type memLinks struct{ idapp.LoginLinkRepository }

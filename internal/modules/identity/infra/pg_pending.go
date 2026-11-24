@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/ai-pipes/mcp-registry/internal/kernel"
 	"github.com/ai-pipes/mcp-registry/internal/modules/identity/app"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -22,16 +23,18 @@ func (r *pgPendingLoginRepository) Insert(ctx context.Context, p app.PendingLogi
 		return err
 	}
 	_, err := r.pool.Exec(ctx, `insert into identity.oidc_pending (state, code_verifier, nonce, return_to, expires_at)
-      values ($1, $2, $3, $4, $5)`, p.State, p.CodeVerifier, p.Nonce, p.ReturnTo, us(p.ExpiresAt))
+      values ($1, $2, $3, $4, $5)`, p.State.Reveal(), p.CodeVerifier.Reveal(), p.Nonce.Reveal(), p.ReturnTo, us(p.ExpiresAt))
 	return err
 }
 
 func (r *pgPendingLoginRepository) Consume(ctx context.Context, state string) (*app.PendingLogin, error) {
 	var p app.PendingLogin
+	var st, verifier, nonce string
 	var exp time.Time
 	err := r.pool.QueryRow(ctx, `delete from identity.oidc_pending where state = $1
       returning state, code_verifier, nonce, return_to, expires_at`, state).
-		Scan(&p.State, &p.CodeVerifier, &p.Nonce, &p.ReturnTo, &exp)
+		Scan(&st, &verifier, &nonce, &p.ReturnTo, &exp)
+	p.State, p.CodeVerifier, p.Nonce = kernel.NewSecret(st), kernel.NewSecret(verifier), kernel.NewSecret(nonce)
 	p.ExpiresAt = exp.UTC()
 	return one(p, err)
 }

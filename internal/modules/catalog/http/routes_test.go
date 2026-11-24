@@ -234,11 +234,11 @@ func TestSecretStatusAndSyncRoutes(t *testing.T) {
 		t.Fatalf("%d %s", r.Status, r.Body)
 	}
 	wantReply(t, e.admin("PUT", "/api/servers/shared/secret", map[string]any{"secret": "abc"}), 204, "")
-	if st, _ := e.servers.row("shared"); len(st.SealedSecret) == 0 {
+	if st, _ := e.servers.row("shared"); len(st.SealedSecret.Reveal()) == 0 {
 		t.Fatal("the secret was not stored")
 	}
 	wantReply(t, e.admin("PUT", "/api/servers/shared/secret", map[string]any{"secret": nil}), 204, "")
-	if st, _ := e.servers.row("shared"); len(st.SealedSecret) != 0 {
+	if st, _ := e.servers.row("shared"); len(st.SealedSecret.Reveal()) != 0 {
 		t.Fatal("the secret was not cleared")
 	}
 	wantReply(t, e.admin("PUT", "/api/servers/shared/secret", map[string]any{"secret": "   "}), 422,

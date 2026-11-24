@@ -99,7 +99,7 @@ func (c *fakeCredentials) PersonalSecret(_ context.Context, _ app.ServerCallTarg
 	if !ok {
 		return app.PersonalCredential{Failure: c.failure}, nil
 	}
-	return app.PersonalCredential{Secret: tok}, nil
+	return app.PersonalCredential{Secret: kernel.NewSecret(tok)}, nil
 }
 
 type recordingLogger struct {
@@ -409,8 +409,8 @@ func TestSyncServerCredentials(t *testing.T) {
 		if _, err := h.sync(&admin, "gitea"); err != nil {
 			t.Fatal(err)
 		}
-		if got := h.upstream.targets[0].Headers; !reflect.DeepEqual(map[string]string(got), map[string]string{"X-API-Key": "k s3cret"}) {
-			t.Fatalf("headers = %v", map[string]string(got))
+		if got := h.upstream.targets[0].Headers; len(got) != 1 || got["X-API-Key"].Reveal() != "k s3cret" {
+			t.Fatalf("headers = %v", got)
 		}
 	})
 
@@ -470,8 +470,8 @@ func TestSyncServerCredentials(t *testing.T) {
 		if _, err := h.sync(&admin, "gitea"); err != nil {
 			t.Fatal(err)
 		}
-		if got := h.upstream.targets[0].Headers; got["Authorization"] != "token pat-1" {
-			t.Fatalf("headers = %v", map[string]string(got))
+		if got := h.upstream.targets[0].Headers; got["Authorization"].Reveal() != "token pat-1" {
+			t.Fatalf("headers = %v", got)
 		}
 	})
 
@@ -487,7 +487,7 @@ func TestSyncServerCredentials(t *testing.T) {
 		equalStrings(t, h.creds.asked, []string{"admin-1", "admin-2", "admin-2"})
 		var got []string
 		for _, tg := range h.upstream.targets {
-			got = append(got, tg.Headers["Authorization"])
+			got = append(got, tg.Headers["Authorization"].Reveal())
 		}
 		equalStrings(t, got, []string{"Bearer tok-1", "Bearer tok-2", "Bearer tok-2"})
 		if u := h.server(t, "gitea").SyncUserID; u == nil || *u != "admin-2" {

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ai-pipes/mcp-registry/internal/kernel"
 	"github.com/ai-pipes/mcp-registry/internal/modules/connections/app"
 	"github.com/ai-pipes/mcp-registry/internal/modules/connections/domain"
 )
@@ -29,8 +30,8 @@ func secretHarness(t *testing.T) *harness {
 	h := newHarness(t)
 	h.gitea().clientSecret = "CLIENTSECRETMARK"
 	h.withRevokeURL()
-	h.oauth.exchangeOut = app.TokenSet{AccessToken: "ACCESSMARK", RefreshToken: "REFRESHMARK", ExpiresAt: tp(at(3_600_000))}
-	h.oauth.next = app.TokenSet{AccessToken: "NEWACCESSMARK", RefreshToken: "NEWREFRESHMARK", ExpiresAt: tp(at(3_600_000))}
+	h.oauth.exchangeOut = app.TokenSet{AccessToken: kernel.NewSecret("ACCESSMARK"), RefreshToken: kernel.NewSecret("REFRESHMARK"), ExpiresAt: tp(at(3_600_000))}
+	h.oauth.next = app.TokenSet{AccessToken: kernel.NewSecret("NEWACCESSMARK"), RefreshToken: kernel.NewSecret("NEWREFRESHMARK"), ExpiresAt: tp(at(3_600_000))}
 	return h
 }
 
@@ -91,7 +92,7 @@ func TestNoSecretInErrorsAuditOrPrintedValues(t *testing.T) {
 		if err != nil {
 			return nil, err
 		}
-		return app.CompleteConnect(ctx, h.d, app.CompleteConnectCommand{Principal: alice, State: stateOf(url), Code: p})
+		return app.CompleteConnect(ctx, h.d, app.CompleteConnectCommand{Principal: alice, State: kernel.NewSecret(stateOf(url)), Code: kernel.NewSecret(p)})
 	}
 	scenarios := []scenario{
 		{"refresh: no answer with a errSloppy error", func(h *harness) []any {
@@ -111,7 +112,7 @@ func TestNoSecretInErrorsAuditOrPrintedValues(t *testing.T) {
 		{"refresh: success returns the secret, which must not print", func(h *harness) []any {
 			seedMarked(t, h, -1000, "REFRESHMARK")
 			r, err := h.resolve("alice", "gitea")
-			if r.Secret != "NEWACCESSMARK" {
+			if r.Secret.Reveal() != "NEWACCESSMARK" {
 				t.Fatalf("secret %q", r.Secret)
 			}
 			return []any{r, &r, err}
@@ -119,7 +120,7 @@ func TestNoSecretInErrorsAuditOrPrintedValues(t *testing.T) {
 		{"use: success returns the secret, which must not print", func(h *harness) []any {
 			seedMarked(t, h, 3_600_000, "REFRESHMARK")
 			r, err := h.resolve("alice", "gitea")
-			if r.Secret != "ACCESSMARK" {
+			if r.Secret.Reveal() != "ACCESSMARK" {
 				t.Fatalf("secret %q", r.Secret)
 			}
 			return []any{r, err}
@@ -172,12 +173,12 @@ func TestNoSecretInErrorsAuditOrPrintedValues(t *testing.T) {
 			return []any{res, err}
 		}},
 		{"complete: unknown state that is a code", func(h *harness) []any {
-			_, err := app.CompleteConnect(ctx, h.d, app.CompleteConnectCommand{Principal: alice, State: "STATEMARK-9", Code: "CODEMARK"})
+			_, err := app.CompleteConnect(ctx, h.d, app.CompleteConnectCommand{Principal: alice, State: kernel.NewSecret("STATEMARK-9"), Code: kernel.NewSecret("CODEMARK")})
 			return []any{err}
 		}},
 		{"complete: foreign person", func(h *harness) []any {
 			url, _ := app.StartConnect(ctx, h.d, app.StartConnectCommand{Principal: alice, Server: "gitea"})
-			_, err := app.CompleteConnect(ctx, h.d, app.CompleteConnectCommand{Principal: bob, State: stateOf(url), Code: "CODEMARK"})
+			_, err := app.CompleteConnect(ctx, h.d, app.CompleteConnectCommand{Principal: bob, State: kernel.NewSecret(stateOf(url)), Code: kernel.NewSecret("CODEMARK")})
 			return []any{err}
 		}},
 		{"complete: store fails", func(h *harness) []any {
@@ -188,13 +189,13 @@ func TestNoSecretInErrorsAuditOrPrintedValues(t *testing.T) {
 		{"savePat: refused tokens", func(h *harness) []any {
 			var out []any
 			for _, tok := range []string{"PATMARK\nPATMARK", "PATMARK\x00", strings.Repeat("PATMARK", 700)} {
-				out = append(out, app.SavePAT(ctx, h.d, app.SavePATCommand{Principal: alice, Server: "yt", Token: tok}))
+				out = append(out, app.SavePAT(ctx, h.d, app.SavePATCommand{Principal: alice, Server: "yt", Token: kernel.NewSecret(tok)}))
 			}
-			out = append(out, app.SavePAT(ctx, h.d, app.SavePATCommand{Principal: alice, Server: "gitea", Token: "PATMARK"}))
+			out = append(out, app.SavePAT(ctx, h.d, app.SavePATCommand{Principal: alice, Server: "gitea", Token: kernel.NewSecret("PATMARK")}))
 			return out
 		}},
 		{"savePat: success", func(h *harness) []any {
-			return []any{app.SavePAT(ctx, h.d, app.SavePATCommand{Principal: alice, Server: "yt", Token: "PATMARK"})}
+			return []any{app.SavePAT(ctx, h.d, app.SavePATCommand{Principal: alice, Server: "yt", Token: kernel.NewSecret("PATMARK")})}
 		}},
 		{"disconnect: revoke fails with a errSloppy error", func(h *harness) []any {
 			seedMarked(t, h, 3_600_000, "REFRESHMARK")
@@ -204,7 +205,7 @@ func TestNoSecretInErrorsAuditOrPrintedValues(t *testing.T) {
 		{"complete: client secret read fails", func(h *harness) []any {
 			url, _ := app.StartConnect(ctx, h.d, app.StartConnectCommand{Principal: alice, Server: "gitea"})
 			h.dir.secretErr = errors.New("cannot open the stored secret")
-			res, err := app.CompleteConnect(ctx, h.d, app.CompleteConnectCommand{Principal: alice, State: stateOf(url), Code: "CODEMARK"})
+			res, err := app.CompleteConnect(ctx, h.d, app.CompleteConnectCommand{Principal: alice, State: kernel.NewSecret(stateOf(url)), Code: kernel.NewSecret("CODEMARK")})
 			if err == nil || err.Error() != `connections: read the OAuth client secret of "gitea": cannot open the stored secret` {
 				t.Fatalf("error text: %v", err)
 			}
@@ -257,20 +258,20 @@ func TestNoSecretInErrorsAuditOrPrintedValues(t *testing.T) {
 
 func TestSecretCarryingTypesRedactWhenPrinted(t *testing.T) {
 	values := []any{
-		app.CredentialResult{Secret: "ACCESSMARK"},
-		&app.CredentialResult{Secret: "ACCESSMARK"},
-		app.TokenSet{AccessToken: "ACCESSMARK", RefreshToken: "REFRESHMARK"},
-		&app.TokenSet{AccessToken: "ACCESSMARK", RefreshToken: "REFRESHMARK"},
+		app.CredentialResult{Secret: kernel.NewSecret("ACCESSMARK")},
+		&app.CredentialResult{Secret: kernel.NewSecret("ACCESSMARK")},
+		app.TokenSet{AccessToken: kernel.NewSecret("ACCESSMARK"), RefreshToken: kernel.NewSecret("REFRESHMARK")},
+		&app.TokenSet{AccessToken: kernel.NewSecret("ACCESSMARK"), RefreshToken: kernel.NewSecret("REFRESHMARK")},
 		app.NewClientSecret("CLIENTSECRETMARK"),
-		&app.ExchangeInput{Code: "CODEMARK", CodeVerifier: "VERIFIERMARK"},
-		&app.AuthorizeInput{State: "STATEMARK"},
-		app.CredentialResult{Secret: "ACCESSMARK"},
-		app.ExchangeInput{Code: "CODEMARK", CodeVerifier: "VERIFIERMARK", RedirectURI: "https://x"},
-		app.AuthorizeInput{State: "STATEMARK", CodeChallenge: "c", RedirectURI: "https://x"},
-		app.CompleteConnectCommand{Principal: alice, State: "STATEMARK", Code: "CODEMARK"},
-		&app.CompleteConnectCommand{Principal: alice, State: "STATEMARK", Code: "CODEMARK"},
-		app.SavePATCommand{Principal: alice, Server: "yt", Token: "PATMARK"},
-		&app.SavePATCommand{Principal: alice, Server: "yt", Token: "PATMARK"},
+		&app.ExchangeInput{Code: kernel.NewSecret("CODEMARK"), CodeVerifier: kernel.NewSecret("VERIFIERMARK")},
+		&app.AuthorizeInput{State: kernel.NewSecret("STATEMARK")},
+		app.CredentialResult{Secret: kernel.NewSecret("ACCESSMARK")},
+		app.ExchangeInput{Code: kernel.NewSecret("CODEMARK"), CodeVerifier: kernel.NewSecret("VERIFIERMARK"), RedirectURI: "https://x"},
+		app.AuthorizeInput{State: kernel.NewSecret("STATEMARK"), CodeChallenge: "c", RedirectURI: "https://x"},
+		app.CompleteConnectCommand{Principal: alice, State: kernel.NewSecret("STATEMARK"), Code: kernel.NewSecret("CODEMARK")},
+		&app.CompleteConnectCommand{Principal: alice, State: kernel.NewSecret("STATEMARK"), Code: kernel.NewSecret("CODEMARK")},
+		app.SavePATCommand{Principal: alice, Server: "yt", Token: kernel.NewSecret("PATMARK")},
+		&app.SavePATCommand{Principal: alice, Server: "yt", Token: kernel.NewSecret("PATMARK")},
 	}
 	for _, v := range values {
 		if found := leaks(v); len(found) != 0 {

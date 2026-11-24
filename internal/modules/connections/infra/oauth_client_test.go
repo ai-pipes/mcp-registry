@@ -102,11 +102,11 @@ const refBasic = "Basic Z2F0ZXdheS1jbGllbnQ6Z2F0ZSUyQndheSUyNTJGJTNBc2VjcmV0JTdF
 func TestExchangeRequestMatchesTheReference(t *testing.T) {
 	p := newProvider(t, okJSON(`{"access_token":"a","token_type":"bearer","expires_in":3600,"refresh_token":"r"}`))
 	ts, err := testClient().ExchangeCode(context.Background(), cfgFor(p.URL), app.NewClientSecret(refKey),
-		app.ExchangeInput{Code: "the code&1", CodeVerifier: "verifier-123", RedirectURI: "http://gw.test/api/connections/callback"})
+		app.ExchangeInput{Code: kernel.NewSecret("the code&1"), CodeVerifier: kernel.NewSecret("verifier-123"), RedirectURI: "http://gw.test/api/connections/callback"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ts.AccessToken != "a" || ts.RefreshToken != "r" || ts.ExpiresAt == nil || !ts.ExpiresAt.Equal(clientNow.Add(time.Hour)) {
+	if ts.AccessToken.Reveal() != "a" || ts.RefreshToken.Reveal() != "r" || ts.ExpiresAt == nil || !ts.ExpiresAt.Equal(clientNow.Add(time.Hour)) {
 		t.Fatalf("tokens: %v exp %v", ts.AccessToken, ts.ExpiresAt)
 	}
 	reqs := p.requests()
@@ -137,11 +137,11 @@ func TestExchangeRequestMatchesTheReference(t *testing.T) {
 
 func TestRefreshRequestMatchesTheReference(t *testing.T) {
 	p := newProvider(t, okJSON(`{"access_token":"a","token_type":"Bearer"}`))
-	ts, err := testClient().Refresh(context.Background(), cfgFor(p.URL), app.NewClientSecret(refKey), "refresh token/1")
+	ts, err := testClient().Refresh(context.Background(), cfgFor(p.URL), app.NewClientSecret(refKey), kernel.NewSecret("refresh token/1"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ts.RefreshToken != "" || ts.ExpiresAt != nil {
+	if ts.RefreshToken.Reveal() != "" || ts.ExpiresAt != nil {
 		t.Fatalf("no refresh token and no expiry in the answer: %v %v", ts.RefreshToken, ts.ExpiresAt)
 	}
 	r := p.requests()[0]
@@ -156,10 +156,10 @@ func TestRefreshRequestMatchesTheReference(t *testing.T) {
 func TestPublicClientSendsClientIDInTheBodyAndNoAuthorization(t *testing.T) {
 	p := newProvider(t, okJSON(`{"access_token":"a","token_type":"bearer"}`))
 	c := testClient()
-	if _, err := c.Refresh(context.Background(), cfgFor(p.URL), app.ClientSecret{}, "r2"); err != nil {
+	if _, err := c.Refresh(context.Background(), cfgFor(p.URL), app.ClientSecret{}, kernel.NewSecret("r2")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.ExchangeCode(context.Background(), cfgFor(p.URL), app.ClientSecret{}, app.ExchangeInput{Code: "c", CodeVerifier: "v", RedirectURI: "http://gw.test/cb"}); err != nil {
+	if _, err := c.ExchangeCode(context.Background(), cfgFor(p.URL), app.ClientSecret{}, app.ExchangeInput{Code: kernel.NewSecret("c"), CodeVerifier: kernel.NewSecret("v"), RedirectURI: "http://gw.test/cb"}); err != nil {
 		t.Fatal(err)
 	}
 	reqs := p.requests()
@@ -178,7 +178,7 @@ func TestPublicClientSendsClientIDInTheBodyAndNoAuthorization(t *testing.T) {
 
 func TestExchangeWithoutVerifierSendsNoCodeVerifier(t *testing.T) {
 	p := newProvider(t, okJSON(`{"access_token":"a","token_type":"bearer"}`))
-	if _, err := testClient().ExchangeCode(context.Background(), cfgFor(p.URL), app.NewClientSecret("s"), app.ExchangeInput{Code: "c", RedirectURI: "http://gw.test/cb"}); err != nil {
+	if _, err := testClient().ExchangeCode(context.Background(), cfgFor(p.URL), app.NewClientSecret("s"), app.ExchangeInput{Code: kernel.NewSecret("c"), RedirectURI: "http://gw.test/cb"}); err != nil {
 		t.Fatal(err)
 	}
 	if b := p.requests()[0].Body; strings.Contains(b, "code_verifier") {
@@ -188,7 +188,7 @@ func TestExchangeWithoutVerifierSendsNoCodeVerifier(t *testing.T) {
 
 func TestRevokeRequestMatchesTheReference(t *testing.T) {
 	p := newProvider(t, status(200, "", ""))
-	if err := testClient().Revoke(context.Background(), cfgFor(p.URL), app.NewClientSecret(refKey), "refresh token/1"); err != nil {
+	if err := testClient().Revoke(context.Background(), cfgFor(p.URL), app.NewClientSecret(refKey), kernel.NewSecret("refresh token/1")); err != nil {
 		t.Fatal(err)
 	}
 	r := p.requests()[0]
@@ -206,14 +206,14 @@ func TestRevokeRequestMatchesTheReference(t *testing.T) {
 func TestRevokeAnswersAreErrorsExceptHTTP200(t *testing.T) {
 	for _, code := range []int{200, 201, 204, 302, 400, 401, 500} {
 		p := newProvider(t, status(code, "", ""))
-		err := testClient().Revoke(context.Background(), cfgFor(p.URL), app.NewClientSecret("s"), "tok")
+		err := testClient().Revoke(context.Background(), cfgFor(p.URL), app.NewClientSecret("s"), kernel.NewSecret("tok"))
 		if (code == 200) != (err == nil) {
 			t.Errorf("HTTP %d: err = %v", code, err)
 		}
 	}
 	cfg := cfgFor("http://127.0.0.1:1")
 	cfg.RevokeURL = nil
-	if err := testClient().Revoke(context.Background(), cfg, app.NewClientSecret("s"), "tok"); err == nil {
+	if err := testClient().Revoke(context.Background(), cfg, app.NewClientSecret("s"), kernel.NewSecret("tok")); err == nil {
 		t.Error("a server without a revoke URL must not revoke")
 	}
 }
@@ -222,7 +222,7 @@ func TestBasicHeaderOfTheClientUsesFormEncodingForStarAndTilde(t *testing.T) {
 	p := newProvider(t, okJSON(`{"access_token":"a","token_type":"bearer"}`))
 	cfg := cfgFor(p.URL)
 	cfg.ClientID = "id*~ x"
-	if _, err := testClient().Refresh(context.Background(), cfg, app.NewClientSecret("s*~ é"), "r"); err != nil {
+	if _, err := testClient().Refresh(context.Background(), cfg, app.NewClientSecret("s*~ é"), kernel.NewSecret("r")); err != nil {
 		t.Fatal(err)
 	}
 	if got, want := p.requests()[0].Header.Get("Authorization"), basicHeader("id*~ x", "s*~ é"); got != want {
@@ -343,11 +343,11 @@ func TestEveryResponseClassOfRefreshAndExchange(t *testing.T) {
 	for _, tc := range responseClasses() {
 		t.Run(tc.name, func(t *testing.T) {
 			p := newProvider(t, tc.answer)
-			_, err := testClient().Refresh(context.Background(), cfgFor(p.URL), app.NewClientSecret("s"), "r")
+			_, err := testClient().Refresh(context.Background(), cfgFor(p.URL), app.NewClientSecret("s"), kernel.NewSecret("r"))
 			if got := describe(err); got != tc.want {
 				t.Errorf("Refresh: %s (%v), want %s", got, err, tc.want)
 			}
-			_, err = testClient().ExchangeCode(context.Background(), cfgFor(p.URL), app.NewClientSecret("s"), app.ExchangeInput{Code: "c", CodeVerifier: "v", RedirectURI: "http://gw.test/cb"})
+			_, err = testClient().ExchangeCode(context.Background(), cfgFor(p.URL), app.NewClientSecret("s"), app.ExchangeInput{Code: kernel.NewSecret("c"), CodeVerifier: kernel.NewSecret("v"), RedirectURI: "http://gw.test/cb"})
 			if got := describe(err); got != tc.want {
 				t.Errorf("ExchangeCode: %s (%v), want %s", got, err, tc.want)
 			}
@@ -368,7 +368,7 @@ func TestExpiresAtIsReceiveTimePlusExpiresIn(t *testing.T) {
 		{`"expires_in":1e2`, 100 * time.Second},
 	} {
 		p := newProvider(t, okJSON(`{"access_token":"a","token_type":"bearer",`+tc.body+`}`))
-		ts, err := testClient().Refresh(context.Background(), cfgFor(p.URL), app.NewClientSecret("s"), "r")
+		ts, err := testClient().Refresh(context.Background(), cfgFor(p.URL), app.NewClientSecret("s"), kernel.NewSecret("r"))
 		if err != nil || ts.ExpiresAt == nil || !ts.ExpiresAt.Equal(clientNow.Add(tc.want)) {
 			t.Errorf("%s: %v %v", tc.body, ts.ExpiresAt, err)
 		}
@@ -381,11 +381,11 @@ func TestRedirectsAreAnswersAndNeverFollowed(t *testing.T) {
 		p := newProvider(t, func(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, target.URL+"/token", code)
 		})
-		_, err := testClient().Refresh(context.Background(), cfgFor(p.URL), app.NewClientSecret("s"), "r")
+		_, err := testClient().Refresh(context.Background(), cfgFor(p.URL), app.NewClientSecret("s"), kernel.NewSecret("r"))
 		if got := describe(err); got != fmt.Sprintf("HTTP %d", code) {
 			t.Errorf("%d: %s", code, got)
 		}
-		if err := testClient().Revoke(context.Background(), cfgFor(p.URL), app.NewClientSecret("s"), "tok"); err == nil {
+		if err := testClient().Revoke(context.Background(), cfgFor(p.URL), app.NewClientSecret("s"), kernel.NewSecret("tok")); err == nil {
 			t.Errorf("%d: revoke through a redirect reported success", code)
 		}
 	}
@@ -426,7 +426,7 @@ func TestTimeoutCoversTheWholeExchangeIncludingTheBody(t *testing.T) {
 	c := NewOAuthClient(kernel.FixedClock{T: clientNow}, 150*time.Millisecond)
 	for name, p := range map[string]*provider{"no answer at all": hang, "body never finishes": stall} {
 		start := time.Now()
-		_, err := c.Refresh(context.Background(), cfgFor(p.URL), app.NewClientSecret("s"), "r")
+		_, err := c.Refresh(context.Background(), cfgFor(p.URL), app.NewClientSecret("s"), kernel.NewSecret("r"))
 		if describe(err) != "none" {
 			t.Errorf("%s: %v", name, err)
 		}
@@ -450,7 +450,7 @@ func TestCallerCancellationIsReportedAsTheContextError(t *testing.T) {
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() { <-started; cancel() }()
-	_, err := testClient().Refresh(ctx, cfgFor(p.URL), app.NewClientSecret("s"), "r")
+	_, err := testClient().Refresh(ctx, cfgFor(p.URL), app.NewClientSecret("s"), kernel.NewSecret("r"))
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v", err)
 	}
@@ -459,13 +459,13 @@ func TestCallerCancellationIsReportedAsTheContextError(t *testing.T) {
 func TestResponseOver1MiBIsNoAnswer(t *testing.T) {
 	big := `{"access_token":"` + strings.Repeat("a", 1<<20) + `","token_type":"bearer"}`
 	p := newProvider(t, okJSON(big))
-	_, err := testClient().Refresh(context.Background(), cfgFor(p.URL), app.NewClientSecret("s"), "r")
+	_, err := testClient().Refresh(context.Background(), cfgFor(p.URL), app.NewClientSecret("s"), kernel.NewSecret("r"))
 	if describe(err) != "none" {
 		t.Fatalf("err = %v", err)
 	}
 	small := `{"access_token":"` + strings.Repeat("a", 1<<19) + `","token_type":"bearer"}`
 	p2 := newProvider(t, okJSON(small))
-	if _, err := testClient().Refresh(context.Background(), cfgFor(p2.URL), app.NewClientSecret("s"), "r"); err != nil {
+	if _, err := testClient().Refresh(context.Background(), cfgFor(p2.URL), app.NewClientSecret("s"), kernel.NewSecret("r")); err != nil {
 		t.Fatalf("half a MiB is fine: %v", err)
 	}
 }
@@ -477,7 +477,7 @@ func TestEndpointRules(t *testing.T) {
 	cfgHTTPSToken := cfgFor(ok.URL)
 	cfgHTTPSToken.TokenURL = "https://127.0.0.1:1/token" // https token endpoint: http revoke is forbidden
 	cfgHTTPSToken.RevokeURL = ptr(revoke.URL + "/revoke")
-	if err := c.Revoke(context.Background(), cfgHTTPSToken, app.NewClientSecret("s"), "tok"); err == nil {
+	if err := c.Revoke(context.Background(), cfgHTTPSToken, app.NewClientSecret("s"), kernel.NewSecret("tok")); err == nil {
 		t.Error("an https token URL must not allow an http revoke URL")
 	}
 	if n := len(revoke.requests()); n != 0 {
@@ -485,7 +485,7 @@ func TestEndpointRules(t *testing.T) {
 	}
 	// An http token URL allows plain http for all endpoints (the reference's allowInsecure).
 	cfgHTTP := cfgFor(ok.URL)
-	if err := c.Revoke(context.Background(), cfgHTTP, app.NewClientSecret("s"), "tok"); err != nil && len(ok.requests()) == 0 {
+	if err := c.Revoke(context.Background(), cfgHTTP, app.NewClientSecret("s"), kernel.NewSecret("tok")); err != nil && len(ok.requests()) == 0 {
 		t.Errorf("http token URL: %v", err)
 	}
 	for name, endpoint := range map[string]string{ //nolint:gosec // G101: test data, no real credential (URLs and OAuth parameter names)
@@ -501,14 +501,14 @@ func TestEndpointRules(t *testing.T) {
 		cfg := cfgFor(ok.URL)
 		cfg.TokenURL = endpoint
 		before := len(ok.requests())
-		if _, err := c.Refresh(context.Background(), cfg, app.NewClientSecret("s"), "r"); err == nil {
+		if _, err := c.Refresh(context.Background(), cfg, app.NewClientSecret("s"), kernel.NewSecret("r")); err == nil {
 			t.Errorf("%s: no error", name)
 		}
 		if len(ok.requests()) != before {
 			t.Errorf("%s: a request was sent", name)
 		}
 	}
-	if _, err := c.Refresh(context.Background(), cfgFor(ok.URL), app.NewClientSecret("s"), ""); err == nil {
+	if _, err := c.Refresh(context.Background(), cfgFor(ok.URL), app.NewClientSecret("s"), kernel.NewSecret("")); err == nil {
 		t.Error("an empty refresh token is refused before any request")
 	}
 	if _, err := c.ExchangeCode(context.Background(), cfgFor(ok.URL), app.NewClientSecret("s"), app.ExchangeInput{RedirectURI: "http://gw.test/cb"}); err == nil {
@@ -523,7 +523,7 @@ func TestAuthorizeURLMatchesTheReference(t *testing.T) {
 		AuthorizeURL: "https://idp.example.com/authorize", TokenURL: "https://idp.example.com/token", ClientID: "gateway-client",
 		Scopes: []string{"repo", "read:user"}, ExtraAuthorizeParams: []catalog.AuthorizeParam{{Key: "access_type", Value: "offline"}},
 	}
-	in := app.AuthorizeInput{RedirectURI: "http://gw.test/api/connections/callback", State: "s t", CodeChallenge: "ch"}
+	in := app.AuthorizeInput{RedirectURI: "http://gw.test/api/connections/callback", State: kernel.NewSecret("s t"), CodeChallenge: "ch"}
 	got, err := testClient().AuthorizeURL(cfg, in)
 	if err != nil {
 		t.Fatal(err)
@@ -544,7 +544,7 @@ func TestAuthorizeURLMatchesTheReference(t *testing.T) {
 
 func TestAuthorizeURLKeepsAndNormalisesTheConfiguredQuery(t *testing.T) {
 	cfg := catalog.OAuthClientConfig{AuthorizeURL: "https://idp.example.com/a?tenant=my%20org&x=1#frag", TokenURL: "https://idp.example.com/token", ClientID: "c"} //nolint:gosec // G101: test data, no real credential
-	got, err := testClient().AuthorizeURL(cfg, app.AuthorizeInput{RedirectURI: "r", State: "s", CodeChallenge: "c"})
+	got, err := testClient().AuthorizeURL(cfg, app.AuthorizeInput{RedirectURI: "r", State: kernel.NewSecret("s"), CodeChallenge: "c"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -561,7 +561,7 @@ func TestAuthorizeURLRefusesExtrasThatClashWithTheFlow(t *testing.T) {
 			AuthorizeURL: "https://idp.example.com/authorize", TokenURL: "https://idp.example.com/token", ClientID: "c",
 			ExtraAuthorizeParams: []catalog.AuthorizeParam{{Key: key, Value: "evil"}},
 		}
-		got, err := testClient().AuthorizeURL(cfg, app.AuthorizeInput{RedirectURI: "r", State: "STATEMARK", CodeChallenge: "c"})
+		got, err := testClient().AuthorizeURL(cfg, app.AuthorizeInput{RedirectURI: "r", State: kernel.NewSecret("STATEMARK"), CodeChallenge: "c"})
 		if err == nil || got != "" {
 			t.Errorf("%s: %q %v", key, got, err)
 		} else if strings.Contains(err.Error(), "STATEMARK") {
@@ -571,7 +571,7 @@ func TestAuthorizeURLRefusesExtrasThatClashWithTheFlow(t *testing.T) {
 }
 
 func TestAuthorizeURLSchemeRules(t *testing.T) {
-	in := app.AuthorizeInput{RedirectURI: "r", State: "s", CodeChallenge: "c"}
+	in := app.AuthorizeInput{RedirectURI: "r", State: kernel.NewSecret("s"), CodeChallenge: "c"}
 	for _, tc := range []struct {
 		name, authorize, token string
 		ok                     bool
@@ -621,14 +621,14 @@ func TestSecretsNeverReachAnErrorOrItsFormatting(t *testing.T) {
 		cfg.TokenURL += "?" + query + "=1"
 		cfg.RevokeURL = ptr(*cfg.RevokeURL + "?" + query + "=1")
 		var errs []error
-		_, e1 := testClient().Refresh(context.Background(), cfg, app.NewClientSecret(secret), refresh)
-		_, e2 := testClient().ExchangeCode(context.Background(), cfg, app.NewClientSecret(secret), app.ExchangeInput{Code: code, CodeVerifier: verifier, RedirectURI: "http://gw.test/cb"})
-		e3 := testClient().Revoke(context.Background(), cfg, app.NewClientSecret(secret), refresh)
+		_, e1 := testClient().Refresh(context.Background(), cfg, app.NewClientSecret(secret), kernel.NewSecret(refresh))
+		_, e2 := testClient().ExchangeCode(context.Background(), cfg, app.NewClientSecret(secret), app.ExchangeInput{Code: kernel.NewSecret(code), CodeVerifier: kernel.NewSecret(verifier), RedirectURI: "http://gw.test/cb"})
+		e3 := testClient().Revoke(context.Background(), cfg, app.NewClientSecret(secret), kernel.NewSecret(refresh))
 		errs = append(errs, e1, e2, e3)
 		// A dead endpoint: the transport's error quotes the URL (with its query).
 		dead := cfgFor("http://127.0.0.1:1")
 		dead.TokenURL += "?" + query + "=1"
-		_, e4 := testClient().Refresh(context.Background(), dead, app.NewClientSecret(secret), refresh)
+		_, e4 := testClient().Refresh(context.Background(), dead, app.NewClientSecret(secret), kernel.NewSecret(refresh))
 		errs = append(errs, e4)
 		for _, err := range errs {
 			if err == nil {
@@ -647,7 +647,7 @@ func TestSecretsNeverReachAnErrorOrItsFormatting(t *testing.T) {
 
 func TestTokenSetNeverPrintsTokens(t *testing.T) {
 	p := newProvider(t, okJSON(`{"access_token":"ACCESSMARK","token_type":"bearer","refresh_token":"REFRESHMARK"}`))
-	ts, err := testClient().Refresh(context.Background(), cfgFor(p.URL), app.NewClientSecret("s"), "r")
+	ts, err := testClient().Refresh(context.Background(), cfgFor(p.URL), app.NewClientSecret("s"), kernel.NewSecret("r"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -665,14 +665,14 @@ func TestHugeExpiresInMeansNoExpiryAndAByteOrderMarkIsStripped(t *testing.T) {
 		`{"access_token":"a","token_type":"bearer","expires_in":4000000000}`,
 	} {
 		p := newProvider(t, okJSON(body))
-		ts, err := testClient().Refresh(context.Background(), cfgFor(p.URL), app.NewClientSecret("s"), "r")
-		if err != nil || ts.AccessToken != "a" || ts.ExpiresAt != nil {
+		ts, err := testClient().Refresh(context.Background(), cfgFor(p.URL), app.NewClientSecret("s"), kernel.NewSecret("r"))
+		if err != nil || ts.AccessToken.Reveal() != "a" || ts.ExpiresAt != nil {
 			t.Errorf("%s: %v expiry %v", body, err, ts.ExpiresAt)
 		}
 	}
 	p := newProvider(t, okJSON("\ufeff"+`{"access_token":"A","token_type":"bearer","expires_in":60}`))
-	ts, err := testClient().Refresh(context.Background(), cfgFor(p.URL), app.NewClientSecret("s"), "r")
-	if err != nil || ts.AccessToken != "A" || ts.ExpiresAt == nil || !ts.ExpiresAt.Equal(clientNow.Add(time.Minute)) {
+	ts, err := testClient().Refresh(context.Background(), cfgFor(p.URL), app.NewClientSecret("s"), kernel.NewSecret("r"))
+	if err != nil || ts.AccessToken.Reveal() != "A" || ts.ExpiresAt == nil || !ts.ExpiresAt.Equal(clientNow.Add(time.Minute)) {
 		t.Errorf("bom: %v %v", ts.ExpiresAt, err)
 	}
 }
@@ -686,7 +686,7 @@ func TestNoUsableAnswerNeverQuotesTheBody(t *testing.T) {
 		`{"access_token":"` + mark + `","token_type":"bearer","expires_in":"` + mark + `"}`,
 	} {
 		p := newProvider(t, okJSON(body))
-		_, err := testClient().Refresh(context.Background(), cfgFor(p.URL), app.NewClientSecret("s"), "r")
+		_, err := testClient().Refresh(context.Background(), cfgFor(p.URL), app.NewClientSecret("s"), kernel.NewSecret("r"))
 		if err == nil {
 			t.Fatalf("%s: no error", body)
 		}
@@ -717,14 +717,14 @@ func TestUserInfoInAnyEndpointIsRefusedBeforeAnythingIsSentAndNotQuoted(t *testi
 	}
 	cfg := cfgFor(ok.URL)
 	cfg.TokenURL = creds + "/token"
-	_, err := c.Refresh(context.Background(), cfg, app.NewClientSecret("s"), "r")
+	_, err := c.Refresh(context.Background(), cfg, app.NewClientSecret("s"), kernel.NewSecret("r"))
 	check("token", err)
 	cfg = cfgFor(ok.URL)
 	cfg.RevokeURL = ptr(creds + "/revoke")
-	check("revoke", c.Revoke(context.Background(), cfg, app.NewClientSecret("s"), "t"))
+	check("revoke", c.Revoke(context.Background(), cfg, app.NewClientSecret("s"), kernel.NewSecret("t")))
 	cfg = cfgFor(ok.URL)
 	cfg.AuthorizeURL = creds + "/authorize"
-	_, err = c.AuthorizeURL(cfg, app.AuthorizeInput{RedirectURI: "r", State: "s", CodeChallenge: "c"})
+	_, err = c.AuthorizeURL(cfg, app.AuthorizeInput{RedirectURI: "r", State: kernel.NewSecret("s"), CodeChallenge: "c"})
 	check("authorize", err)
 	if n := len(ok.requests()); n != 0 {
 		t.Errorf("%d requests were sent", n)

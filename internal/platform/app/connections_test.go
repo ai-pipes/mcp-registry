@@ -223,7 +223,7 @@ func TestTheCatalogIsBoundToTheConnectionsServiceAfterWiring(t *testing.T) {
 	// A request travels through the real service: it reads the store of the connections module.
 	store := e.con.deps.Connections.(*memConnections)
 	got, err := e.c.deps.Credentials.PersonalSecret(context.Background(), catalog.ServerCallTarget{Slug: "gitea"}, "admin-1")
-	if err != nil || got.Secret != "" || got.Failure != catalog.CredentialNeedsConnection {
+	if err != nil || got.Secret.Reveal() != "" || got.Failure != catalog.CredentialNeedsConnection {
 		t.Fatalf("PersonalSecret = %+v, %v", got, err)
 	}
 	if store.gets.Load() != 1 {
@@ -241,7 +241,7 @@ func TestACredentialRequestBeforeBindingIsAnErrorNotAPanic(t *testing.T) {
 	e := newWiringEnv(t)
 	w := catalogWiringOver(e.c.rt, e.w, catinfraRepos(memServers{}), noUpstream{})
 	got, err := w.deps.Credentials.PersonalSecret(context.Background(), catalog.ServerCallTarget{Slug: "gitea"}, "admin-1")
-	if !errors.Is(err, errCredentialsNotBound) || got.Secret != "" {
+	if !errors.Is(err, errCredentialsNotBound) || got.Secret.Reveal() != "" {
 		t.Fatalf("PersonalSecret before binding = %+v, %v", got, err)
 	}
 }
@@ -298,7 +298,7 @@ func TestSyncCredentialsMapConnectionsAnswersToTheCatalogsFailures(t *testing.T)
 		res  connections.CredentialResult
 		want catalog.PersonalCredential
 	}{
-		{"a secret", connections.CredentialResult{Secret: "tok"}, catalog.PersonalCredential{Secret: "tok"}},
+		{"a secret", connections.CredentialResult{Secret: kernel.NewSecret("tok")}, catalog.PersonalCredential{Secret: kernel.NewSecret("tok")}},
 		{"needs_connection", connections.CredentialResult{Failure: connections.FailureNeedsConnection}, catalog.PersonalCredential{Failure: catalog.CredentialNeedsConnection}},
 		{"expired", connections.CredentialResult{Failure: connections.FailureExpired}, catalog.PersonalCredential{Failure: catalog.CredentialExpired}},
 		{"unavailable", connections.CredentialResult{Failure: connections.FailureUnavailable}, catalog.PersonalCredential{Failure: catalog.CredentialUnavailable}},
@@ -309,7 +309,7 @@ func TestSyncCredentialsMapConnectionsAnswersToTheCatalogsFailures(t *testing.T)
 			l := &lateSyncCredentials{}
 			l.bind(recordingResolver{fakeResolver: fakeResolver{res: c.res}, asked: &asked})
 			got, err := l.PersonalSecret(context.Background(), catalog.ServerCallTarget{Slug: "gitea"}, "u1")
-			if err != nil || got != c.want {
+			if err != nil || !reflect.DeepEqual(got, c.want) {
 				t.Fatalf("got %+v, %v; want %+v", got, err, c.want)
 			}
 			// No forced refresh in a synchronisation: the reference does not ask for one.

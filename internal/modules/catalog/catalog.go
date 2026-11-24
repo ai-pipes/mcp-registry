@@ -116,7 +116,9 @@ const (
 
 // HeaderFor is the header that authenticates to the upstream for a secret (an access token, a
 // PAT or the server's own secret): the one place a header is built. Empty for AuthNone.
-func HeaderFor(m AuthMode, secret string) kernel.UpstreamHeaders { return domain.HeaderFor(m, secret) }
+func HeaderFor(m AuthMode, secret kernel.Secret) kernel.UpstreamHeaders {
+	return domain.HeaderFor(m, secret)
+}
 
 // ParseToolRef splits "<server>.<tool>" at the first dot; invalid_tool_ref when it does not look
 // like that.
@@ -197,7 +199,7 @@ func (s *Service) GetServerForUpstream(ctx context.Context, slug string) (*Serve
 // earlier: found only when the secret belongs to that target's configuration (one read of the
 // server judges both); moved when the server no longer sends its secret where the target would,
 // or is gone; not_set when there is none. A secret no key opens is an error.
-func (s *Service) GetServerSecretFor(ctx context.Context, target ServerCallTarget) (string, SecretLookup, error) {
+func (s *Service) GetServerSecretFor(ctx context.Context, target ServerCallTarget) (kernel.Secret, SecretLookup, error) {
 	return app.GetServerSecretFor(ctx, s.d, target)
 }
 

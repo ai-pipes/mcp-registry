@@ -5,35 +5,37 @@ import (
 	"fmt"
 	"log/slog"
 	"time"
+
+	"github.com/ai-pipes/mcp-registry/internal/kernel"
 )
 
 const pendingConnectTTL = 10 * time.Minute
 
 // PendingConnect is a started OAuth connect: one-time, short-lived, bound to the person who started
-// it and to the server configuration it started with. State and the code verifier are secrets:
-// printing a PendingConnect shows neither.
+// it and to the server configuration it started with. State and the code verifier are secrets
+// (kernel.Secret): printing a PendingConnect shows neither, however it is held.
 type PendingConnect struct {
-	state        string
+	state        kernel.Secret
 	userID       string
 	server       string
-	codeVerifier string
+	codeVerifier kernel.Secret
 	issuedFor    string
 	expiresAt    time.Time
 }
 
 // PendingSnapshot is the stored form of a PendingConnect, for rehydration.
 type PendingSnapshot struct {
-	State        string
+	State        kernel.Secret
 	UserID       string
 	Server       string
-	CodeVerifier string
+	CodeVerifier kernel.Secret
 	IssuedFor    string
 	ExpiresAt    time.Time
 }
 
 // NewPendingConnect starts an attempt at now; it expires ten minutes later. issuedFor is the
 // ServerFingerprint when it started.
-func NewPendingConnect(state, userID, server, codeVerifier, issuedFor string, now time.Time) PendingConnect {
+func NewPendingConnect(state kernel.Secret, userID, server string, codeVerifier kernel.Secret, issuedFor string, now time.Time) PendingConnect {
 	return PendingConnect{
 		state: state, userID: userID, server: server, codeVerifier: codeVerifier,
 		issuedFor: issuedFor, expiresAt: PendingConnectExpiry(now),
@@ -56,7 +58,7 @@ func PendingConnectExpiry(now time.Time) time.Time { return now.Add(pendingConne
 func IsPendingConnectExpired(expiresAt, now time.Time) bool { return !now.Before(expiresAt) }
 
 // State is the one-time state parameter.
-func (p PendingConnect) State() string { return p.state }
+func (p PendingConnect) State() kernel.Secret { return p.state }
 
 // UserID is the person who started the attempt.
 func (p PendingConnect) UserID() string { return p.userID }
@@ -65,7 +67,7 @@ func (p PendingConnect) UserID() string { return p.userID }
 func (p PendingConnect) Server() string { return p.server }
 
 // CodeVerifier is the PKCE verifier.
-func (p PendingConnect) CodeVerifier() string { return p.codeVerifier }
+func (p PendingConnect) CodeVerifier() kernel.Secret { return p.codeVerifier }
 
 // IssuedFor is the ServerFingerprint the attempt started with.
 func (p PendingConnect) IssuedFor() string { return p.issuedFor }

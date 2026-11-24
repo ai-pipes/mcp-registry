@@ -198,9 +198,9 @@ func (m AuthMode) CredentialSource() CredentialSource {
 
 // HeaderFor is the only place that builds the upstream auth header: the template with every
 // "{secret}" replaced by the secret, inserted literally. none sends nothing (an empty map).
-func HeaderFor(m AuthMode, secret string) kernel.UpstreamHeaders {
+func HeaderFor(m AuthMode, secret kernel.Secret) kernel.UpstreamHeaders {
 	if m.Kind == AuthNone {
 		return kernel.UpstreamHeaders{}
 	}
-	return kernel.UpstreamHeaders{m.Header: strings.ReplaceAll(m.Template, secretPlaceholder, secret)}
+	return kernel.UpstreamHeaders{m.Header: kernel.NewSecret(strings.ReplaceAll(m.Template, secretPlaceholder, secret.Reveal()))}
 }

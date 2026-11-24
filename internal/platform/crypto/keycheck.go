@@ -25,47 +25,26 @@ const (
 // apps/server/src/platform/crypto/key-check.ts (pinned by a test that reads that file).
 const keyCheckPlain = "mcp-registry key check v1"
 
-// Keys are the configured secrets keys: SECRETS_KEY and, while rotating, SECRETS_KEY_OLD. The raw
-// bytes sit behind an unexported pointer, and the type prints, logs and encodes as "[Redacted]"
-// through every verb (the pattern of config.SecretBytes), however the holder is declared: fmt
-// writes the fields of a struct it may not call methods on by reflection, and a pointer is
-// written as an address at most. The bytes sit one pointer deeper than that: a verb that does not
-// suit a pointer (%s, %q, %d) makes fmt print "%!s(*T=" and then the dereferenced value of the
-// first pointer, so that value must hold nothing but another pointer. The zero value is "no keys"; the type is not comparable on
-// purpose. Copies of a Keys share the same immutable bytes; NewKeys copies its inputs.
+// Keys are the configured secrets keys: SECRETS_KEY and, while rotating, SECRETS_KEY_OLD. Each key
+// is a kernel.SecretBytes, which keeps its bytes two unexported pointers deep and prints as
+// "[Redacted]" however it is held, and the type itself prints, logs and encodes as "[Redacted]"
+// through every verb. The zero value is "no keys"; the type is not comparable on purpose. Copies
+// of a Keys share the same immutable bytes; NewKeys copies its inputs.
 type Keys struct {
-	_ [0]func() // not comparable: == would compare addresses, never the keys
-	v *keyBox
+	_        [0]func() // not comparable: == would compare addresses, never the keys
+	cur, prv kernel.SecretBytes
 }
-
-// keyBox holds only a pointer (see Keys); keyPair holds the bytes.
-type keyBox struct{ p *keyPair }
-
-type keyPair struct{ current, previous []byte }
 
 // NewKeys wraps copies of current and previous (nil or empty previous: no previous key).
 func NewKeys(current, previous []byte) Keys {
-	return Keys{v: &keyBox{p: &keyPair{
-		current:  append([]byte(nil), current...),
-		previous: append([]byte(nil), previous...),
-	}}}
+	return Keys{cur: kernel.NewSecretBytes(current), prv: kernel.NewSecretBytes(previous)}
 }
 
-// Current is the key new secrets are sealed with, nil for the zero value.
-func (k Keys) current() []byte {
-	if k.v == nil {
-		return nil
-	}
-	return k.v.p.current
-}
+// current is the key new secrets are sealed with, nil for the zero value.
+func (k Keys) current() []byte { return k.cur.Reveal() }
 
-// Previous is the key being rotated away from, nil when there is none.
-func (k Keys) previous() []byte {
-	if k.v == nil || len(k.v.p.previous) == 0 {
-		return nil
-	}
-	return k.v.p.previous
-}
+// previous is the key being rotated away from, nil when there is none.
+func (k Keys) previous() []byte { return k.prv.Reveal() }
 
 const keysRedacted = "[Redacted]"
 
@@ -200,7 +179,7 @@ func ResealCheck(ctx context.Context, pool *pgxpool.Pool, k Keys) (string, error
 		return r.Kind, nil
 	}
 	tag, err := pool.Exec(ctx,
-		`update platform.key_check set sealed = $1 where sealed = $2`, r.Sealed, existing)
+		`update platform.key_check set sealed = $1 where sealed = $2`, r.Sealed.Reveal(), existing)
 	if err != nil {
 		return "", fmt.Errorf("key check: %w", err)
 	}

@@ -93,7 +93,7 @@ const secretValue = "Bearer s3cr3t-token-value"
 func secretTarget() kernel.UpstreamTarget {
 	return kernel.UpstreamTarget{
 		URL:              "https://up.example/mcp",
-		Headers:          kernel.UpstreamHeaders{"Authorization": secretValue},
+		Headers:          kernel.UpstreamHeaders{"Authorization": kernel.NewSecret(secretValue)},
 		Timeout:          time.Second,
 		MaxResponseBytes: 10,
 	}
@@ -101,9 +101,9 @@ func secretTarget() kernel.UpstreamTarget {
 
 func TestUpstreamHeadersNeverPrintTheirValues(t *testing.T) {
 	tg := secretTarget()
-	tg.Headers = map[string]string{"Authorization": secretValue} // assignable from a plain map
-	var back map[string]string = tg.Headers                      // and back: range, index and len keep working
-	if back["Authorization"] != secretValue || len(tg.Headers) != 1 {
+	tg.Headers = map[string]kernel.Secret{"Authorization": kernel.NewSecret(secretValue)} // assignable from a plain map
+	var back map[string]kernel.Secret = tg.Headers                                        // and back: range, index and len keep working
+	if back["Authorization"].Reveal() != secretValue || len(tg.Headers) != 1 {
 		t.Fatal("the underlying map must stay usable")
 	}
 	for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%q", "%x", "%d"} {

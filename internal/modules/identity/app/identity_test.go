@@ -177,11 +177,11 @@ func TestCreateToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(tok.Token, "sk_") || tok.Prefix != tok.Token[:10] {
+	if !strings.HasPrefix(tok.Token.Reveal(), "sk_") || tok.Prefix != tok.Token.Reveal()[:10] {
 		t.Fatalf("token = %+v", tok)
 	}
 	rec := f.Store.tokens[0]
-	if rec.Hash != "h:"+tok.Token || rec.UserID != p.UserID || rec.Name != "laptop" || !rec.CreatedAt.Equal(f.Clock.Now()) {
+	if rec.Hash != "h:"+tok.Token.Reveal() || rec.UserID != p.UserID || rec.Name != "laptop" || !rec.CreatedAt.Equal(f.Clock.Now()) {
 		t.Fatalf("stored = %+v", rec)
 	}
 	e := f.Audit.Actions("token.create")
@@ -191,7 +191,7 @@ func TestCreateToken(t *testing.T) {
 	}
 	for _, en := range f.Audit.Entries {
 		for _, v := range en.Meta {
-			if v == tok.Token {
+			if v == tok.Token.Reveal() {
 				t.Fatal("token value reached the audit log")
 			}
 		}
@@ -214,7 +214,7 @@ func TestAuthenticateTokenSuccess(t *testing.T) {
 	f := newFixture()
 	p, _ := signIn(t, f, "a", []string{"mcp-users"})
 	tok, _ := app.CreateToken(ctx, f.Deps, p, "laptop")
-	got, err := app.AuthenticateToken(ctx, f.Deps, tok.Token, "1.1.1.1")
+	got, err := app.AuthenticateToken(ctx, f.Deps, tok.Token.Reveal(), "1.1.1.1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -255,9 +255,9 @@ func TestAuthenticateTokenFailuresAreAllCounted(t *testing.T) {
 		{"wrong shape", "abc"},
 		{"too long", "sk_" + strings.Repeat("a", 200)},
 		{"unknown hash", "sk_unknown"},
-		{"revoked", revoked.Token},
-		{"owner missing", ghost.Token},
-		{"owner disabled", dt.Token},
+		{"revoked", revoked.Token.Reveal()},
+		{"owner missing", ghost.Token.Reveal()},
+		{"owner disabled", dt.Token.Reveal()},
 	}
 	for i, c := range cases {
 		_, err := app.AuthenticateToken(ctx, f.Deps, c.token, "ip")
@@ -277,7 +277,7 @@ func TestAuthenticateTokenFailuresAreAllCounted(t *testing.T) {
 	}
 	// A hash that matches but is not equal in the constant-time check also counts.
 	f.Deps.Hasher = unequalHasher{}
-	if _, err := app.AuthenticateToken(ctx, f.Deps, live.Token, "ip"); err == nil {
+	if _, err := app.AuthenticateToken(ctx, f.Deps, live.Token.Reveal(), "ip"); err == nil {
 		t.Fatal("compare mismatch accepted")
 	}
 	if got := len(f.TokenLimiter.Hits); got != len(cases)+1 {
@@ -307,7 +307,7 @@ func TestAuthenticateTokenAcceptsValidTokenFromLockedOutIP(t *testing.T) {
 	p, _ := signIn(t, f, "a", []string{"mcp-users"})
 	tok, _ := app.CreateToken(ctx, f.Deps, p, "x")
 	f.TokenLimiter.Deny = true
-	if _, err := app.AuthenticateToken(ctx, f.Deps, tok.Token, "ip"); err != nil {
+	if _, err := app.AuthenticateToken(ctx, f.Deps, tok.Token.Reveal(), "ip"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -318,7 +318,7 @@ func TestAuthenticateTokenTouchesLastUsedOncePerMinute(t *testing.T) {
 	tok, _ := app.CreateToken(ctx, f.Deps, p, "x")
 	use := func() {
 		t.Helper()
-		if _, err := app.AuthenticateToken(ctx, f.Deps, tok.Token, "ip"); err != nil {
+		if _, err := app.AuthenticateToken(ctx, f.Deps, tok.Token.Reveal(), "ip"); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -362,7 +362,7 @@ func TestRevokeToken(t *testing.T) {
 	if len(e) != 1 || *e[0].ActorID != root.UserID || *e[0].Target != tok.ID || e[0].Meta != nil {
 		t.Fatalf("audit = %+v", e)
 	}
-	if _, err := app.AuthenticateToken(ctx, f.Deps, tok.Token, "ip"); err == nil {
+	if _, err := app.AuthenticateToken(ctx, f.Deps, tok.Token.Reveal(), "ip"); err == nil {
 		t.Fatal("revoked token still works")
 	}
 }
@@ -430,7 +430,7 @@ func TestSetDisabledEndsEverythingAndEnablingRestoresNothing(t *testing.T) {
 	if f.Store.tokens[0].RevokedAt == nil || !f.Store.tokens[0].RevokedAt.Equal(f.Clock.Now()) {
 		t.Fatal("token not revoked at now")
 	}
-	if _, err := app.AuthenticateToken(ctx, f.Deps, tok.Token, "ip"); err == nil {
+	if _, err := app.AuthenticateToken(ctx, f.Deps, tok.Token.Reveal(), "ip"); err == nil {
 		t.Fatal("token of a disabled person works")
 	}
 

@@ -21,7 +21,7 @@ type TokenSummary struct {
 // CreatedToken is the one moment the full token value is known.
 type CreatedToken struct {
 	ID     string
-	Token  string
+	Token  kernel.Secret
 	Prefix string
 }
 
@@ -51,7 +51,7 @@ func CreateToken(ctx context.Context, deps Deps, principal domain.Principal, nam
 	}); err != nil {
 		return CreatedToken{}, err
 	}
-	return CreatedToken{ID: record.ID, Token: token, Prefix: prefix}, nil
+	return CreatedToken{ID: record.ID, Token: kernel.NewSecret(token), Prefix: prefix}, nil
 }
 
 // ListTokens returns the principal's own tokens, newest first; never nil.

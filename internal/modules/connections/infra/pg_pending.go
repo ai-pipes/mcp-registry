@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/ai-pipes/mcp-registry/internal/kernel"
 	"github.com/ai-pipes/mcp-registry/internal/modules/connections/app"
 	"github.com/ai-pipes/mcp-registry/internal/modules/connections/domain"
 	"github.com/jackc/pgx/v5"
@@ -28,7 +29,7 @@ func (s *pgPending) Insert(ctx context.Context, p domain.PendingConnect) error {
 	_, err := s.pool.Exec(ctx, `insert into connections.pending
         (state, user_id, server, code_verifier, issued_for, expires_at)
       values ($1, $2, $3, $4, $5, $6)`,
-		p.State(), p.UserID(), p.Server(), p.CodeVerifier(), p.IssuedFor(), ms(p.ExpiresAt()))
+		p.State().Reveal(), p.UserID(), p.Server(), p.CodeVerifier().Reveal(), p.IssuedFor(), ms(p.ExpiresAt()))
 	if err != nil {
 		return errPendingInsert
 	}
@@ -48,19 +49,20 @@ const errPendingInsert = fixedError("the connect attempt could not be stored")
 // (which deletes before it checks) consumed it.
 func (s *pgPending) Consume(ctx context.Context, state, userID string) (*domain.PendingConnect, error) {
 	var (
-		snap    domain.PendingSnapshot
-		expires time.Time
+		snap         domain.PendingSnapshot
+		st, verifier string
+		expires      time.Time
 	)
 	err := s.pool.QueryRow(ctx, `delete from connections.pending where state = $1 and user_id = $2
       returning state, user_id::text, server, code_verifier, issued_for, expires_at`, state, userID).
-		Scan(&snap.State, &snap.UserID, &snap.Server, &snap.CodeVerifier, &snap.IssuedFor, &expires)
+		Scan(&st, &snap.UserID, &snap.Server, &verifier, &snap.IssuedFor, &expires)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	snap.ExpiresAt = ms(expires)
+	snap.State, snap.CodeVerifier, snap.ExpiresAt = kernel.NewSecret(st), kernel.NewSecret(verifier), ms(expires)
 	p := domain.RestorePendingConnect(snap)
 	return &p, nil
 }

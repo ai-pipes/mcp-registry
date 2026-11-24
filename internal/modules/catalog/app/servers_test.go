@@ -23,7 +23,7 @@ func TestAdminOnlyCommandsRefuseAMemberAndChangeNothing(t *testing.T) {
 	wantError(t, err, "forbidden", "administrators only")
 	_, err = app.UpdateServer(ctx, h.deps, app.UpdateServerCommand{Principal: p, Slug: "gitea", Fields: fields()})
 	wantCode(t, err, "forbidden")
-	wantCode(t, app.SetSecret(ctx, h.deps, app.SetSecretCommand{Principal: p, Slug: "gitea", Secret: ptr("s")}), "forbidden")
+	wantCode(t, app.SetSecret(ctx, h.deps, app.SetSecretCommand{Principal: p, Slug: "gitea", Secret: secretOf("s")}), "forbidden")
 	wantCode(t, app.SetStatus(ctx, h.deps, app.SetStatusCommand{Principal: p, Slug: "gitea", Status: domain.StatusDisabled}), "forbidden")
 	wantCode(t, app.SetToolHidden(ctx, h.deps, app.SetToolHiddenCommand{Principal: p, Ref: "gitea.list", Hidden: true}), "forbidden")
 	_, err = app.ListAllServers(ctx, h.deps, p)
@@ -315,26 +315,26 @@ func TestSetSecret(t *testing.T) {
 	t.Run("refuses a secret for a mode that has none; clearing is fine", func(t *testing.T) {
 		h := newHarness()
 		h.mustCreate(t, "plain", nil)
-		err := app.SetSecret(ctx, h.deps, app.SetSecretCommand{Principal: admin, Slug: "plain", Secret: ptr("k")})
+		err := app.SetSecret(ctx, h.deps, app.SetSecretCommand{Principal: admin, Slug: "plain", Secret: secretOf("k")})
 		wantError(t, err, "invalid_server", `auth mode "none" does not use a server secret`)
-		if h.servers.row(t, "plain").SealedSecret != nil {
+		if h.servers.row(t, "plain").SealedSecret.IsSet() {
 			t.Fatal("secret stored")
 		}
-		wantCode(t, app.SetSecret(ctx, h.deps, app.SetSecretCommand{Principal: admin, Slug: "plain", Secret: nil}), "ok")
+		wantCode(t, app.SetSecret(ctx, h.deps, app.SetSecretCommand{Principal: admin, Slug: "plain", Secret: kernel.Secret{}}), "ok")
 	})
 
 	t.Run("sets and clears, auditing without the value", func(t *testing.T) {
 		h := newHarness()
 		h.mustCreate(t, "gitea", nil, func(f *app.ServerFields) { f.Auth = authShared })
 		h.clean()
-		wantCode(t, app.SetSecret(ctx, h.deps, app.SetSecretCommand{Principal: admin, Slug: "gitea", Secret: ptr("topsecret")}), "ok")
+		wantCode(t, app.SetSecret(ctx, h.deps, app.SetSecretCommand{Principal: admin, Slug: "gitea", Secret: secretOf("topsecret")}), "ok")
 		if !h.servers.writes[0].SecretWritten {
 			t.Fatal("secret not written")
 		}
 		if got, ok, _ := getServerSecret(ctx, h.deps, "gitea"); !ok || got != "topsecret" {
 			t.Fatalf("secret = %q", got)
 		}
-		wantCode(t, app.SetSecret(ctx, h.deps, app.SetSecretCommand{Principal: admin, Slug: "gitea", Secret: nil}), "ok")
+		wantCode(t, app.SetSecret(ctx, h.deps, app.SetSecretCommand{Principal: admin, Slug: "gitea", Secret: kernel.Secret{}}), "ok")
 		if _, ok, _ := getServerSecret(ctx, h.deps, "gitea"); ok {
 			t.Fatal("secret not cleared")
 		}
@@ -354,7 +354,7 @@ func TestSetSecret(t *testing.T) {
 		h := newHarness()
 		h.mustCreate(t, "gitea", nil, func(f *app.ServerFields) { f.Auth = authShared })
 		h.clean()
-		wantCode(t, app.SetSecret(ctx, h.deps, app.SetSecretCommand{Principal: admin, Slug: "gitea", Secret: nil}), "ok")
+		wantCode(t, app.SetSecret(ctx, h.deps, app.SetSecretCommand{Principal: admin, Slug: "gitea", Secret: kernel.Secret{}}), "ok")
 		equalStrings(t, h.audit.actions(), []string{"server.secret_clear"})
 		if h.servers.row(t, "gitea").Version != 1 {
 			t.Fatal("version not bumped")
@@ -364,10 +364,10 @@ func TestSetSecret(t *testing.T) {
 	t.Run("blank, empty and too long secrets; unknown server", func(t *testing.T) {
 		h := newHarness()
 		h.mustCreate(t, "gitea", nil, func(f *app.ServerFields) { f.Auth = authShared })
-		wantCode(t, app.SetSecret(ctx, h.deps, app.SetSecretCommand{Principal: admin, Slug: "gitea", Secret: ptr("")}), "invalid_request")
-		wantCode(t, app.SetSecret(ctx, h.deps, app.SetSecretCommand{Principal: admin, Slug: "gitea", Secret: ptr(strings.Repeat("a", 4097))}), "invalid_request")
-		wantCode(t, app.SetSecret(ctx, h.deps, app.SetSecretCommand{Principal: admin, Slug: "gitea", Secret: ptr("   ")}), "invalid_server")
-		wantError(t, app.SetSecret(ctx, h.deps, app.SetSecretCommand{Principal: admin, Slug: "zz", Secret: ptr("a")}), "not_found", `server "zz" not found`)
+		wantCode(t, app.SetSecret(ctx, h.deps, app.SetSecretCommand{Principal: admin, Slug: "gitea", Secret: secretOf("")}), "invalid_request")
+		wantCode(t, app.SetSecret(ctx, h.deps, app.SetSecretCommand{Principal: admin, Slug: "gitea", Secret: secretOf(strings.Repeat("a", 4097))}), "invalid_request")
+		wantCode(t, app.SetSecret(ctx, h.deps, app.SetSecretCommand{Principal: admin, Slug: "gitea", Secret: secretOf("   ")}), "invalid_server")
+		wantError(t, app.SetSecret(ctx, h.deps, app.SetSecretCommand{Principal: admin, Slug: "zz", Secret: secretOf("a")}), "not_found", `server "zz" not found`)
 	})
 
 	t.Run("a lost write is server_conflict", func(t *testing.T) {
@@ -378,7 +378,7 @@ func TestSetSecret(t *testing.T) {
 			h.servers.beforeSave = nil
 			h.servers.setRow(slug, func(st *domain.ServerState) { st.Version++ })
 		}
-		wantCode(t, app.SetSecret(ctx, h.deps, app.SetSecretCommand{Principal: admin, Slug: "gitea", Secret: ptr("k")}), "server_conflict")
+		wantCode(t, app.SetSecret(ctx, h.deps, app.SetSecretCommand{Principal: admin, Slug: "gitea", Secret: secretOf("k")}), "server_conflict")
 		if len(h.audit.entries) != 0 {
 			t.Fatal("audit written for a lost write")
 		}
@@ -524,7 +524,7 @@ func TestGetServerSecretFor(t *testing.T) {
 		h.mustCreate(t, "shared", ptr("k1"), func(f *app.ServerFields) { f.Auth = authShared })
 		target, _ := app.GetServerForUpstream(ctx, h.deps, "shared")
 		got, found, err := app.GetServerSecretFor(ctx, h.deps, *target)
-		if err != nil || found != app.SecretFound || got != "k1" {
+		if err != nil || found != app.SecretFound || got.Reveal() != "k1" {
 			t.Fatalf("%q %v %v", got, found, err)
 		}
 	})
@@ -538,15 +538,15 @@ func TestGetServerSecretFor(t *testing.T) {
 		})}); err != nil {
 			t.Fatal(err)
 		}
-		if err := app.SetSecret(ctx, h.deps, app.SetSecretCommand{Principal: admin, Slug: "shared", Secret: ptr("k2")}); err != nil {
+		if err := app.SetSecret(ctx, h.deps, app.SetSecretCommand{Principal: admin, Slug: "shared", Secret: secretOf("k2")}); err != nil {
 			t.Fatal(err)
 		}
 		got, found, err := app.GetServerSecretFor(ctx, h.deps, *target)
-		if err != nil || found != app.SecretMoved || got != "" {
+		if err != nil || found != app.SecretMoved || got.Reveal() != "" {
 			t.Fatalf("%q %v %v", got, found, err)
 		}
 		fresh, _ := app.GetServerForUpstream(ctx, h.deps, "shared")
-		if got, found, err := app.GetServerSecretFor(ctx, h.deps, *fresh); err != nil || found != app.SecretFound || got != "k2" {
+		if got, found, err := app.GetServerSecretFor(ctx, h.deps, *fresh); err != nil || found != app.SecretFound || got.Reveal() != "k2" {
 			t.Fatalf("fresh target: %q %v %v", got, found, err)
 		}
 	})
@@ -561,11 +561,11 @@ func TestGetServerSecretFor(t *testing.T) {
 			})}); err != nil {
 				t.Fatal(err)
 			}
-			if err := app.SetSecret(ctx, h.deps, app.SetSecretCommand{Principal: admin, Slug: "shared", Secret: ptr(step.key)}); err != nil {
+			if err := app.SetSecret(ctx, h.deps, app.SetSecretCommand{Principal: admin, Slug: "shared", Secret: secretOf(step.key)}); err != nil {
 				t.Fatal(err)
 			}
 		}
-		if got, found, err := app.GetServerSecretFor(ctx, h.deps, *target); err != nil || found != app.SecretFound || got != "k3" {
+		if got, found, err := app.GetServerSecretFor(ctx, h.deps, *target); err != nil || found != app.SecretFound || got.Reveal() != "k3" {
 			t.Fatalf("%q %v %v", got, found, err)
 		}
 	})
@@ -580,7 +580,7 @@ func TestGetServerSecretFor(t *testing.T) {
 			t.Fatalf("another kind: %v", found)
 		}
 		other.Auth = domain.AuthMode{Kind: domain.AuthSharedSecret, Header: "X-Other", Template: "k {secret}"}
-		if got, found, _ := app.GetServerSecretFor(ctx, h.deps, other); found != app.SecretFound || got != "k1" {
+		if got, found, _ := app.GetServerSecretFor(ctx, h.deps, other); found != app.SecretFound || got.Reveal() != "k1" {
 			t.Fatalf("header and template: %q %v", got, found)
 		}
 	})

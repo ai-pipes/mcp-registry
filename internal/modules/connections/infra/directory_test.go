@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ai-pipes/mcp-registry/internal/kernel"
 	"github.com/ai-pipes/mcp-registry/internal/modules/catalog"
 	"github.com/ai-pipes/mcp-registry/internal/modules/connections/app"
 )
@@ -35,7 +36,7 @@ func (f *fakeCatalog) GetServerForUpstream(_ context.Context, slug string) (*cat
 	return f.targets[slug], nil
 }
 
-func (f *fakeCatalog) GetServerSecretFor(_ context.Context, t catalog.ServerCallTarget) (string, catalog.SecretLookup, error) {
+func (f *fakeCatalog) GetServerSecretForPlain(_ context.Context, t catalog.ServerCallTarget) (string, catalog.SecretLookup, error) {
 	f.targetOf = append(f.targetOf, t)
 	if f.secretEr != nil {
 		return "", "", f.secretEr
@@ -153,10 +154,10 @@ func TestClientSecretForZeroWhenUnsetMovedAndErrorsNeverCarryIt(t *testing.T) {
 	if got.Slug != want.Slug || got.URL != want.URL || got.Auth.Kind != want.Auth.Kind || !reflect.DeepEqual(got.Auth.OAuth, want.Auth.OAuth) {
 		t.Fatalf("target %+v, want %+v", got, want)
 	}
-	if s, moved, err := d.ClientSecretFor(context.Background(), cfg("yt")); err != nil || moved || s != (app.ClientSecret{}) {
+	if s, moved, err := d.ClientSecretFor(context.Background(), cfg("yt")); err != nil || moved || !reflect.DeepEqual(s, app.ClientSecret{}) {
 		t.Fatalf("unset must be the zero value, not moved: %v %v %v", s, moved, err)
 	}
-	if s, moved, err := d.ClientSecretFor(context.Background(), cfg("gone")); err != nil || !moved || s != (app.ClientSecret{}) {
+	if s, moved, err := d.ClientSecretFor(context.Background(), cfg("gone")); err != nil || !moved || !reflect.DeepEqual(s, app.ClientSecret{}) {
 		t.Fatalf("moved must carry no secret: %v %v %v", s, moved, err)
 	}
 	f.secretEr = fmt.Errorf("cannot open SECRETMARK with this key")
@@ -169,4 +170,12 @@ func TestClientSecretForZeroWhenUnsetMovedAndErrorsNeverCarryIt(t *testing.T) {
 			t.Errorf("error carries the secret: %s", text)
 		}
 	}
+}
+
+func (f *fakeCatalog) GetServerSecretFor(ctx context.Context, t catalog.ServerCallTarget) (kernel.Secret, catalog.SecretLookup, error) {
+	v, found, err := f.GetServerSecretForPlain(ctx, t)
+	if found != catalog.SecretFound {
+		return kernel.Secret{}, found, err
+	}
+	return kernel.NewSecret(v), found, err
 }

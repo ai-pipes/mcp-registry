@@ -167,40 +167,40 @@ func deniedOr(e *ended) ended {
 // secretFor is the secret to send to the server: none for a server without authentication, the
 // server's own for shared_secret, the person's for oauth_user and pat_user. A refusal is an
 // answer (denied); the error is for unexpected failures.
-func secretFor(ctx context.Context, d Deps, server *catalog.ServerCallTarget, userID string, forceRefresh bool) (string, *ended, error) {
+func secretFor(ctx context.Context, d Deps, server *catalog.ServerCallTarget, userID string, forceRefresh bool) (kernel.Secret, *ended, error) {
 	switch server.Auth.CredentialSource() {
 	case catalog.SourceNone:
-		return "", nil, nil
+		return kernel.Secret{}, nil, nil
 	case catalog.SourceServerSecret:
 		// The secret comes with the configuration it belongs to: one that was moved (another URL or
 		// auth kind) after the target was read is never sent to the target's URL.
 		secret, found, err := d.Catalog.ServerSecret(ctx, *server)
 		if err != nil {
-			return "", nil, err
+			return kernel.Secret{}, nil, err
 		}
 		switch found {
 		case catalog.SecretFound:
 			return secret, nil, nil
 		case catalog.SecretNotSet:
 			e := failed(domain.OutcomeTransportError, domain.TextRejected(server.Name))
-			return "", &e, nil
+			return kernel.Secret{}, &e, nil
 		case catalog.SecretMoved:
 			// Lost the configuration race, as a personal credential does (unavailable).
 			e := failed(domain.OutcomeTransportError, domain.TextTransport(server.Name))
-			return "", &e, nil
+			return kernel.Secret{}, &e, nil
 		default:
-			return "", nil, fmt.Errorf("gateway: unknown secret lookup %q", string(found))
+			return kernel.Secret{}, nil, fmt.Errorf("gateway: unknown secret lookup %q", string(found))
 		}
 	}
 	r, err := d.Credentials.ResolveForSending(ctx, userID, *server, forceRefresh)
 	if err != nil {
-		return "", nil, err
+		return kernel.Secret{}, nil, err
 	}
 	if r.Ok() {
 		return r.Secret, nil, nil
 	}
 	e, err := credentialFailure(d, server, domain.CredentialFailure(r.Failure))
-	return "", &e, err
+	return kernel.Secret{}, &e, err
 }
 
 // credentialFailure is the answer for a credential that could not be had. An unknown failure is
@@ -225,7 +225,7 @@ func publicURL(d Deps) string { return strings.TrimRight(d.PublicURL, "/") }
 // attempt is one upstream call. unauthorized is true when upstream answered 401; any other
 // upstream failure is an answer, and so is a call cut by the shutdown; any other error that is not
 // an upstream failure is unexpected.
-func attempt(ctx context.Context, d Deps, server *catalog.ServerCallTarget, tool string, args json.RawMessage, secret string) (res ended, unauthorized bool, err error) {
+func attempt(ctx context.Context, d Deps, server *catalog.ServerCallTarget, tool string, args json.RawMessage, secret kernel.Secret) (res ended, unauthorized bool, err error) {
 	target := kernel.UpstreamTarget{
 		URL:              server.URL,
 		Headers:          catalog.HeaderFor(server.Auth, secret),
@@ -278,7 +278,7 @@ func upstreamFailure(d Deps, server *catalog.ServerCallTarget, ue *kernel.Upstre
 
 // send is the upstream call and what follows a 401. The server is the target read before the
 // call: the retry uses it too, never a fresh read.
-func send(ctx context.Context, d Deps, server *catalog.ServerCallTarget, userID, tool string, args json.RawMessage, secret string) (ended, error) {
+func send(ctx context.Context, d Deps, server *catalog.ServerCallTarget, userID, tool string, args json.RawMessage, secret kernel.Secret) (ended, error) {
 	first, unauthorized, err := attempt(ctx, d, server, tool, args, secret)
 	if err != nil || !unauthorized {
 		return first, err
@@ -304,7 +304,7 @@ func expire(ctx context.Context, d Deps, server *catalog.ServerCallTarget, userI
 // rejected (see domain.RefreshedSecretSame) is answered as unavailable: nothing is expired and
 // upstream is not asked again. A different secret is tried once; a second 401 expires the
 // connection.
-func refreshAndRetry(ctx context.Context, d Deps, server *catalog.ServerCallTarget, userID, tool string, args json.RawMessage, rejected string) (ended, error) {
+func refreshAndRetry(ctx context.Context, d Deps, server *catalog.ServerCallTarget, userID, tool string, args json.RawMessage, rejected kernel.Secret) (ended, error) {
 	fresh, denied, err := secretFor(ctx, d, server, userID, true)
 	if err != nil {
 		return ended{}, err

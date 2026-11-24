@@ -19,7 +19,7 @@ type IssueLoginLinkInput struct{ Sub string }
 
 // IssuedLink is a freshly issued login link: the code is shown once and never stored.
 type IssuedLink struct {
-	Code      string
+	Code      kernel.Secret
 	ExpiresAt time.Time
 }
 
@@ -57,12 +57,12 @@ func IssueLoginLink(ctx context.Context, deps Deps, in IssueLoginLinkInput) (Iss
 	if err := deps.Audit.Record(ctx, kernel.AuditEntry{Action: "auth.link_issued", Target: ptr(user.ID)}); err != nil {
 		return IssuedLink{}, err
 	}
-	return IssuedLink{Code: code, ExpiresAt: expiresAt}, nil
+	return IssuedLink{Code: kernel.NewSecret(code), ExpiresAt: expiresAt}, nil
 }
 
 // CompleteLinkLoginInput is the input of CompleteLinkLogin; IP is the client address the limiter counts.
 type CompleteLinkLoginInput struct {
-	Code string
+	Code kernel.Secret
 	IP   string
 }
 
@@ -73,11 +73,11 @@ type CompleteLinkLoginInput struct {
 // limiter, and a locked limiter turns any refusal into rate_limited. Success never touches the
 // limiter, so a valid code works from a locked-out address.
 func CompleteLinkLogin(ctx context.Context, deps Deps, in CompleteLinkLoginInput) (string, error) {
-	if !domain.LooksLikeLoginCode(in.Code) {
+	if !domain.LooksLikeLoginCode(in.Code.Reveal()) {
 		return "", rejectLink(ctx, deps, in.IP, domain.CodeInvalidLink, nil)
 	}
 	now := deps.Clock.Now()
-	link, err := deps.LoginLinks.Consume(ctx, deps.Hasher.Hex(in.Code))
+	link, err := deps.LoginLinks.Consume(ctx, deps.Hasher.Hex(in.Code.Reveal()))
 	if err != nil {
 		return "", err
 	}
@@ -185,5 +185,5 @@ func BootstrapLocalAdmin(ctx context.Context, deps Deps) (code string, issued bo
 		}
 		return "", false, err
 	}
-	return link.Code, true, nil
+	return link.Code.Reveal(), true, nil
 }

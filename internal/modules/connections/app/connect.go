@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 
+	"github.com/ai-pipes/mcp-registry/internal/kernel"
 	"github.com/ai-pipes/mcp-registry/internal/modules/catalog"
 	"github.com/ai-pipes/mcp-registry/internal/modules/connections/domain"
 )
@@ -45,22 +46,23 @@ func StartConnect(ctx context.Context, d Deps, c StartConnectCommand) (string, e
 	if err != nil {
 		return "", errRandom
 	}
-	pending := domain.NewPendingConnect(state, c.Principal.UserID, c.Server, verifier, fingerprint(cfg), d.Clock.Now())
+	pending := domain.NewPendingConnect(kernel.NewSecret(state), c.Principal.UserID, c.Server, kernel.NewSecret(verifier), fingerprint(cfg), d.Clock.Now())
 	if err := d.Pending.Insert(ctx, pending); err != nil {
 		return "", err
 	}
-	url, err := d.OAuth.AuthorizeURL(*cfg.OAuth, AuthorizeInput{RedirectURI: d.RedirectURI, State: state, CodeChallenge: d.Pkce.Challenge(verifier)})
+	url, err := d.OAuth.AuthorizeURL(*cfg.OAuth, AuthorizeInput{RedirectURI: d.RedirectURI, State: kernel.NewSecret(state), CodeChallenge: d.Pkce.Challenge(verifier)})
 	if err != nil {
 		return "", errAuthorizeURL
 	}
 	return url, nil
 }
 
-// CompleteConnectCommand is the provider's callback for a person: the state and the code.
+// CompleteConnectCommand is the provider's callback for a person: the state and the code, both
+// secrets (kernel.Secret).
 type CompleteConnectCommand struct {
 	Principal Principal
-	State     string
-	Code      string
+	State     kernel.Secret
+	Code      kernel.Secret
 }
 
 // Format prints "CompleteConnectCommand{}" for every verb: State and Code are secrets.
@@ -96,7 +98,7 @@ type ConnectResult struct{ Server string }
 // OAuth client is gone), exchange_failed (the provider did not authorise: any error from the
 // exchange, a wrong client secret included; nothing is stored).
 func CompleteConnect(ctx context.Context, d Deps, c CompleteConnectCommand) (ConnectResult, error) {
-	pending, err := d.Pending.Consume(ctx, c.State, c.Principal.UserID)
+	pending, err := d.Pending.Consume(ctx, c.State.Reveal(), c.Principal.UserID)
 	if err != nil {
 		return ConnectResult{}, err
 	}
@@ -152,17 +154,17 @@ func CompleteConnect(ctx context.Context, d Deps, c CompleteConnectCommand) (Con
 }
 
 func sealTokens(d Deps, t TokenSet) (domain.SealedTokens, error) {
-	access, err := d.Box.Seal(t.AccessToken)
+	access, err := d.Box.Seal(t.AccessToken.Reveal())
 	if err != nil {
 		return domain.SealedTokens{}, errSeal
 	}
-	out := domain.SealedTokens{Access: domain.Sealed(access), ExpiresAt: t.ExpiresAt}
-	if t.RefreshToken != "" {
-		refresh, err := d.Box.Seal(t.RefreshToken)
+	out := domain.SealedTokens{Access: domain.NewSealed(access), ExpiresAt: t.ExpiresAt}
+	if t.RefreshToken.Reveal() != "" {
+		refresh, err := d.Box.Seal(t.RefreshToken.Reveal())
 		if err != nil {
 			return domain.SealedTokens{}, errSeal
 		}
-		out.Refresh = domain.Sealed(refresh)
+		out.Refresh = domain.NewSealed(refresh)
 	}
 	return out, nil
 }
@@ -174,11 +176,11 @@ func writeConnection(ctx context.Context, d Deps, c *domain.Connection) error {
 	})
 }
 
-// SavePATCommand stores a personal access token.
+// SavePATCommand stores a personal access token (a kernel.Secret).
 type SavePATCommand struct {
 	Principal Principal
 	Server    string
-	Token     string
+	Token     kernel.Secret
 }
 
 // Format prints the server only, for every verb: Token is a secret.
@@ -206,7 +208,7 @@ func SavePAT(ctx context.Context, d Deps, c SavePATCommand) error {
 	if err != nil {
 		return err
 	}
-	token, err := domain.ParsePAT(c.Token)
+	token, err := domain.ParsePAT(c.Token.Reveal())
 	if err != nil {
 		return err
 	}
@@ -215,7 +217,7 @@ func SavePAT(ctx context.Context, d Deps, c SavePATCommand) error {
 		return errSeal
 	}
 	connection := domain.ConnectPAT(domain.PATConnect{
-		UserID: c.Principal.UserID, Server: c.Server, Token: domain.Sealed(sealed),
+		UserID: c.Principal.UserID, Server: c.Server, Token: domain.NewSealed(sealed),
 		IssuedFor: fingerprint(server.Config), Now: d.Clock.Now(),
 	})
 	if err := writeConnection(ctx, d, connection); err != nil {
@@ -274,7 +276,7 @@ func Disconnect(ctx context.Context, d Deps, c DisconnectCommand) error {
 		return nil
 	}
 	sealed := removed.RefreshToken()
-	if len(sealed) == 0 {
+	if sealed.IsEmpty() {
 		sealed = removed.AccessToken()
 	}
 	token, err := openToken(d.Box, sealed)

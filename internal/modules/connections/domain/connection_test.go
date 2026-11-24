@@ -22,7 +22,7 @@ var now = time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
 func at(ms int64) time.Time         { return now.Add(time.Duration(ms) * time.Millisecond) }
 func tp(t time.Time) *time.Time     { return &t }
 func sp(s string) *string           { return &s }
-func sealed(s string) domain.Sealed { return domain.Sealed(s) }
+func sealed(s string) domain.Sealed { return domain.NewSealed([]byte(s)) }
 
 func endpoints(authorize, exchange, client string) domain.OAuthEndpoints {
 	return domain.OAuthEndpoints{AuthorizeURL: authorize, TokenURL: exchange, ClientID: client}
@@ -62,7 +62,7 @@ func TestCredentialPlan(t *testing.T) {
 			t.Fatalf("got %v", p.Action)
 		}
 		p := plan(oauth(oauthOpt{expiresAt: tp(at(0)), refresh: sealed("R1")}), false, fp)
-		if p.Action != domain.PlanRefresh || string(p.RefreshToken) != "R1" {
+		if p.Action != domain.PlanRefresh || string(p.RefreshToken.Bytes()) != "R1" {
 			t.Fatalf("got %+v", p)
 		}
 	})
@@ -111,7 +111,7 @@ func TestCredentialPlan(t *testing.T) {
 	})
 	t.Run("a PAT has no expiry and cannot be refreshed", func(t *testing.T) {
 		c := pat()
-		if c.Kind() != domain.KindPAT || c.ExpiresAt() != nil || c.RefreshToken() != nil || c.RevokeURL() != nil {
+		if c.Kind() != domain.KindPAT || c.ExpiresAt() != nil || !c.RefreshToken().IsEmpty() || c.RevokeURL() != nil {
 			t.Fatal("PAT shape")
 		}
 		if plan(c, false, fp).Action != domain.PlanUse || plan(c, true, fp).Action != domain.PlanUse {
@@ -234,11 +234,11 @@ func TestRefreshed(t *testing.T) {
 	c := oauth(oauthOpt{expiresAt: tp(at(10_000)), refresh: sealed("R1")})
 	later := at(5_000)
 	c.Refreshed(domain.SealedTokens{Access: sealed("A2"), ExpiresAt: tp(at(3_605_000))}, later)
-	if string(c.AccessToken()) != "A2" || string(c.RefreshToken()) != "R1" || !c.ExpiresAt().Equal(at(3_605_000)) || !c.UpdatedAt().Equal(later) || c.Status() != domain.StatusReady {
+	if string(c.AccessToken().Bytes()) != "A2" || string(c.RefreshToken().Bytes()) != "R1" || !c.ExpiresAt().Equal(at(3_605_000)) || !c.UpdatedAt().Equal(later) || c.Status() != domain.StatusReady {
 		t.Fatalf("after refresh: %v", c)
 	}
 	c.Refreshed(domain.SealedTokens{Access: sealed("A3"), Refresh: sealed("R2")}, later)
-	if string(c.RefreshToken()) != "R2" || c.ExpiresAt() != nil {
+	if string(c.RefreshToken().Bytes()) != "R2" || c.ExpiresAt() != nil {
 		t.Fatal("a rotated refresh token replaces the old one; no expiry becomes none")
 	}
 	// refresh of an expired connection makes it ready again (the caller decides when)
@@ -275,14 +275,14 @@ func TestReplaceSealed(t *testing.T) {
 		t.Fatal(err)
 	}
 	after := c.Snapshot()
-	if string(after.Access) != "A1*" || string(after.Refresh) != "R1*" {
+	if string(after.Access.Bytes()) != "A1*" || string(after.Refresh.Bytes()) != "R1*" {
 		t.Fatal("not replaced")
 	}
 	after.Access, after.Refresh = before.Access, before.Refresh
 	if !reflect.DeepEqual(after, before) {
 		t.Fatalf("status, expiry and updatedAt must stay: %v vs %v", after, before)
 	}
-	if err := oauthDefault().ReplaceSealed(sealed("A"), nil); err == nil {
+	if err := oauthDefault().ReplaceSealed(sealed("A"), domain.Sealed{}); err == nil {
 		t.Error("dropping the refresh token must fail")
 	}
 	if err := oauth(oauthOpt{}).ReplaceSealed(sealed("A"), sealed("R")); err == nil {
@@ -302,14 +302,14 @@ func TestRestoreRoundTripAndCopies(t *testing.T) {
 	}
 	// accessors and snapshots hand out copies
 	buf := []byte("A1")
-	in := domain.Restore(domain.Snapshot{Access: buf, Refresh: sealed("R"), ExpiresAt: tp(now), RevokeURL: sp("u")})
+	in := domain.Restore(domain.Snapshot{Access: domain.NewSealed(buf), Refresh: sealed("R"), ExpiresAt: tp(now), RevokeURL: sp("u")})
 	buf[0] = 'X'
-	in.AccessToken()[0] = 'Y'
+	in.AccessToken().Bytes()[0] = 'Y'
 	s := in.Snapshot()
-	s.Access[0] = 'Z'
+	s.Access.Bytes()[0] = 'Z'
 	*s.ExpiresAt = at(99)
 	*s.RevokeURL = "changed"
-	if string(in.AccessToken()) != "A1" || !in.ExpiresAt().Equal(now) || *in.RevokeURL() != "u" {
+	if string(in.AccessToken().Bytes()) != "A1" || !in.ExpiresAt().Equal(now) || *in.RevokeURL() != "u" {
 		t.Fatal("aliasing")
 	}
 	if c.UserID() != "u1" || c.Server() != "gitea" || c.Kind() != domain.KindOAuth {
@@ -349,8 +349,8 @@ func TestSecretsNeverPrint(t *testing.T) {
 		Tokens: domain.SealedTokens{Access: sealed(access), Refresh: sealed(refresh)},
 	})
 	snap := c.Snapshot()
-	pend := domain.NewPendingConnect(state, "u1", "gitea", verifier, fp, now)
-	pendSnap := domain.PendingSnapshot{State: state, UserID: "u1", Server: "gitea", CodeVerifier: verifier, IssuedFor: fp, ExpiresAt: now}
+	pend := domain.NewPendingConnect(kernel.NewSecret(state), "u1", "gitea", kernel.NewSecret(verifier), fp, now)
+	pendSnap := domain.PendingSnapshot{State: kernel.NewSecret(state), UserID: "u1", Server: "gitea", CodeVerifier: kernel.NewSecret(verifier), IssuedFor: fp, ExpiresAt: now}
 	values := map[string]any{
 		"Sealed": sealed(access), "*Sealed": func() *domain.Sealed { s := sealed(access); return &s }(),
 		"Connection value": *c, "*Connection": c, "[]Connection": []domain.Connection{*c}, "[]*Connection": []*domain.Connection{c},
@@ -435,7 +435,7 @@ func TestPatParse(t *testing.T) {
 }
 
 func TestPendingConnect(t *testing.T) {
-	p := domain.NewPendingConnect("s", "u1", "gitea", "v", fp, now)
+	p := domain.NewPendingConnect(kernel.NewSecret("s"), "u1", "gitea", kernel.NewSecret("v"), fp, now)
 	if !p.ExpiresAt().Equal(at(600_000)) {
 		t.Fatalf("expiry %v", p.ExpiresAt())
 	}
@@ -451,11 +451,11 @@ func TestPendingConnect(t *testing.T) {
 	if !p.StartedWithConfig(fp) || p.StartedWithConfig("other") {
 		t.Error("StartedWithConfig")
 	}
-	if p.State() != "s" || p.UserID() != "u1" || p.Server() != "gitea" || p.CodeVerifier() != "v" || p.IssuedFor() != fp {
+	if p.State().Reveal() != "s" || p.UserID() != "u1" || p.Server() != "gitea" || p.CodeVerifier().Reveal() != "v" || p.IssuedFor() != fp {
 		t.Error("accessors")
 	}
-	r := domain.RestorePendingConnect(domain.PendingSnapshot{State: "s", UserID: "u1", Server: "gitea", CodeVerifier: "v", IssuedFor: fp, ExpiresAt: at(600_000)})
-	if r != p {
+	r := domain.RestorePendingConnect(domain.PendingSnapshot{State: kernel.NewSecret("s"), UserID: "u1", Server: "gitea", CodeVerifier: kernel.NewSecret("v"), IssuedFor: fp, ExpiresAt: at(600_000)})
+	if !reflect.DeepEqual(r, p) {
 		t.Error("restore")
 	}
 }

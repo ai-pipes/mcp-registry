@@ -78,23 +78,23 @@ const (
 // stored secret always belongs to the stored configuration and there is no window between two
 // reads (nor an ABA: a configuration that changed and came back holds only a secret set for it).
 // The status is not judged (the caller has its own rule). A secret no key opens is an error.
-func GetServerSecretFor(ctx context.Context, deps Deps, target ServerCallTarget) (string, SecretLookup, error) {
+func GetServerSecretFor(ctx context.Context, deps Deps, target ServerCallTarget) (kernel.Secret, SecretLookup, error) {
 	server, err := deps.Servers.FindBySlug(ctx, target.Slug)
 	if err != nil {
-		return "", "", err
+		return kernel.Secret{}, "", err
 	}
 	if server == nil || !server.SecretGoesTo(target.URL, target.Auth) {
-		return "", SecretMoved, nil
+		return kernel.Secret{}, SecretMoved, nil
 	}
 	sealed := server.SealedSecret()
 	if sealed == nil {
-		return "", SecretNotSet, nil
+		return kernel.Secret{}, SecretNotSet, nil
 	}
 	plain, err := deps.Box.Open(sealed)
 	if err != nil {
-		return "", "", err
+		return kernel.Secret{}, "", err
 	}
-	return plain, SecretFound, nil
+	return kernel.NewSecret(plain), SecretFound, nil
 }
 
 // GetServerForUpstream returns the call parameters of an active server; nil when it is unknown or

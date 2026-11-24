@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ai-pipes/mcp-registry/internal/kernel"
 	"github.com/ai-pipes/mcp-registry/internal/modules/catalog"
 	"github.com/ai-pipes/mcp-registry/internal/modules/connections"
 	"github.com/ai-pipes/mcp-registry/internal/modules/connections/domain"
@@ -43,7 +44,7 @@ type app2Config = connections.ServerConfig
 func (e *env) seedPAT(user, server, token string) {
 	sealed, _ := box{1}.Seal(token)
 	cfg, _ := e.dir.Config(ctx, server)
-	c := domain.ConnectPAT(domain.PATConnect{UserID: user, Server: server, Token: domain.Sealed(sealed), IssuedFor: fingerprint(*cfg), Now: t0})
+	c := domain.ConnectPAT(domain.PATConnect{UserID: user, Server: server, Token: domain.NewSealed(sealed), IssuedFor: fingerprint(*cfg), Now: t0})
 	e.store.rows[user+"\x00"+server] = c.Snapshot()
 }
 
@@ -53,7 +54,7 @@ func (e *env) seedOAuth(user string, expiresIn time.Duration) {
 	exp := t0.Add(expiresIn)
 	cfg, _ := e.dir.Config(ctx, "gitea")
 	c := domain.ConnectOAuth(domain.OAuthConnect{
-		UserID: user, Server: "gitea", Tokens: domain.SealedTokens{Access: domain.Sealed(a), Refresh: domain.Sealed(r), ExpiresAt: &exp},
+		UserID: user, Server: "gitea", Tokens: domain.SealedTokens{Access: domain.NewSealed(a), Refresh: domain.NewSealed(r), ExpiresAt: &exp},
 		IssuedFor: fingerprint(*cfg), Now: t0,
 	})
 	e.store.rows[user+"\x00gitea"] = c.Snapshot()
@@ -87,12 +88,12 @@ func TestServiceResolveCredential(t *testing.T) {
 	e := newEnv(t)
 	svc := e.service(t)
 	got, err := e.resolve(svc, "alice", "tracker")
-	if err != nil || got != (connections.CredentialResult{Failure: connections.FailureNeedsConnection}) {
+	if err != nil || !reflect.DeepEqual(got, (connections.CredentialResult{Failure: connections.FailureNeedsConnection})) {
 		t.Fatalf("never connected: %v %v", got, err)
 	}
 	e.seedPAT("alice", "tracker", "pat-1")
 	got, err = e.resolve(svc, "alice", "tracker")
-	if err != nil || !got.Ok() || got.Secret != "pat-1" {
+	if err != nil || !got.Ok() || got.Secret.Reveal() != "pat-1" {
 		t.Fatalf("stored PAT: %v %v", got, err)
 	}
 	if strings.Contains(fmt.Sprintf("%v %+v %#v", got, got, got), "pat-1") {
@@ -114,14 +115,14 @@ func TestServiceResolveForSendingIsPinnedToTheTarget(t *testing.T) {
 	svc := e.service(t)
 	current := catalog.ServerCallTarget{Slug: "tracker", Name: "Tracker", URL: "https://tracker.example.com/mcp", Auth: catalog.AuthMode{Kind: catalog.AuthPATUser}}
 	got, err := svc.ResolveForSending(ctx, "alice", current, false)
-	if err != nil || !got.Ok() || got.Secret != "pat-1" {
+	if err != nil || !got.Ok() || got.Secret.Reveal() != "pat-1" {
 		t.Fatalf("current target: %v %v", got, err)
 	}
 	before := e.store.rows["alice\x00tracker"]
 	stale := current
 	stale.URL = "https://elsewhere.example.com/mcp"
 	got, err = svc.ResolveForSending(ctx, "alice", stale, false)
-	if err != nil || got != (connections.CredentialResult{Failure: connections.FailureUnavailable}) {
+	if err != nil || !reflect.DeepEqual(got, (connections.CredentialResult{Failure: connections.FailureUnavailable})) {
 		t.Fatalf("stale target: %v %v", got, err)
 	}
 	if !reflect.DeepEqual(before, e.store.rows["alice\x00tracker"]) {
@@ -136,16 +137,16 @@ func TestServiceResolveCredentialOfAnOAuthConnection(t *testing.T) {
 		err       error
 		want      connections.CredentialResult
 	}{
-		{"fresh", time.Hour, nil, connections.CredentialResult{Secret: "ACCESS-OLD"}},
-		{"renewed ahead of expiry", 10 * time.Second, nil, connections.CredentialResult{Secret: "ACCESS-NEW"}},
-		{"provider down, token still valid", 5 * time.Second, errors.New("connection refused"), connections.CredentialResult{Secret: "ACCESS-OLD"}},
+		{"fresh", time.Hour, nil, connections.CredentialResult{Secret: kernel.NewSecret("ACCESS-OLD")}},
+		{"renewed ahead of expiry", 10 * time.Second, nil, connections.CredentialResult{Secret: kernel.NewSecret("ACCESS-NEW")}},
+		{"provider down, token still valid", 5 * time.Second, errors.New("connection refused"), connections.CredentialResult{Secret: kernel.NewSecret("ACCESS-OLD")}},
 		{"provider down, token expired", -time.Minute, errors.New("connection refused"), connections.CredentialResult{Failure: connections.FailureUnavailable}},
 	} {
 		e := newEnv(t)
 		e.seedOAuth("alice", c.expiresIn)
 		e.oauth.refreshErr = c.err
 		got, err := e.resolve(e.service(t), "alice", "gitea")
-		if err != nil || got != c.want {
+		if err != nil || !reflect.DeepEqual(got, c.want) {
 			t.Errorf("%s: %v %v, want %v", c.name, got, err, c.want)
 		}
 	}
@@ -182,7 +183,7 @@ func TestOneSingleFlightIsSharedByAllCallers(t *testing.T) {
 	}
 	close(e.oauth.gate)
 	for range 2 {
-		if got := <-results; !got.Ok() || got.Secret != "ACCESS-NEW" {
+		if got := <-results; !got.Ok() || got.Secret.Reveal() != "ACCESS-NEW" {
 			t.Fatalf("got %v", got)
 		}
 	}

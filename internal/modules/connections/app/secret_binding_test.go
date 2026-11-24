@@ -3,6 +3,7 @@ package app_test
 import (
 	"testing"
 
+	"github.com/ai-pipes/mcp-registry/internal/kernel"
 	"github.com/ai-pipes/mcp-registry/internal/modules/connections/app"
 )
 
@@ -56,7 +57,7 @@ func TestCompleteConnectNeverSendsBSecretToAAfterAnABAChange(t *testing.T) {
 	h.withRevokeURL()
 	state := stateOf(startURL(t, h, "gitea"))
 	abaAround(h)
-	_, err := app.CompleteConnect(ctx, h.d, app.CompleteConnectCommand{Principal: alice, State: state, Code: "c"})
+	_, err := app.CompleteConnect(ctx, h.d, app.CompleteConnectCommand{Principal: alice, State: kernel.NewSecret(state), Code: kernel.NewSecret("c")})
 	if code(err) != "invalid_state" {
 		t.Fatalf("%v", err)
 	}
@@ -91,7 +92,7 @@ func TestRenewalAfterAnABAChangeBeforeTheReadUsesNoSecret(t *testing.T) {
 	h.seedOAuth(tp(at(-1000)), "R1", "alice")
 	h.dir.onSecret = func() { toB(h); backToA(h) }
 	r, err := h.resolve("alice", "gitea")
-	if err != nil || r.Secret != "A-new" {
+	if err != nil || r.Secret.Reveal() != "A-new" {
 		t.Fatalf("%v %v", r, err)
 	}
 	if got := h.oauth.refreshSecrets; len(got) != 1 || got[0] != (exchangeSecret{}) {
@@ -137,7 +138,7 @@ func TestAnAuthorizeURLChangeBetweenTheReadsIsCaughtByTheNextResolve(t *testing.
 		})
 	}
 	r, err := h.resolve("alice", "gitea")
-	if err != nil || r.Secret != "A-new" {
+	if err != nil || r.Secret.Reveal() != "A-new" {
 		t.Fatalf("%v %v", r, err)
 	}
 	h.dir.onSecret = nil

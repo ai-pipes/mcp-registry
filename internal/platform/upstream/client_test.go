@@ -15,10 +15,19 @@ import (
 
 const mib = 1 << 20
 
+// hdr is a header map with plain values, as a target carries them (each a Secret).
+func hdr(m map[string]string) kernel.UpstreamHeaders {
+	out := make(kernel.UpstreamHeaders, len(m))
+	for k, v := range m {
+		out[k] = kernel.NewSecret(v)
+	}
+	return out
+}
+
 func target(f *fake, over ...func(*kernel.UpstreamTarget)) kernel.UpstreamTarget {
 	t := kernel.UpstreamTarget{
 		URL:              f.url(),
-		Headers:          map[string]string{"Authorization": "Bearer tok-1", "X-Extra": "yes"},
+		Headers:          hdr(map[string]string{"Authorization": "Bearer tok-1", "X-Extra": "yes"}),
 		Timeout:          10 * time.Second,
 		MaxResponseBytes: mib,
 	}
@@ -385,7 +394,7 @@ func TestOperationsShareNothing(t *testing.T) {
 	f.mu.Lock()
 	f.reqs = nil
 	f.mu.Unlock()
-	second := target(f, func(t *kernel.UpstreamTarget) { t.Headers = map[string]string{"Authorization": "Bearer tok-2"} })
+	second := target(f, func(t *kernel.UpstreamTarget) { t.Headers = hdr(map[string]string{"Authorization": "Bearer tok-2"}) })
 	if _, err := c.ListTools(context.Background(), second); err != nil {
 		t.Fatal(err)
 	}
@@ -411,7 +420,7 @@ func TestConcurrentOperationsKeepTheirOwnCredentials(t *testing.T) {
 	for i := range 16 {
 		wg.Go(func() {
 			tok := fmt.Sprintf("Bearer tok-%d", i)
-			tg := target(f, func(t *kernel.UpstreamTarget) { t.Headers = map[string]string{"Authorization": tok} })
+			tg := target(f, func(t *kernel.UpstreamTarget) { t.Headers = hdr(map[string]string{"Authorization": tok}) })
 			if _, err := c.ListTools(context.Background(), tg); err != nil {
 				t.Errorf("operation %d: %v", i, err)
 			}

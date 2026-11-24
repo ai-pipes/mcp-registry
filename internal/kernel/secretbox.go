@@ -16,8 +16,8 @@ const (
 
 // ResealOutcome is what re-sealing one stored secret came to.
 type ResealOutcome struct {
-	Kind   string // "current" | "resealed" | "unreadable"
-	Sealed []byte // only for "resealed"
+	Kind   string      // "current" | "resealed" | "unreadable"
+	Sealed SecretBytes // only for "resealed": the ciphertext, which is not printed either
 }
 
 // Reseal moves one stored secret from the old key to the new one. The new key is tried first,
@@ -35,5 +35,5 @@ func Reseal(sealed []byte, from, to SecretBox) ResealOutcome {
 	if err != nil {
 		return ResealOutcome{Kind: ResealUnreadable}
 	}
-	return ResealOutcome{Kind: ResealResealed, Sealed: out}
+	return ResealOutcome{Kind: ResealResealed, Sealed: NewSecretBytes(out)}
 }

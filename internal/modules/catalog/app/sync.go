@@ -155,7 +155,7 @@ func refused(err error) (SyncCounts, *kernel.DomainError, error) {
 func headersFor(ctx context.Context, deps Deps, server *domain.Server, startedBy *string) (kernel.UpstreamHeaders, domain.SyncFailure, error) {
 	switch server.Auth().CredentialSource() {
 	case domain.SourceNone:
-		return domain.HeaderFor(server.Auth(), ""), "", nil
+		return domain.HeaderFor(server.Auth(), kernel.Secret{}), "", nil
 	case domain.SourcePersonal:
 		owner := server.SyncCredentialsOwner(startedBy)
 		active := false
@@ -185,7 +185,7 @@ func headersFor(ctx context.Context, deps Deps, server *domain.Server, startedBy
 		if err != nil {
 			return nil, "", err
 		}
-		return domain.HeaderFor(server.Auth(), secret), "", nil
+		return domain.HeaderFor(server.Auth(), kernel.NewSecret(secret)), "", nil
 	}
 }
 

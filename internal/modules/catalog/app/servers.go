@@ -4,15 +4,16 @@ import (
 	"context"
 	"time"
 
+	"github.com/ai-pipes/mcp-registry/internal/kernel"
 	"github.com/ai-pipes/mcp-registry/internal/modules/catalog/domain"
 )
 
 // CreateServerCommand creates a server. Secret is the initial secret for a mode that holds one
-// (a shared key or the OAuth client secret); nil means none.
+// (a shared key or the OAuth client secret); unset means none.
 type CreateServerCommand struct {
 	Principal Principal
 	Input     ServerInput
-	Secret    *string
+	Secret    kernel.Secret
 }
 
 // CreateServer is for admins only; the contract's limits (the first breach is invalid_request), then the
@@ -36,8 +37,8 @@ func CreateServer(ctx context.Context, deps Deps, cmd CreateServerCommand) (Serv
 	if err != nil {
 		return ServerView{}, err
 	}
-	if cmd.Secret != nil {
-		if err := storeSecret(deps, server, *cmd.Secret, now); err != nil {
+	if cmd.Secret.IsSet() {
+		if err := storeSecret(deps, server, cmd.Secret.Reveal(), now); err != nil {
 			return ServerView{}, err
 		}
 	}
@@ -119,11 +120,11 @@ func UpdateServer(ctx context.Context, deps Deps, cmd UpdateServerCommand) (Serv
 	return viewWithCount(ctx, deps, server)
 }
 
-// SetSecretCommand sets the server's secret; a nil Secret clears it.
+// SetSecretCommand sets the server's secret; an unset Secret clears it.
 type SetSecretCommand struct {
 	Principal Principal
 	Slug      string
-	Secret    *string
+	Secret    kernel.Secret
 }
 
 // SetSecret is for admins only; the secret must be 1..4096 characters (invalid_request) and then pass
@@ -134,8 +135,8 @@ func SetSecret(ctx context.Context, deps Deps, cmd SetSecretCommand) error {
 	if err := requireAdmin(cmd.Principal); err != nil {
 		return err
 	}
-	if cmd.Secret != nil {
-		if issues := ValidateSecret(*cmd.Secret); len(issues) > 0 {
+	if cmd.Secret.IsSet() {
+		if issues := ValidateSecret(cmd.Secret.Reveal()); len(issues) > 0 {
 			return invalidRequest(issues[0])
 		}
 	}
@@ -144,10 +145,10 @@ func SetSecret(ctx context.Context, deps Deps, cmd SetSecretCommand) error {
 		return err
 	}
 	action := "server.secret_clear"
-	if cmd.Secret == nil {
+	if !cmd.Secret.IsSet() {
 		server.ClearSecret(deps.Clock.Now())
 	} else {
-		if err := storeSecret(deps, server, *cmd.Secret, deps.Clock.Now()); err != nil {
+		if err := storeSecret(deps, server, cmd.Secret.Reveal(), deps.Clock.Now()); err != nil {
 			return err
 		}
 		action = "server.secret_set"

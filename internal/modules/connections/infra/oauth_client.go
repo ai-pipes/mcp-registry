@@ -160,7 +160,7 @@ func (c *OAuthClient) AuthorizeURL(cfg catalog.OAuthClientConfig, in app.Authori
 	pairs = append(pairs,
 		[2]string{"response_type", "code"},
 		[2]string{"redirect_uri", in.RedirectURI},
-		[2]string{"state", in.State},
+		[2]string{"state", in.State.Reveal()},
 		[2]string{"code_challenge", in.CodeChallenge},
 		[2]string{"code_challenge_method", "S256"},
 	)
@@ -200,12 +200,12 @@ func existingQuery(raw string) string {
 // `code` and `code_verifier` (left out when there is none, as the reference does). No `state` is
 // sent: it was matched against the pending attempt already.
 func (c *OAuthClient) ExchangeCode(ctx context.Context, cfg catalog.OAuthClientConfig, secret app.ClientSecret, in app.ExchangeInput) (app.TokenSet, error) {
-	if in.Code == "" || in.RedirectURI == "" {
+	if in.Code.Reveal() == "" || in.RedirectURI == "" {
 		return app.TokenSet{}, errEmptyInput
 	}
-	pairs := [][2]string{{"redirect_uri", in.RedirectURI}, {"code", in.Code}}
-	if in.CodeVerifier != "" {
-		pairs = append(pairs, [2]string{"code_verifier", in.CodeVerifier})
+	pairs := [][2]string{{"redirect_uri", in.RedirectURI}, {"code", in.Code.Reveal()}}
+	if in.CodeVerifier.Reveal() != "" {
+		pairs = append(pairs, [2]string{"code_verifier", in.CodeVerifier.Reveal()})
 	}
 	pairs = append(pairs, [2]string{"grant_type", "authorization_code"})
 	return c.grant(ctx, cfg, secret, pairs)
@@ -213,17 +213,17 @@ func (c *OAuthClient) ExchangeCode(ctx context.Context, cfg catalog.OAuthClientC
 
 // Refresh is grant_type=refresh_token with the refresh token (no `scope`). It returns
 // *app.TokenEndpointError when the provider answered, an error of another type for no answer.
-func (c *OAuthClient) Refresh(ctx context.Context, cfg catalog.OAuthClientConfig, secret app.ClientSecret, refreshToken string) (app.TokenSet, error) {
-	if refreshToken == "" {
+func (c *OAuthClient) Refresh(ctx context.Context, cfg catalog.OAuthClientConfig, secret app.ClientSecret, refreshToken kernel.Secret) (app.TokenSet, error) {
+	if refreshToken.Reveal() == "" {
 		return app.TokenSet{}, errEmptyInput
 	}
-	return c.grant(ctx, cfg, secret, [][2]string{{"refresh_token", refreshToken}, {"grant_type", "refresh_token"}})
+	return c.grant(ctx, cfg, secret, [][2]string{{"refresh_token", refreshToken.Reveal()}, {"grant_type", "refresh_token"}})
 }
 
 // Revoke is RFC 7009: POST `token=<token>` (no token_type_hint, as the reference) to the revoke
 // URL with the same client authentication; only HTTP 200 counts.
-func (c *OAuthClient) Revoke(ctx context.Context, cfg catalog.OAuthClientConfig, secret app.ClientSecret, token string) error {
-	if token == "" {
+func (c *OAuthClient) Revoke(ctx context.Context, cfg catalog.OAuthClientConfig, secret app.ClientSecret, token kernel.Secret) error {
+	if token.Reveal() == "" {
 		return errEmptyInput
 	}
 	if cfg.RevokeURL == nil {
@@ -233,7 +233,7 @@ func (c *OAuthClient) Revoke(ctx context.Context, cfg catalog.OAuthClientConfig,
 	if err != nil {
 		return err
 	}
-	res, err := c.post(ctx, policy, *cfg.RevokeURL, cfg, secret, [][2]string{{"token", token}}, false)
+	res, err := c.post(ctx, policy, *cfg.RevokeURL, cfg, secret, [][2]string{{"token", token.Reveal()}}, false)
 	if err != nil {
 		return err
 	}
@@ -265,10 +265,12 @@ func (c *OAuthClient) grant(ctx context.Context, cfg catalog.OAuthClientConfig, 
 	return ts, nil
 }
 
+// response is an answer of the provider. A token answer's body carries the tokens, so it is held
+// as a kernel.SecretBytes: printing a response shows no token.
 type response struct {
 	status int
 	header http.Header
-	body   []byte
+	body   kernel.SecretBytes
 }
 
 // post sends one form request with the client's authentication and reads the whole answer, under
@@ -315,7 +317,7 @@ func (c *OAuthClient) post(ctx context.Context, policy endpointPolicy, rawURL st
 	if err != nil || len(body) > maxResponseBytes {
 		return response{}, c.failure(ctx)
 	}
-	return response{status: res.StatusCode, header: res.Header, body: body}, nil
+	return response{status: res.StatusCode, header: res.Header, body: kernel.NewSecretBytes(body)}, nil
 }
 
 // failure is what a request that did not complete reports: the caller's own cancellation as the
@@ -327,8 +329,10 @@ func (c *OAuthClient) failure(caller context.Context) error {
 	return errNoAnswer
 }
 
+// tokens is what a token answer gave: the tokens as kernel.Secret (refresh unset when there was
+// none).
 type tokens struct {
-	access, refresh string
+	access, refresh kernel.Secret
 	expiresIn       *float64 // whole seconds
 }
 
@@ -350,14 +354,15 @@ func tokenAnswer(res response) (tokens, error) {
 		return tokens{}, &app.TokenEndpointError{Status: res.status, Code: errorCode(res)}
 	}
 	var m map[string]json.RawMessage
-	if err := json.Unmarshal(stripBOM(res.body), &m); err != nil || m == nil {
+	if err := json.Unmarshal(stripBOM(res.body.Reveal()), &m); err != nil || m == nil {
 		return tokens{}, errNoAnswer
 	}
 	var t tokens
-	var ok bool
-	if t.access, ok = nonEmptyString(m["access_token"]); !ok {
+	access, ok := nonEmptyString(m["access_token"])
+	if !ok {
 		return tokens{}, errNoAnswer
 	}
+	t.access = kernel.NewSecret(access)
 	tokenType, ok := nonEmptyString(m["token_type"])
 	if !ok {
 		return tokens{}, errNoAnswer
@@ -376,9 +381,11 @@ func tokenAnswer(res response) (tokens, error) {
 		}
 	}
 	if raw, present := m["refresh_token"]; present {
-		if t.refresh, ok = nonEmptyString(raw); !ok {
+		refresh, ok := nonEmptyString(raw)
+		if !ok {
 			return tokens{}, errNoAnswer
 		}
+		t.refresh = kernel.NewSecret(refresh)
 	}
 	if raw, present := m["scope"]; present {
 		var s string
@@ -448,7 +455,7 @@ func errorCode(res response) string {
 		return ""
 	}
 	var m map[string]json.RawMessage
-	if json.Unmarshal(stripBOM(bytes.TrimSpace(res.body)), &m) != nil || m == nil {
+	if json.Unmarshal(stripBOM(bytes.TrimSpace(res.body.Reveal())), &m) != nil || m == nil {
 		return ""
 	}
 	code, _ := nonEmptyString(m["error"])

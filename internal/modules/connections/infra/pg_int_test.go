@@ -7,11 +7,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/ai-pipes/mcp-registry/internal/kernel"
 	"github.com/ai-pipes/mcp-registry/internal/modules/connections/app"
 	"github.com/ai-pipes/mcp-registry/internal/modules/connections/domain"
 	"github.com/ai-pipes/mcp-registry/internal/platform/pgtest"
@@ -51,7 +53,7 @@ func oauthConn(user, server string, now time.Time) *domain.Connection {
 	exp := now.Add(time.Hour)
 	return domain.ConnectOAuth(domain.OAuthConnect{
 		UserID: user, Server: server, IssuedFor: fpOAuth, RevokeURL: &rev, Now: now,
-		Tokens: domain.SealedTokens{Access: domain.Sealed("sealed-access"), Refresh: domain.Sealed("sealed-refresh"), ExpiresAt: &exp},
+		Tokens: domain.SealedTokens{Access: domain.NewSealed([]byte("sealed-access")), Refresh: domain.NewSealed([]byte("sealed-refresh")), ExpiresAt: &exp},
 	})
 }
 
@@ -105,11 +107,11 @@ func TestRowsWrittenLikeTypeScriptRehydrate(t *testing.T) {
 		if snap.Kind != tc.kind || snap.Status != tc.status || snap.UserID != userA || snap.Server != tc.server || snap.IssuedFor != fpOAuth {
 			t.Errorf("%s: %+v", tc.server, snap)
 		}
-		if !bytes.Equal(snap.Access, []byte("a-"+tc.server)) {
-			t.Errorf("%s: access %q", tc.server, []byte(snap.Access))
+		if !bytes.Equal(snap.Access.Bytes(), []byte("a-"+tc.server)) {
+			t.Errorf("%s: access %q", tc.server, snap.Access.Bytes())
 		}
-		if (snap.Refresh != nil) != tc.refresh || (snap.ExpiresAt != nil) != tc.expires || (snap.RevokeURL != nil) != tc.revoke {
-			t.Errorf("%s: refresh %v expires %v revoke %v", tc.server, snap.Refresh != nil, snap.ExpiresAt != nil, snap.RevokeURL != nil)
+		if (!snap.Refresh.IsEmpty()) != tc.refresh || (snap.ExpiresAt != nil) != tc.expires || (snap.RevokeURL != nil) != tc.revoke {
+			t.Errorf("%s: refresh %v expires %v revoke %v", tc.server, !snap.Refresh.IsEmpty(), snap.ExpiresAt != nil, snap.RevokeURL != nil)
 		}
 		if want := time.Date(2026, 11, 22, 10, 0, 0, 456e6, time.UTC); !snap.UpdatedAt.Equal(want) {
 			t.Errorf("%s: updatedAt %v", tc.server, snap.UpdatedAt)
@@ -123,7 +125,7 @@ func TestRowsWrittenLikeTypeScriptRehydrate(t *testing.T) {
 		t.Fatal(err)
 	}
 	c, _ := s.Connections.Get(ctx, userA, "empty-bytea")
-	if c.RefreshToken() != nil {
+	if !c.RefreshToken().IsEmpty() {
 		t.Error("an empty bytea must read as no refresh token")
 	}
 }
@@ -134,7 +136,7 @@ func TestRowsWrittenByGoHaveTheReferencesColumnValues(t *testing.T) {
 	ctx := ctxT(t)
 	now := time.Date(2026, 11, 22, 10, 0, 0, 123456789, time.UTC) // nanoseconds: the reference has milliseconds
 	save(t, s, oauthConn(userA, "gitea", now))
-	pat := domain.ConnectPAT(domain.PATConnect{UserID: userA, Server: "yt", Token: domain.Sealed("sealed-pat"), IssuedFor: `["http://h/?a=1&b=<2>","pat_user",null,null,null]`, Now: now})
+	pat := domain.ConnectPAT(domain.PATConnect{UserID: userA, Server: "yt", Token: domain.NewSealed([]byte("sealed-pat")), IssuedFor: `["http://h/?a=1&b=<2>","pat_user",null,null,null]`, Now: now})
 	save(t, s, pat)
 
 	type row struct {
@@ -210,7 +212,7 @@ func TestGetListDeleteKeys(t *testing.T) {
 		t.Fatalf("keys: %v %v", keys, err)
 	}
 	old, err := s.Connections.Delete(ctx, userA, "a")
-	if err != nil || old == nil || string(old.AccessToken()) != "sealed-access" || old.Server() != "a" {
+	if err != nil || old == nil || string(old.AccessToken().Bytes()) != "sealed-access" || old.Server() != "a" {
 		t.Fatalf("delete returns the old row: %v %v", old, err)
 	}
 	if c, _ := s.Connections.Get(ctx, userA, "a"); c != nil {
@@ -235,7 +237,7 @@ func TestWithLockSeesTheRowAndAppliesWhatTheCallbackReturns(t *testing.T) {
 		seen = cur
 		return nil, nil
 	})
-	if err != nil || seen == nil || string(seen.AccessToken()) != "sealed-access" {
+	if err != nil || seen == nil || string(seen.AccessToken().Bytes()) != "sealed-access" {
 		t.Fatalf("present: %v %v", seen, err)
 	}
 	// update through the lock
@@ -511,7 +513,7 @@ func TestWithLockCompletesOnATinyPool(t *testing.T) {
 }
 
 func pending(state, user string, expires time.Time) domain.PendingConnect {
-	return domain.RestorePendingConnect(domain.PendingSnapshot{State: state, UserID: user, Server: "gitea", CodeVerifier: "verifier-" + state, IssuedFor: fpOAuth, ExpiresAt: expires})
+	return domain.RestorePendingConnect(domain.PendingSnapshot{State: kernel.NewSecret(state), UserID: user, Server: "gitea", CodeVerifier: kernel.NewSecret("verifier-" + state), IssuedFor: fpOAuth, ExpiresAt: expires})
 }
 
 func TestPendingInsertAndConsume(t *testing.T) {
@@ -533,7 +535,7 @@ func TestPendingInsertAndConsume(t *testing.T) {
 	if err != nil || p == nil {
 		t.Fatalf("consume: %v %v", p, err)
 	}
-	if p.State() != "st1" || p.UserID() != userA || p.Server() != "gitea" || p.CodeVerifier() != "verifier-st1" || p.IssuedFor() != fpOAuth || !p.ExpiresAt().Equal(now.Add(10*time.Minute)) {
+	if p.State().Reveal() != "st1" || p.UserID() != userA || p.Server() != "gitea" || p.CodeVerifier().Reveal() != "verifier-st1" || p.IssuedFor() != fpOAuth || !p.ExpiresAt().Equal(now.Add(10*time.Minute)) {
 		t.Errorf("row mismatch: %v", p)
 	}
 	var n int
@@ -557,7 +559,7 @@ func TestPendingRowWrittenLikeTypeScript(t *testing.T) {
 		t.Fatal(err)
 	}
 	p, err := s.Pending.Consume(ctx, "ts-state", userA)
-	if err != nil || p == nil || p.CodeVerifier() != "ts-verifier" || !p.ExpiresAt().Equal(time.Date(2030, 1, 1, 0, 0, 0, 789e6, time.UTC)) {
+	if err != nil || p == nil || p.CodeVerifier().Reveal() != "ts-verifier" || !p.ExpiresAt().Equal(time.Date(2030, 1, 1, 0, 0, 0, 789e6, time.UTC)) {
 		t.Fatalf("%v %v", p, err)
 	}
 }
@@ -697,7 +699,7 @@ func TestKeyRotationWaitsForATokenRenewalHoldingTheRowLock(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				return domain.Sealed(out)
+				return domain.NewSealed(out)
 			}
 			exp := t0.Add(time.Hour)
 			save(t, s, domain.ConnectOAuth(domain.OAuthConnect{
@@ -756,15 +758,45 @@ func TestKeyRotationWaitsForATokenRenewalHoldingTheRowLock(t *testing.T) {
 			}); err != nil || got == nil {
 				t.Fatalf("read back: %v %v", got, err)
 			}
-			if c.renewalWith == newBox && (!bytes.Equal(got.AccessToken(), written.Access) || !bytes.Equal(got.RefreshToken(), written.Refresh)) {
+			if c.renewalWith == newBox && (!bytes.Equal(got.AccessToken().Bytes(), written.Access.Bytes()) || !bytes.Equal(got.RefreshToken().Bytes(), written.Refresh.Bytes())) {
 				t.Fatal("the stored bytes are not the renewal's: the rotation overwrote them")
 			}
-			if a, err := newBox.Open(got.AccessToken()); err != nil || a != "A-renewed" {
+			if a, err := newBox.Open(got.AccessToken().Bytes()); err != nil || a != "A-renewed" {
 				t.Fatalf("access under the new key: %q %v", a, err)
 			}
-			if r, err := newBox.Open(got.RefreshToken()); err != nil || r != "R-renewed" {
+			if r, err := newBox.Open(got.RefreshToken().Bytes()); err != nil || r != "R-renewed" {
 				t.Fatalf("refresh under the new key: %q %v", r, err)
 			}
 		})
+	}
+}
+
+// A stored EMPTY access value (no writer of either server produces one: only a corrupt or foreign
+// row has it) reads as "no bytes", and writing the row back sends NULL, which the not-null column
+// refuses: the rewrite fails and the stored row stays as it was. This is the handling the code had
+// before Sealed held its bytes privately (the old cloneSealed also turned an empty value into nil,
+// pinned by running this test against 943b1d5); it is kept, not changed, by the hardening.
+func TestAnEmptyStoredAccessValueKeepsItsPreviousHandling(t *testing.T) {
+	pool, s := setup(t)
+	ctx := ctxT(t)
+	if _, err := pool.Exec(ctx, `insert into connections.connections (user_id, server, kind, access, refresh, expires_at, status, issued_for, revoke_url, updated_at)
+	  values ($1, 'empty-access', 'pat', $2, null, null, 'ready', $3, null, '2026-11-22 10:00:00+00')`, userA, []byte{}, fpOAuth); err != nil {
+		t.Fatal(err)
+	}
+	c, err := s.Connections.Get(ctx, userA, "empty-access")
+	if err != nil || c == nil || !c.AccessToken().IsEmpty() {
+		t.Fatalf("an empty stored access value reads as no bytes: %v %v", c, err)
+	}
+	err = s.Connections.WithLock(ctx, userA, "empty-access", func(_ context.Context, c *domain.Connection) (*domain.Connection, error) { return c, nil })
+	if err == nil || !strings.Contains(err.Error(), "23502") {
+		t.Fatalf("writing it back must be refused by the not-null column, as before: %v", err)
+	}
+	var isNull bool
+	var n int
+	if err := pool.QueryRow(ctx, `select access is null, length(access) from connections.connections where user_id = $1 and server = 'empty-access'`, userA).Scan(&isNull, &n); err != nil {
+		t.Fatal(err)
+	}
+	if isNull || n != 0 {
+		t.Fatalf("the stored row changed: null=%v length=%d", isNull, n)
 	}
 }

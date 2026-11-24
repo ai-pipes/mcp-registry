@@ -67,9 +67,9 @@ func (g *gwEnv) token(sub string, role domain.Role) string {
 	if err != nil {
 		g.t.Fatal(err)
 	}
-	g.tokens[sub] = created.Token
-	g.markers = append(g.markers, created.Token)
-	return created.Token
+	g.tokens[sub] = created.Token.Reveal()
+	g.markers = append(g.markers, created.Token.Reveal())
+	return created.Token.Reveal()
 }
 
 // agentReply is what an agent sees of one call_tool.

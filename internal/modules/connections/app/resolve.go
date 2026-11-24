@@ -26,9 +26,10 @@ const (
 )
 
 // CredentialResult is the person's upstream secret for a server (the OAuth access token or the
-// PAT, raw) or the reason there is none (Failure set, Secret empty). It prints redacted.
+// PAT, raw) or the reason there is none (Failure set, Secret unset). It prints redacted, and the
+// secret is a kernel.Secret, so it prints nothing however the result is held.
 type CredentialResult struct {
-	Secret  string
+	Secret  kernel.Secret
 	Failure CredentialFailure
 }
 
@@ -60,7 +61,7 @@ func (r CredentialResult) MarshalText() ([]byte, error) { return []byte(r.text()
 // LogValue is the slog form.
 func (r CredentialResult) LogValue() slog.Value { return slog.StringValue(r.text()) }
 
-func ok(secret string) CredentialResult { return CredentialResult{Secret: secret} }
+func ok(secret kernel.Secret) CredentialResult { return CredentialResult{Secret: secret} }
 
 func failed(f CredentialFailure) CredentialResult { return CredentialResult{Failure: f} }
 
@@ -68,12 +69,12 @@ func failed(f CredentialFailure) CredentialResult { return CredentialResult{Fail
 // kept: it is the box's text about a token.
 var errOpen = errors.New("connections: a stored token cannot be opened with the configured key")
 
-func openToken(box kernel.SecretBox, sealed domain.Sealed) (string, error) {
-	plain, err := box.Open([]byte(sealed))
+func openToken(box kernel.SecretBox, sealed domain.Sealed) (kernel.Secret, error) {
+	plain, err := box.Open(sealed.Bytes())
 	if err != nil {
-		return "", errOpen
+		return kernel.Secret{}, errOpen
 	}
-	return plain, nil
+	return kernel.NewSecret(plain), nil
 }
 
 // ResolveQuery names a person's secret for a server. ForceRefresh is set when upstream rejected
@@ -272,17 +273,17 @@ func decideRenewal(ctx context.Context, env lockEnv, in renewal, current *domain
 		return locked{result: failed(FailureUnavailable)}, nil, nil
 	}
 
-	access, err := env.box.Seal(tokens.AccessToken)
+	access, err := env.box.Seal(tokens.AccessToken.Reveal())
 	if err != nil {
 		return locked{}, nil, errSeal
 	}
-	sealed := domain.SealedTokens{Access: domain.Sealed(access), ExpiresAt: tokens.ExpiresAt}
-	if tokens.RefreshToken != "" {
-		refresh, err := env.box.Seal(tokens.RefreshToken)
+	sealed := domain.SealedTokens{Access: domain.NewSealed(access), ExpiresAt: tokens.ExpiresAt}
+	if tokens.RefreshToken.Reveal() != "" {
+		refresh, err := env.box.Seal(tokens.RefreshToken.Reveal())
 		if err != nil {
 			return locked{}, nil, errSeal
 		}
-		sealed.Refresh = domain.Sealed(refresh)
+		sealed.Refresh = domain.NewSealed(refresh)
 	}
 	current.Refreshed(sealed, env.clock.Now())
 	return locked{result: ok(tokens.AccessToken)}, current, nil
@@ -297,7 +298,7 @@ var errNoAnswer = errors.New("connections: the OAuth provider gave no usable ans
 // refreshTokens asks the provider. A refresh token no key opens, and an answer without an access
 // token, count as no answer (an error that is not a *TokenEndpointError).
 func refreshTokens(ctx context.Context, env lockEnv, cfg ServerConfig, sealedRefresh domain.Sealed) (TokenSet, error) {
-	refresh, err := env.box.Open([]byte(sealedRefresh))
+	refresh, err := openToken(env.box, sealedRefresh)
 	if err != nil {
 		return TokenSet{}, errNoAnswer
 	}
@@ -305,7 +306,7 @@ func refreshTokens(ctx context.Context, env lockEnv, cfg ServerConfig, sealedRef
 	if err != nil {
 		return TokenSet{}, err
 	}
-	if tokens.AccessToken == "" {
+	if tokens.AccessToken.Reveal() == "" {
 		return TokenSet{}, errNoAnswer
 	}
 	return tokens, nil

@@ -496,7 +496,7 @@ func TestSecretSetAfterEditIsKept(t *testing.T) {
 func loaded() *domain.Server {
 	return domain.RehydrateServer(domain.ServerState{
 		Slug: "gitea", Version: 3, Name: "G", Description: "", URL: "https://x.example",
-		Auth: shared, SealedSecret: []byte{1}, Access: domain.Access{Kind: domain.AccessAll},
+		Auth: shared, SealedSecret: domain.SealedSecretOf([]byte{1}), Access: domain.Access{Kind: domain.AccessAll},
 		TimeoutMs: 1000, Status: domain.StatusActive, CreatedAt: t0, UpdatedAt: t0,
 	})
 }
@@ -557,7 +557,7 @@ func TestSetStatus(t *testing.T) {
 func TestRehydrate(t *testing.T) {
 	s := domain.RehydrateServer(domain.ServerState{
 		Slug: "gitea", Version: 3, Name: "G", URL: "https://x.example", Auth: domain.AuthMode{Kind: domain.AuthNone},
-		SealedSecret: []byte{1}, Access: domain.Access{Kind: domain.AccessAll}, TimeoutMs: 1000,
+		SealedSecret: domain.SealedSecretOf([]byte{1}), Access: domain.Access{Kind: domain.AccessAll}, TimeoutMs: 1000,
 		DailyLimit: ptr(7), Status: domain.StatusDisabled, LastSyncAt: &t0, LastSyncError: ptr("boom"),
 		SyncUserID: ptr("u1"), CreatedAt: t0, UpdatedAt: t1,
 	})
@@ -653,7 +653,7 @@ func TestServerGettersReturnCopies(t *testing.T) {
 	secret := []byte{1, 2, 3}
 	groups := []string{"b", "a"}
 	in := domain.ServerState{
-		Slug: "gitea", Name: "G", URL: "https://x.example", Auth: shared, SealedSecret: secret,
+		Slug: "gitea", Name: "G", URL: "https://x.example", Auth: shared, SealedSecret: domain.SealedSecretOf(secret),
 		Access: domain.Access{Kind: domain.AccessGroups, Groups: groups}, TimeoutMs: 1000, DailyLimit: &limit,
 		Status: domain.StatusActive, LastSyncAt: &synced, LastSyncError: &lastErr, SyncUserID: &syncUser, CreatedAt: t0, UpdatedAt: t0,
 	}

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ai-pipes/mcp-registry/internal/kernel"
 	"github.com/ai-pipes/mcp-registry/internal/modules/connections/app"
 	"github.com/ai-pipes/mcp-registry/internal/modules/connections/domain"
 )
@@ -22,7 +23,7 @@ func TestTokenEndpointErrorText(t *testing.T) {
 }
 
 func TestCredentialResultPrinting(t *testing.T) {
-	r := app.CredentialResult{Secret: "SECRET"}
+	r := app.CredentialResult{Secret: kernel.NewSecret("SECRET")}
 	if !r.Ok() || (app.CredentialResult{Failure: app.FailureExpired}).Ok() {
 		t.Fatal("Ok")
 	}
@@ -34,7 +35,7 @@ func TestCredentialResultPrinting(t *testing.T) {
 	if got := (app.CredentialResult{Failure: app.FailureUnavailable}).String(); got != "CredentialResult{failure:unavailable}" {
 		t.Fatal(got)
 	}
-	ts, cs := app.TokenSet{AccessToken: "SECRET"}, app.NewClientSecret("SECRET")
+	ts, cs := app.TokenSet{AccessToken: kernel.NewSecret("SECRET")}, app.NewClientSecret("SECRET")
 	for _, s := range []string{ts.String(), ts.GoString(), cs.String(), cs.GoString()} {
 		if s != "[redacted]" {
 			t.Fatal(s)
@@ -51,7 +52,7 @@ func TestPortErrorsPropagate(t *testing.T) {
 		if _, err := app.StartConnect(ctx, h.d, app.StartConnectCommand{Principal: alice, Server: "gitea"}); !errors.Is(err, boom) {
 			t.Fatal(err)
 		}
-		if err := app.SavePAT(ctx, h.d, app.SavePATCommand{Principal: alice, Server: "yt", Token: "p"}); !errors.Is(err, boom) {
+		if err := app.SavePAT(ctx, h.d, app.SavePATCommand{Principal: alice, Server: "yt", Token: kernel.NewSecret("p")}); !errors.Is(err, boom) {
 			t.Fatal(err)
 		}
 		if _, err := app.ListConnections(ctx, h.d, app.ListQuery{Principal: alice}); !errors.Is(err, boom) {
@@ -86,7 +87,7 @@ func TestPortErrorsPropagate(t *testing.T) {
 		if _, err := app.StartConnect(ctx, h.d, app.StartConnectCommand{Principal: alice, Server: "gitea"}); !errors.Is(err, boom) {
 			t.Fatal(err)
 		}
-		if _, err := app.CompleteConnect(ctx, h.d, app.CompleteConnectCommand{Principal: alice, State: "s", Code: "c"}); !errors.Is(err, boom) {
+		if _, err := app.CompleteConnect(ctx, h.d, app.CompleteConnectCommand{Principal: alice, State: kernel.NewSecret("s"), Code: kernel.NewSecret("c")}); !errors.Is(err, boom) {
 			t.Fatal(err)
 		}
 	})
@@ -106,11 +107,11 @@ func (f *failingPending) Consume(context.Context, string, string) (*domain.Pendi
 func TestSealFailuresAreErrors(t *testing.T) {
 	h := newHarness(t)
 	h.box.sealErr = errors.New("no key")
-	if err := app.SavePAT(ctx, h.d, app.SavePATCommand{Principal: alice, Server: "yt", Token: "p"}); err == nil {
+	if err := app.SavePAT(ctx, h.d, app.SavePATCommand{Principal: alice, Server: "yt", Token: kernel.NewSecret("p")}); err == nil {
 		t.Fatal("savePat")
 	}
 	state := stateOf(startURL(t, h, "gitea"))
-	if _, err := app.CompleteConnect(ctx, h.d, app.CompleteConnectCommand{Principal: alice, State: state, Code: "c"}); err == nil {
+	if _, err := app.CompleteConnect(ctx, h.d, app.CompleteConnectCommand{Principal: alice, State: kernel.NewSecret(state), Code: kernel.NewSecret("c")}); err == nil {
 		t.Fatal("complete (access)")
 	}
 	h2 := newHarness(t)

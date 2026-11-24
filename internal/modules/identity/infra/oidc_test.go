@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ai-pipes/mcp-registry/internal/kernel"
 	"github.com/ai-pipes/mcp-registry/internal/modules/identity/app"
 	"github.com/ai-pipes/mcp-registry/internal/modules/identity/domain"
 	"github.com/ai-pipes/mcp-registry/internal/modules/identity/infra"
@@ -41,7 +42,7 @@ func newRig(t *testing.T, mutate func(*infra.OIDCConfig)) *rig {
 	idp := oidctest.Start(t)
 	buf := &bytes.Buffer{}
 	cfg := infra.OIDCConfig{
-		Issuer: idp.Issuer, ClientID: idp.ClientID, ClientSecret: idp.ClientSecret,
+		Issuer: idp.Issuer, ClientID: idp.ClientID, ClientSecret: kernel.NewSecret(idp.ClientSecret),
 		RedirectURI: redirectURI, Logger: logging.New("trace", &lockedWriter{w: buf}),
 	}
 	if mutate != nil {
@@ -69,7 +70,7 @@ func (r *rig) code() string {
 func (r *rig) exchange(code string, iss *string) (domain.OIDCClaims, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	return r.prov.Exchange(ctx, app.OIDCExchangeInput{Code: code, CodeVerifier: verifier, Nonce: nonce, Iss: iss})
+	return r.prov.Exchange(ctx, app.OIDCExchangeInput{Code: kernel.NewSecret(code), CodeVerifier: kernel.NewSecret(verifier), Nonce: kernel.NewSecret(nonce), Iss: iss})
 }
 
 func (r *rig) login(t *testing.T) domain.OIDCClaims {
@@ -116,7 +117,7 @@ func wantRejected(t *testing.T, err error) {
 
 func TestAuthorizationURL(t *testing.T) {
 	r := newRig(t, nil)
-	u, err := r.prov.AuthorizationURL(context.Background(), app.OIDCAuthorizationInput{State: "st", CodeChallenge: "chal", Nonce: "nn"})
+	u, err := r.prov.AuthorizationURL(context.Background(), app.OIDCAuthorizationInput{State: kernel.NewSecret("st"), CodeChallenge: "chal", Nonce: kernel.NewSecret("nn")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +145,7 @@ func TestAuthorizationURL(t *testing.T) {
 
 func TestConfiguredScopes(t *testing.T) {
 	r := newRig(t, func(c *infra.OIDCConfig) { c.Scopes = "openid email" })
-	u, err := r.prov.AuthorizationURL(context.Background(), app.OIDCAuthorizationInput{State: "s", CodeChallenge: "c", Nonce: "n"})
+	u, err := r.prov.AuthorizationURL(context.Background(), app.OIDCAuthorizationInput{State: kernel.NewSecret("s"), CodeChallenge: "c", Nonce: kernel.NewSecret("n")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -379,7 +380,7 @@ func TestWrongPKCEVerifierIsRefused(t *testing.T) {
 	r := newRig(t, nil)
 	iss := r.idp.Issuer
 	ctx := context.Background()
-	_, err := r.prov.Exchange(ctx, app.OIDCExchangeInput{Code: r.code(), CodeVerifier: "another-verifier", Nonce: nonce, Iss: &iss})
+	_, err := r.prov.Exchange(ctx, app.OIDCExchangeInput{Code: kernel.NewSecret(r.code()), CodeVerifier: kernel.NewSecret("another-verifier"), Nonce: kernel.NewSecret(nonce), Iss: &iss})
 	wantRejected(t, err)
 }
 
@@ -417,7 +418,7 @@ func TestDiscoveryIsLazyRetriedAndThenCached(t *testing.T) {
 	if n := r.idp.Requests(oidctest.Discovery); n != 0 {
 		t.Fatalf("%d discovery requests at construction, want 0", n)
 	}
-	_, err := r.prov.AuthorizationURL(context.Background(), app.OIDCAuthorizationInput{State: "s", CodeChallenge: "c", Nonce: "n"})
+	_, err := r.prov.AuthorizationURL(context.Background(), app.OIDCAuthorizationInput{State: kernel.NewSecret("s"), CodeChallenge: "c", Nonce: kernel.NewSecret("n")})
 	wantUnavailable(t, err)
 	iss := r.idp.Issuer
 	_, err = r.exchange(r.code(), &iss)
@@ -436,7 +437,7 @@ func TestDiscoveryIsLazyRetriedAndThenCached(t *testing.T) {
 	r.idp.SetFault(oidctest.Discovery, oidctest.FaultNone)
 	r.idp.SetClaims(oidctest.Claims{Sub: "u1", Groups: strs("g")})
 	r.login(t) // the same object works now
-	if _, err := r.prov.AuthorizationURL(context.Background(), app.OIDCAuthorizationInput{State: "s", CodeChallenge: "c", Nonce: "n"}); err != nil {
+	if _, err := r.prov.AuthorizationURL(context.Background(), app.OIDCAuthorizationInput{State: kernel.NewSecret("s"), CodeChallenge: "c", Nonce: kernel.NewSecret("n")}); err != nil {
 		t.Fatal(err)
 	}
 	if n := r.idp.Requests(oidctest.Discovery); n != 3 {
@@ -447,7 +448,7 @@ func TestDiscoveryIsLazyRetriedAndThenCached(t *testing.T) {
 func TestDiscoveryDroppedConnectionIsUnavailable(t *testing.T) {
 	r := newRig(t, nil)
 	r.idp.SetFault(oidctest.Discovery, oidctest.FaultDrop)
-	_, err := r.prov.AuthorizationURL(context.Background(), app.OIDCAuthorizationInput{State: "s", CodeChallenge: "c", Nonce: "n"})
+	_, err := r.prov.AuthorizationURL(context.Background(), app.OIDCAuthorizationInput{State: kernel.NewSecret("s"), CodeChallenge: "c", Nonce: kernel.NewSecret("n")})
 	wantUnavailable(t, err)
 }
 
@@ -455,7 +456,7 @@ func TestDiscoveryGivesUpAfterFiveSeconds(t *testing.T) {
 	r := newRig(t, nil)
 	r.idp.SetFault(oidctest.Discovery, oidctest.FaultHang)
 	start := time.Now()
-	_, err := r.prov.AuthorizationURL(context.Background(), app.OIDCAuthorizationInput{State: "s", CodeChallenge: "c", Nonce: "n"})
+	_, err := r.prov.AuthorizationURL(context.Background(), app.OIDCAuthorizationInput{State: kernel.NewSecret("s"), CodeChallenge: "c", Nonce: kernel.NewSecret("n")})
 	wantUnavailable(t, err)
 	if d := time.Since(start); d < 4*time.Second || d > 8*time.Second {
 		t.Fatalf("gave up after %v, want about 5s", d)
@@ -465,7 +466,7 @@ func TestDiscoveryGivesUpAfterFiveSeconds(t *testing.T) {
 func TestARealIssuerMismatchInMetadataIsUnavailable(t *testing.T) {
 	r := newRig(t, nil)
 	r.idp.SetMetadataIssuer("http://other.example")
-	_, err := r.prov.AuthorizationURL(context.Background(), app.OIDCAuthorizationInput{State: "s", CodeChallenge: "c", Nonce: "n"})
+	_, err := r.prov.AuthorizationURL(context.Background(), app.OIDCAuthorizationInput{State: kernel.NewSecret("s"), CodeChallenge: "c", Nonce: kernel.NewSecret("n")})
 	wantUnavailable(t, err)
 }
 
@@ -478,7 +479,7 @@ func TestConcurrentFirstUseDiscoversOnce(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, err := r.prov.AuthorizationURL(context.Background(), app.OIDCAuthorizationInput{State: "s", CodeChallenge: "c", Nonce: "n"})
+			_, err := r.prov.AuthorizationURL(context.Background(), app.OIDCAuthorizationInput{State: kernel.NewSecret("s"), CodeChallenge: "c", Nonce: kernel.NewSecret("n")})
 			errs <- err
 		}()
 	}
@@ -498,10 +499,10 @@ func TestACancelledCallerDoesNotPoisonTheSharedDiscovery(t *testing.T) {
 	r := newRig(t, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := r.prov.AuthorizationURL(ctx, app.OIDCAuthorizationInput{State: "s", CodeChallenge: "c", Nonce: "n"}); err == nil {
+	if _, err := r.prov.AuthorizationURL(ctx, app.OIDCAuthorizationInput{State: kernel.NewSecret("s"), CodeChallenge: "c", Nonce: kernel.NewSecret("n")}); err == nil {
 		t.Fatal("a cancelled caller got a URL")
 	}
-	if _, err := r.prov.AuthorizationURL(context.Background(), app.OIDCAuthorizationInput{State: "s", CodeChallenge: "c", Nonce: "n"}); err != nil {
+	if _, err := r.prov.AuthorizationURL(context.Background(), app.OIDCAuthorizationInput{State: kernel.NewSecret("s"), CodeChallenge: "c", Nonce: kernel.NewSecret("n")}); err != nil {
 		t.Fatalf("the next caller failed: %v", err)
 	}
 }
@@ -531,10 +532,10 @@ func TestNothingSecretIsLoggedOrReturned(t *testing.T) {
 	r.idp.SetFault(oidctest.UserInfo, oidctest.FaultNone)
 	r.idp.SetFault(oidctest.Discovery, oidctest.Fault500)
 	fresh := infra.NewOIDCProvider(infra.OIDCConfig{
-		Issuer: r.idp.Issuer, ClientID: r.idp.ClientID, ClientSecret: r.idp.ClientSecret,
+		Issuer: r.idp.Issuer, ClientID: r.idp.ClientID, ClientSecret: kernel.NewSecret(r.idp.ClientSecret),
 		RedirectURI: redirectURI, Logger: slog.New(slog.NewJSONHandler(&lockedWriter{w: r.logs}, nil)),
 	})
-	_, e = fresh.Exchange(context.Background(), app.OIDCExchangeInput{Code: code, CodeVerifier: verifier, Nonce: nonce, Iss: &iss})
+	_, e = fresh.Exchange(context.Background(), app.OIDCExchangeInput{Code: kernel.NewSecret(code), CodeVerifier: kernel.NewSecret(verifier), Nonce: kernel.NewSecret(nonce), Iss: &iss})
 	all = append(all, e)
 
 	// access tokens and ID tokens as the provider issued them
@@ -612,9 +613,9 @@ func TestIssuerDifferingOnlyByNormalisationIsAccepted(t *testing.T) {
 			idp.SetClaims(oidctest.Claims{Sub: "u1", Groups: strs("g")})
 			prov := infra.NewOIDCProvider(infra.OIDCConfig{
 				Issuer: tc.configured(idp.Issuer), ClientID: idp.ClientID,
-				ClientSecret: idp.ClientSecret, RedirectURI: redirectURI,
+				ClientSecret: kernel.NewSecret(idp.ClientSecret), RedirectURI: redirectURI,
 			})
-			u, err := prov.AuthorizationURL(context.Background(), app.OIDCAuthorizationInput{State: "s", CodeChallenge: oidctest.Challenge(verifier), Nonce: nonce})
+			u, err := prov.AuthorizationURL(context.Background(), app.OIDCAuthorizationInput{State: kernel.NewSecret("s"), CodeChallenge: oidctest.Challenge(verifier), Nonce: kernel.NewSecret(nonce)})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -623,7 +624,7 @@ func TestIssuerDifferingOnlyByNormalisationIsAccepted(t *testing.T) {
 			if iss != tc.announced(idp.Issuer) {
 				t.Fatalf("callback iss %q", iss)
 			}
-			c, err := prov.Exchange(context.Background(), app.OIDCExchangeInput{Code: code, CodeVerifier: verifier, Nonce: nonce, Iss: &iss})
+			c, err := prov.Exchange(context.Background(), app.OIDCExchangeInput{Code: kernel.NewSecret(code), CodeVerifier: kernel.NewSecret(verifier), Nonce: kernel.NewSecret(nonce), Iss: &iss})
 			if err != nil || c.Sub != "u1" {
 				t.Fatalf("claims %+v, err %v", c, err)
 			}
@@ -650,7 +651,7 @@ func browse(t *testing.T, u *url.URL) (code, iss string) {
 func TestFullFlowThroughTheAuthorizeStep(t *testing.T) {
 	r := newRig(t, nil)
 	r.idp.SetClaims(oidctest.Claims{Sub: "u1", Name: "Anna", Groups: strs("g")})
-	u, err := r.prov.AuthorizationURL(context.Background(), app.OIDCAuthorizationInput{State: "st", CodeChallenge: oidctest.Challenge(verifier), Nonce: nonce})
+	u, err := r.prov.AuthorizationURL(context.Background(), app.OIDCAuthorizationInput{State: kernel.NewSecret("st"), CodeChallenge: oidctest.Challenge(verifier), Nonce: kernel.NewSecret(nonce)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -687,10 +688,10 @@ func TestAnHTTPSIssuerRefusesInsecureEndpoints(t *testing.T) {
 		t.Run(scheme+" endpoints", func(t *testing.T) {
 			srv := stubDiscovery(t, scheme)
 			prov := infra.NewOIDCProvider(infra.OIDCConfig{
-				Issuer: srv.URL, ClientID: "c", ClientSecret: "s",
+				Issuer: srv.URL, ClientID: "c", ClientSecret: kernel.NewSecret("s"),
 				RedirectURI: redirectURI, HTTPClient: srv.Client(),
 			})
-			_, err := prov.AuthorizationURL(context.Background(), app.OIDCAuthorizationInput{State: "s", CodeChallenge: "c", Nonce: "n"})
+			_, err := prov.AuthorizationURL(context.Background(), app.OIDCAuthorizationInput{State: kernel.NewSecret("s"), CodeChallenge: "c", Nonce: kernel.NewSecret("n")})
 			if ok && err != nil {
 				t.Fatal(err)
 			}
@@ -797,7 +798,7 @@ func TestACancelledTokenRequestIsNotAnOutage(t *testing.T) {
 	iss := r.idp.Issuer
 	result := make(chan error, 1)
 	go func() {
-		_, err := r.prov.Exchange(ctx, app.OIDCExchangeInput{Code: r.code(), CodeVerifier: verifier, Nonce: nonce, Iss: &iss})
+		_, err := r.prov.Exchange(ctx, app.OIDCExchangeInput{Code: kernel.NewSecret(r.code()), CodeVerifier: kernel.NewSecret(verifier), Nonce: kernel.NewSecret(nonce), Iss: &iss})
 		result <- err
 	}()
 	if !r.idp.WaitFor(oidctest.Token, 10*time.Second) {
@@ -816,9 +817,9 @@ func TestTheRetriedDiscoveryDocumentIsChecked(t *testing.T) {
 	idp.SetDiscoveryIssuers(idp.Issuer+"/", "http://evil.example")
 	prov := infra.NewOIDCProvider(infra.OIDCConfig{
 		Issuer: idp.Issuer, ClientID: idp.ClientID,
-		ClientSecret: idp.ClientSecret, RedirectURI: redirectURI,
+		ClientSecret: kernel.NewSecret(idp.ClientSecret), RedirectURI: redirectURI,
 	})
-	_, err := prov.AuthorizationURL(context.Background(), app.OIDCAuthorizationInput{State: "s", CodeChallenge: "c", Nonce: "n"})
+	_, err := prov.AuthorizationURL(context.Background(), app.OIDCAuthorizationInput{State: kernel.NewSecret("s"), CodeChallenge: "c", Nonce: kernel.NewSecret("n")})
 	wantUnavailable(t, err)
 	if n := idp.Requests(oidctest.Discovery); n != 2 {
 		t.Fatalf("%d discovery requests, want 2", n)
@@ -832,7 +833,7 @@ func TestTheConfiguredSpellingIsNotTheDiscoveredIssuer(t *testing.T) {
 		idp.SetClaims(oidctest.Claims{Sub: "u1", Groups: strs("g")})
 		return idp, infra.NewOIDCProvider(infra.OIDCConfig{
 			Issuer: idp.Issuer, ClientID: idp.ClientID,
-			ClientSecret: idp.ClientSecret, RedirectURI: redirectURI,
+			ClientSecret: kernel.NewSecret(idp.ClientSecret), RedirectURI: redirectURI,
 		})
 	}
 	grant := func(idp *oidctest.Provider) string {
@@ -842,13 +843,13 @@ func TestTheConfiguredSpellingIsNotTheDiscoveredIssuer(t *testing.T) {
 		idp, prov := setup(t)
 		idp.SetTamper(oidctest.Tamper{Issuer: idp.Issuer})
 		discovered := idp.Issuer + "/"
-		_, err := prov.Exchange(context.Background(), app.OIDCExchangeInput{Code: grant(idp), CodeVerifier: verifier, Nonce: nonce, Iss: &discovered})
+		_, err := prov.Exchange(context.Background(), app.OIDCExchangeInput{Code: kernel.NewSecret(grant(idp)), CodeVerifier: kernel.NewSecret(verifier), Nonce: kernel.NewSecret(nonce), Iss: &discovered})
 		wantRejected(t, err)
 	})
 	t.Run("callback iss", func(t *testing.T) {
 		idp, prov := setup(t)
 		configured := idp.Issuer
-		_, err := prov.Exchange(context.Background(), app.OIDCExchangeInput{Code: grant(idp), CodeVerifier: verifier, Nonce: nonce, Iss: &configured})
+		_, err := prov.Exchange(context.Background(), app.OIDCExchangeInput{Code: kernel.NewSecret(grant(idp)), CodeVerifier: kernel.NewSecret(verifier), Nonce: kernel.NewSecret(nonce), Iss: &configured})
 		wantRejected(t, err)
 	})
 }

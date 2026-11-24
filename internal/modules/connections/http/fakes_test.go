@@ -164,7 +164,7 @@ type memPending struct {
 func (p *memPending) Insert(_ context.Context, pc domain.PendingConnect) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.m[pc.State()] = pc
+	p.m[pc.State().Reveal()] = pc
 	return nil
 }
 
@@ -241,7 +241,7 @@ type oauth struct {
 }
 
 func (*oauth) AuthorizeURL(_ catalog.OAuthClientConfig, in app.AuthorizeInput) (string, error) {
-	return "https://idp.example.com/authorize?state=" + in.State + "&code_challenge=" + in.CodeChallenge, nil
+	return "https://idp.example.com/authorize?state=" + in.State.Reveal() + "&code_challenge=" + in.CodeChallenge, nil
 }
 
 func (o *oauth) ExchangeCode(ctx context.Context, _ catalog.OAuthClientConfig, _ app.ClientSecret, in app.ExchangeInput) (app.TokenSet, error) {
@@ -250,14 +250,14 @@ func (o *oauth) ExchangeCode(ctx context.Context, _ catalog.OAuthClientConfig, _
 	if ctx.Err() != nil { // a request that ended must not stop the exchange of a consumed state
 		return app.TokenSet{}, ctx.Err()
 	}
-	o.codes = append(o.codes, in.Code)
+	o.codes = append(o.codes, in.Code.Reveal())
 	if o.exchangeErr != nil {
 		return app.TokenSet{}, o.exchangeErr
 	}
-	return app.TokenSet{AccessToken: "ACCESS-1", RefreshToken: "REFRESH-1"}, nil
+	return app.TokenSet{AccessToken: kernel.NewSecret("ACCESS-1"), RefreshToken: kernel.NewSecret("REFRESH-1")}, nil
 }
 
-func (o *oauth) Refresh(ctx context.Context, _ catalog.OAuthClientConfig, _ app.ClientSecret, _ string) (app.TokenSet, error) {
+func (o *oauth) Refresh(ctx context.Context, _ catalog.OAuthClientConfig, _ app.ClientSecret, _ kernel.Secret) (app.TokenSet, error) {
 	o.mu.Lock()
 	o.refreshes++
 	first := o.refreshes == 1
@@ -275,13 +275,13 @@ func (o *oauth) Refresh(ctx context.Context, _ catalog.OAuthClientConfig, _ app.
 		return app.TokenSet{}, err
 	}
 	exp := t0.Add(time.Hour)
-	return app.TokenSet{AccessToken: "ACCESS-NEW", RefreshToken: "REFRESH-NEW", ExpiresAt: &exp}, nil
+	return app.TokenSet{AccessToken: kernel.NewSecret("ACCESS-NEW"), RefreshToken: kernel.NewSecret("REFRESH-NEW"), ExpiresAt: &exp}, nil
 }
 
-func (o *oauth) Revoke(_ context.Context, _ catalog.OAuthClientConfig, _ app.ClientSecret, token string) error {
+func (o *oauth) Revoke(_ context.Context, _ catalog.OAuthClientConfig, _ app.ClientSecret, token kernel.Secret) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	o.revoked = append(o.revoked, token)
+	o.revoked = append(o.revoked, token.Reveal())
 	return nil
 }
 

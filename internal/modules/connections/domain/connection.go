@@ -208,7 +208,7 @@ func (c *Connection) Status() Status { return c.s.Status }
 // AccessToken is the sealed access token (or PAT), a copy.
 func (c *Connection) AccessToken() Sealed { return cloneSealed(c.s.Access) }
 
-// RefreshToken is the sealed refresh token, a copy; nil when there is none.
+// RefreshToken is the sealed refresh token, a copy; empty when there is none.
 func (c *Connection) RefreshToken() Sealed { return cloneSealed(c.s.Refresh) }
 
 // ExpiresAt is the access token's expiry, a copy; nil when unknown.
@@ -278,7 +278,7 @@ func (c *Connection) CredentialPlan(now time.Time, o PlanOptions) CredentialPlan
 	if !o.ForceRefresh && (!hasExpiry || left >= refreshAhead) {
 		return CredentialPlan{Action: PlanUse}
 	}
-	if len(c.s.Refresh) > 0 {
+	if !c.s.Refresh.IsEmpty() {
 		return CredentialPlan{Action: PlanRefresh, RefreshToken: cloneSealed(c.s.Refresh)}
 	}
 	if !o.ForceRefresh && (!hasExpiry || left > 0) {
@@ -318,7 +318,7 @@ func (c *Connection) StatusFor(config string) Status {
 // none back and the previous one stays. The connection becomes ready; UpdatedAt is now.
 func (c *Connection) Refreshed(t SealedTokens, now time.Time) {
 	c.s.Access = cloneSealed(t.Access)
-	if len(t.Refresh) > 0 {
+	if !t.Refresh.IsEmpty() {
 		c.s.Refresh = cloneSealed(t.Refresh)
 	}
 	c.s.ExpiresAt = cloneTime(t.ExpiresAt)
@@ -333,7 +333,7 @@ var ErrReplaceRefreshPresence = errors.New("a re-seal keeps the refresh token pr
 // rotation): not a new credential, so status, expiry and UpdatedAt stay. Adding or dropping a
 // refresh token is not a re-seal and returns ErrReplaceRefreshPresence.
 func (c *Connection) ReplaceSealed(access, refresh Sealed) error {
-	if (len(refresh) == 0) != (len(c.s.Refresh) == 0) {
+	if refresh.IsEmpty() != c.s.Refresh.IsEmpty() {
 		return ErrReplaceRefreshPresence
 	}
 	c.s.Access = cloneSealed(access)

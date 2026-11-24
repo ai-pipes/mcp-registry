@@ -37,12 +37,12 @@ const serverColumns = `slug, name, description, url, auth, secret, version, acce
 
 func scanServer(row pgx.Row, extra ...any) (*domain.Server, error) {
 	var st domain.ServerState
-	var auth, access []byte
+	var auth, access, sealed []byte
 	var status string
 	var created, updated time.Time
 	var last *time.Time
 	dest := append([]any{
-		&st.Slug, &st.Name, &st.Description, &st.URL, &auth, &st.SealedSecret, &st.Version, &access, &st.TimeoutMs,
+		&st.Slug, &st.Name, &st.Description, &st.URL, &auth, &sealed, &st.Version, &access, &st.TimeoutMs,
 		&st.DailyLimit, &status, &last, &st.LastSyncError, &st.SyncUserID, &created, &updated,
 	}, extra...)
 	if err := row.Scan(dest...); err != nil {
@@ -55,6 +55,7 @@ func scanServer(row pgx.Row, extra ...any) (*domain.Server, error) {
 	if st.Access, err = decodeAccess(access); err != nil {
 		return nil, fmt.Errorf("catalog server %q: %w", st.Slug, err)
 	}
+	st.SealedSecret = domain.SealedSecretOf(sealed)
 	st.Status = domain.ServerStatus(status)
 	st.LastSyncAt = utcPtr(last)
 	st.CreatedAt, st.UpdatedAt = created.UTC(), updated.UTC()

@@ -145,7 +145,7 @@ func TestOIDCConfigComesFromTheConfiguration(t *testing.T) {
 		OIDCScopes: "openid profile roles", OIDCGroupsClaim: "roles",
 	}
 	got := oidcConfigFor(cfg, nil)
-	if got.Issuer != "https://idp.example" || got.ClientID != "cid" || got.ClientSecret != "csecret" ||
+	if got.Issuer != "https://idp.example" || got.ClientID != "cid" || got.ClientSecret.Reveal() != "csecret" ||
 		got.RedirectURI != "https://gw.example.com/api/auth/callback" || got.Scopes != "openid profile roles" || got.GroupsClaim != "roles" {
 		t.Errorf("%+v", got)
 	}

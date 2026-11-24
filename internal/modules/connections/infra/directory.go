@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/ai-pipes/mcp-registry/internal/kernel"
 	"github.com/ai-pipes/mcp-registry/internal/modules/catalog"
 	"github.com/ai-pipes/mcp-registry/internal/modules/connections/app"
 )
@@ -12,7 +13,7 @@ import (
 type CatalogAPI interface {
 	ListServersFor(ctx context.Context, p catalog.Principal) ([]catalog.MemberServerView, error)
 	GetServerForUpstream(ctx context.Context, slug string) (*catalog.ServerCallTarget, error)
-	GetServerSecretFor(ctx context.Context, target catalog.ServerCallTarget) (string, catalog.SecretLookup, error)
+	GetServerSecretFor(ctx context.Context, target catalog.ServerCallTarget) (kernel.Secret, catalog.SecretLookup, error)
 }
 
 // serverDirectory is app.ServerDirectory over the catalog's public queries only
@@ -79,7 +80,7 @@ func (d *serverDirectory) ClientSecretFor(ctx context.Context, cfg app.ServerCon
 	}
 	switch lookup {
 	case catalog.SecretFound:
-		return app.NewClientSecret(secret), false, nil
+		return app.NewClientSecret(secret.Reveal()), false, nil
 	case catalog.SecretNotSet:
 		return app.ClientSecret{}, false, nil
 	default:

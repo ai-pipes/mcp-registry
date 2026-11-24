@@ -29,8 +29,8 @@ func (stubCatalog) ServerFor(context.Context, string) (*catalog.ServerCallTarget
 	return nil, nil
 }
 
-func (stubCatalog) ServerSecret(context.Context, catalog.ServerCallTarget) (string, catalog.SecretLookup, error) {
-	return "", catalog.SecretNotSet, nil
+func (stubCatalog) ServerSecret(context.Context, catalog.ServerCallTarget) (kernel.Secret, catalog.SecretLookup, error) {
+	return kernel.Secret{}, catalog.SecretNotSet, nil
 }
 
 type stubCreds struct{}
@@ -87,7 +87,7 @@ func (stubUpstream) CallTool(context.Context, kernel.UpstreamTarget, string, jso
 
 type stubSecrets struct{}
 
-func (stubSecrets) Equal(a, b string) bool { return a == b }
+func (stubSecrets) Equal(a, b kernel.Secret) bool { return a.Reveal() == b.Reveal() }
 
 type records struct{ lines []string }
 
