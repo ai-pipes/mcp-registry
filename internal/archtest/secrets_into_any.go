@@ -37,6 +37,9 @@ func (l SecretLeak) String() string {
 // interface WITH methods (a port, a service) is not reported. Leaks found under several tag sets
 // are reported once.
 //
+// Generated files (a "Code generated ... DO NOT EDIT." header) are scanned like any other: they
+// leak as well as hand-written code.
+//
 // The loader is golang.org/x/tools/go/packages: it asks the go command for the packages and their
 // dependencies' export data, so third-party and cgo-free dependencies type-check exactly as the
 // build sees them, in seconds.
@@ -139,34 +142,88 @@ func (f importerFunc) Import(path string) (*types.Package, error) { return f(pat
 // holdsSecret reports whether t is, or holds anywhere inside it (struct fields, pointers, slices,
 // arrays, maps, channels, named wrappers), kernel.Secret or kernel.SecretBytes.
 func holdsSecret(t types.Type, seen map[types.Type]bool) bool {
+	return holds(t, seen, isSecretType)
+}
+
+func isSecretType(t types.Type) bool {
+	n, ok := t.(*types.Named)
+	if !ok {
+		return false
+	}
+	o := n.Obj()
+	return o.Pkg() != nil && o.Pkg().Path() == kernelPkg && (o.Name() == "Secret" || o.Name() == "SecretBytes")
+}
+
+func isTypeParam(t types.Type) bool {
+	_, ok := t.(*types.TypeParam)
+	return ok
+}
+
+// holds walks t (pointers, slices, arrays, maps, channels, struct fields, function parameters and
+// results, named wrappers) and reports whether match is true for t or anything inside it.
+func holds(t types.Type, seen map[types.Type]bool, match func(types.Type) bool) bool {
 	if t == nil || seen[t] {
 		return false
 	}
 	seen[t] = true
+	if match(t) {
+		return true
+	}
 	switch x := t.(type) {
 	case *types.Named:
-		if o := x.Obj(); o.Pkg() != nil && o.Pkg().Path() == kernelPkg && (o.Name() == "Secret" || o.Name() == "SecretBytes") {
-			return true
-		}
-		return holdsSecret(x.Underlying(), seen)
+		return holds(x.Underlying(), seen, match)
 	case *types.Alias:
-		return holdsSecret(types.Unalias(x), seen)
+		return holds(types.Unalias(x), seen, match)
 	case *types.Pointer:
-		return holdsSecret(x.Elem(), seen)
+		return holds(x.Elem(), seen, match)
 	case *types.Slice:
-		return holdsSecret(x.Elem(), seen)
+		return holds(x.Elem(), seen, match)
 	case *types.Array:
-		return holdsSecret(x.Elem(), seen)
+		return holds(x.Elem(), seen, match)
 	case *types.Map:
-		return holdsSecret(x.Key(), seen) || holdsSecret(x.Elem(), seen)
+		return holds(x.Key(), seen, match) || holds(x.Elem(), seen, match)
 	case *types.Chan:
-		return holdsSecret(x.Elem(), seen)
+		return holds(x.Elem(), seen, match)
 	case *types.Struct:
 		for i := range x.NumFields() {
-			if holdsSecret(x.Field(i).Type(), seen) {
+			if holds(x.Field(i).Type(), seen, match) {
 				return true
 			}
 		}
+	case *types.Signature: // a function value whose parameters or results hold the type
+		return holdsTuple(x.Params(), seen, match) || holdsTuple(x.Results(), seen, match)
+	}
+	return false
+}
+
+func holdsTuple(t *types.Tuple, seen map[types.Type]bool, match func(types.Type) bool) bool {
+	for i := range t.Len() {
+		if holds(t.At(i).Type(), seen, match) {
+			return true
+		}
+	}
+	return false
+}
+
+// boundToEmptyParam reports whether a parameter of type t of a generic function (or of a method of
+// a generic type) accepts, through a type parameter whose constraint has no methods, a value of any
+// type the type argument allows: the body can format or store it as any. Constraints with methods
+// are ports. Conservative on purpose: a constraint's type set is not looked at.
+func boundToEmptyParam(t types.Type) bool {
+	switch x := types.Unalias(t).(type) {
+	case *types.TypeParam:
+		i, ok := x.Constraint().Underlying().(*types.Interface)
+		return ok && i.NumMethods() == 0
+	case *types.Slice:
+		return boundToEmptyParam(x.Elem())
+	case *types.Array:
+		return boundToEmptyParam(x.Elem())
+	case *types.Pointer:
+		return boundToEmptyParam(x.Elem())
+	case *types.Chan:
+		return boundToEmptyParam(x.Elem())
+	case *types.Map:
+		return boundToEmptyParam(x.Key()) || boundToEmptyParam(x.Elem())
 	}
 	return false
 }
@@ -189,17 +246,71 @@ func emptyInterface(t types.Type) bool {
 // append too), explicit conversions any(x), assignments and variable declarations, returns,
 // composite literal elements (slices, arrays, maps, struct fields) and channel sends.
 func secretsIntoAny(fset *token.FileSet, files []*ast.File, info *types.Info) []SecretLeak {
-	var out []SecretLeak
-	report := func(e ast.Expr, target types.Type, what string) {
-		if e == nil || !emptyInterface(target) {
-			return
+	decls := map[*types.Func]*ast.FuncDecl{}
+	for _, f := range files {
+		for _, d := range f.Decls {
+			if fd, ok := d.(*ast.FuncDecl); ok {
+				if fn, ok := info.Defs[fd.Name].(*types.Func); ok {
+					decls[fn] = fd
+				}
+			}
 		}
-		tv, ok := info.Types[e]
-		if !ok || tv.Type == nil || emptyInterface(tv.Type) || !holdsSecret(tv.Type, map[types.Type]bool{}) {
-			return
-		}
-		out = append(out, SecretLeak{Pos: fset.Position(e.Pos()), Type: tv.Type.String(), What: what})
 	}
+	memo := map[*types.Func]bool{}
+	// bodySinks reports whether a generic function declared in these files lets a value of its
+	// type parameters reach an empty interface (fmt, slog, any, or another such generic). One
+	// declared elsewhere (another package, the standard library) is unknown: assumed to.
+	var bodySinks func(fn *types.Func) bool
+	bodySinks = func(fn *types.Func) bool {
+		if v, ok := memo[fn]; ok {
+			return v
+		}
+		fd := decls[fn]
+		if fd == nil {
+			return true
+		}
+		memo[fn] = false // recursion: judged by the rest of the body
+		v := len(scanNodes(fset, []ast.Node{fd}, info, isTypeParam, bodySinks)) > 0
+		memo[fn] = v
+		return v
+	}
+	nodes := make([]ast.Node, len(files))
+	for i, f := range files {
+		nodes[i] = f
+	}
+	return scanNodes(fset, nodes, info, isSecretType, bodySinks)
+}
+
+// scanNodes reports where a value whose type holds a type matched by match reaches an empty
+// interface. sinks decides, for a generic callee, whether a value bound to its type parameter can.
+func scanNodes(fset *token.FileSet, files []ast.Node, info *types.Info, match func(types.Type) bool, sinks func(*types.Func) bool) []SecretLeak {
+	var out []SecretLeak
+	reportType := func(e ast.Expr, typ, target types.Type, what string) {
+		if e == nil || typ == nil || !emptyInterface(target) || emptyInterface(typ) || !holds(typ, map[types.Type]bool{}, match) {
+			return
+		}
+		out = append(out, SecretLeak{Pos: fset.Position(e.Pos()), Type: typ.String(), What: what})
+	}
+	report := func(e ast.Expr, target types.Type, what string) {
+		if e == nil {
+			return
+		}
+		if tv, ok := info.Types[e]; ok {
+			reportType(e, tv.Type, target, what)
+		}
+	}
+	// reportTuple handles `x, y = f()`, `var x, y T = f()` and `return f()`: the call's results are
+	// matched with the targets one by one.
+	reportTuple := func(call ast.Expr, targets []types.Type, what string) {
+		tup, ok := info.TypeOf(call).(*types.Tuple)
+		if !ok || tup.Len() != len(targets) {
+			return
+		}
+		for i := range targets {
+			reportType(call, tup.At(i).Type(), targets[i], what)
+		}
+	}
+	anyType := types.Universe.Lookup("any").Type()
 	for _, f := range files {
 		var funcs []*types.Signature // enclosing function signatures, for returns
 		var visit func(n ast.Node) bool
@@ -223,18 +334,30 @@ func secretsIntoAny(fset *token.FileSet, files []*ast.File, info *types.Info) []
 				funcs = funcs[:len(funcs)-1]
 				return false
 			case *ast.CallExpr:
-				callArgs(info, x, report)
+				callArgs(info, x, report, anyType, sinks)
 			case *ast.AssignStmt:
 				if len(x.Lhs) == len(x.Rhs) && x.Tok != token.DEFINE {
 					for i := range x.Lhs {
 						report(x.Rhs[i], info.TypeOf(x.Lhs[i]), "assignment")
 					}
+				} else if len(x.Rhs) == 1 && len(x.Lhs) > 1 && x.Tok != token.DEFINE {
+					targets := make([]types.Type, len(x.Lhs))
+					for i, l := range x.Lhs {
+						targets[i] = info.TypeOf(l)
+					}
+					reportTuple(x.Rhs[0], targets, "assignment")
 				}
 			case *ast.ValueSpec:
 				if x.Type != nil && len(x.Values) == len(x.Names) {
 					for i := range x.Values {
 						report(x.Values[i], info.TypeOf(x.Type), "variable declaration")
 					}
+				} else if x.Type != nil && len(x.Values) == 1 && len(x.Names) > 1 {
+					targets := make([]types.Type, len(x.Names))
+					for i := range targets {
+						targets[i] = info.TypeOf(x.Type)
+					}
+					reportTuple(x.Values[0], targets, "variable declaration")
 				}
 			case *ast.ReturnStmt:
 				if len(funcs) > 0 && funcs[len(funcs)-1] != nil {
@@ -243,6 +366,12 @@ func secretsIntoAny(fset *token.FileSet, files []*ast.File, info *types.Info) []
 						for i, r := range x.Results {
 							report(r, res.At(i).Type(), "return")
 						}
+					} else if len(x.Results) == 1 && res.Len() > 1 {
+						targets := make([]types.Type, res.Len())
+						for i := range targets {
+							targets[i] = res.At(i).Type()
+						}
+						reportTuple(x.Results[0], targets, "return")
 					}
 				}
 			case *ast.SendStmt:
@@ -259,7 +388,7 @@ func secretsIntoAny(fset *token.FileSet, files []*ast.File, info *types.Info) []
 	return out
 }
 
-func callArgs(info *types.Info, call *ast.CallExpr, report func(ast.Expr, types.Type, string)) {
+func callArgs(info *types.Info, call *ast.CallExpr, report func(ast.Expr, types.Type, string), anyType types.Type, sinks func(*types.Func) bool) {
 	tv, ok := info.Types[call.Fun]
 	if !ok {
 		return
@@ -275,22 +404,73 @@ func callArgs(info *types.Info, call *ast.CallExpr, report func(ast.Expr, types.
 		return
 	}
 	name := calleeName(call.Fun)
-	params := sig.Params()
+	// The generic signature of the callee, if it has one: after instantiation its type parameters
+	// are replaced and an argument bound to `T any` no longer looks like an empty interface.
+	fn, origin := genericCallee(info, call.Fun)
 	for i, a := range call.Args {
-		var pt types.Type
-		switch {
-		case sig.Variadic() && i >= params.Len()-1:
-			last := params.At(params.Len() - 1).Type()
-			if call.Ellipsis.IsValid() {
-				pt = last
-			} else if s, ok := last.Underlying().(*types.Slice); ok {
-				pt = s.Elem()
+		report(a, paramType(sig, i, call.Ellipsis.IsValid()), "argument of "+name)
+		if origin != nil && sinks(fn) {
+			if pt := paramType(origin, i, call.Ellipsis.IsValid()); pt != nil && boundToEmptyParam(pt) {
+				report(a, anyType, "argument of "+name+" (type parameter)")
 			}
-		case i < params.Len():
-			pt = params.At(i).Type()
 		}
-		report(a, pt, "argument of "+name)
 	}
+}
+
+// paramType is the type the i-th argument is passed as (the element type for a variadic tail).
+func paramType(sig *types.Signature, i int, ellipsis bool) types.Type {
+	params := sig.Params()
+	switch {
+	case sig.Variadic() && i >= params.Len()-1:
+		last := params.At(params.Len() - 1).Type()
+		if ellipsis {
+			return last
+		}
+		if s, ok := last.Underlying().(*types.Slice); ok {
+			return s.Elem()
+		}
+	case i < params.Len():
+		return params.At(i).Type()
+	}
+	return nil
+}
+
+// genericCallee returns the uninstantiated function and signature of the function or method called through
+// fun when it is generic or belongs to a generic type, else nil.
+func genericCallee(info *types.Info, fun ast.Expr) (*types.Func, *types.Signature) {
+	for {
+		switch x := fun.(type) {
+		case *ast.ParenExpr:
+			fun = x.X
+			continue
+		case *ast.IndexExpr:
+			fun = x.X
+			continue
+		case *ast.IndexListExpr:
+			fun = x.X
+			continue
+		}
+		break
+	}
+	var id *ast.Ident
+	switch x := fun.(type) {
+	case *ast.Ident:
+		id = x
+	case *ast.SelectorExpr:
+		id = x.Sel
+	default:
+		return nil, nil
+	}
+	f, ok := info.Uses[id].(*types.Func)
+	if !ok {
+		return nil, nil
+	}
+	f = f.Origin()
+	sig, _ := f.Type().(*types.Signature)
+	if sig == nil || (sig.TypeParams().Len() == 0 && sig.RecvTypeParams().Len() == 0) {
+		return nil, nil
+	}
+	return f, sig
 }
 
 func calleeName(e ast.Expr) string {

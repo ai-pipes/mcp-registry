@@ -19,7 +19,8 @@ func TestSecretIntoAnyIsReported(t *testing.T) {
 	for _, l := range v {
 		whats = append(whats, l.What)
 	}
-	want := "argument of fmt.Sprintf,argument of exec,variable declaration,element,map value,return"
+	want := "argument of fmt.Sprintf,argument of exec,variable declaration,element,map value,return," +
+		"argument of show (type parameter),argument of show (type parameter),argument of exec,variable declaration,assignment,return,argument of fmt.Sprint"
 	if got := strings.Join(whats, ","); got != want {
 		t.Fatalf("got %s, want %s", got, want)
 	}

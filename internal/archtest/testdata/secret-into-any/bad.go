@@ -20,3 +20,17 @@ func leaks(s kernel.Secret, b kernel.SecretBytes) any {
 	_ = map[string]any{"k": &s} // reported: map value, a pointer to a secret
 	return s                    // reported: return
 }
+
+func show[T any](v T) { fmt.Println(v) }
+
+func pair() (kernel.Secret, error) { return kernel.Secret{}, nil }
+
+func moreLeaks(s kernel.Secret, f func() kernel.Secret) (any, error) {
+	show(s)                // reported: a secret bound to an unconstrained type parameter
+	show[kernel.Secret](s) // reported: the same, instantiated explicitly
+	exec("x", f)           // reported: a function value returning a secret
+	var a, b any = pair()  // reported: a multi-value call into any variables
+	a, b = pair()          // reported: the same by assignment
+	_, _ = a, b
+	return pair() // reported: the same by return
+}
