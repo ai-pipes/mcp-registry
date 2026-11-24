@@ -102,8 +102,9 @@ compat-image-go:
 # branch: a search made at once after a restart equals the settled one); TestConfigNetworkAndRetention
 # and TestConfigSecretsFromFiles (their cleanup demands that the scenario's MCP ledger saw an answer);
 # and TestUpgradeKeepsEverything (the Go image on both sides is a restart test; its TypeScript-to-Go leg
-# runs when COMPAT_UPGRADE_FROM names the old image). Still left out: TestCLIKeys (rotate-secrets-key
-# and reset-key-check, milestone 7).
+# runs when COMPAT_UPGRADE_FROM names the old image).
+# Milestone 7 (the operator CLI) added TestCLIKeys (rotate-secrets-key and reset-key-check) and the
+# key-rotation subtest of TestPlatformMigrationsAndKeyCheck: nothing is left out for the Go image.
 COMPAT_GO_TESTS := TestConfigRefused TestPlatformStartsOnReferenceDatabase TestPlatformReverseHandOver \
 	TestPlatformWithoutPeople TestPlatformMigrationsAndKeyCheck TestPlatformStaticFilesAndSPA \
 	TestIdentityOIDC TestIdentityOIDCFailedCallbackAudit TestIdentityOIDCProviderDownAtStart \
@@ -124,19 +125,15 @@ COMPAT_GO_TESTS := TestConfigRefused TestPlatformStartsOnReferenceDatabase TestP
 	TestGatewayCall TestGatewayFaults TestGatewayCallsAPI TestGatewayAuditAPI \
 	TestConnectionsRefresh TestConnectionsRefreshFailures TestConnectionsSingleFlight \
 	TestConnectionsUpstreamRejectsTheToken TestSearchReadyBeforeServing \
-	TestConfigNetworkAndRetention TestConfigSecretsFromFiles TestUpgradeKeepsEverything
+	TestConfigNetworkAndRetention TestConfigSecretsFromFiles TestUpgradeKeepsEverything \
+	TestCLIKeys
 
 # Subtests of the scenarios above that need a later milestone, as a go test -skip expression: one
 # entry per line below, joined with `|` (slash-separated regular expressions per level; spaces of a
-# subtest name are underscores). Parent tests are never skipped by an entry with more levels than
-# they have, and an entry with fewer levels than a subtest's name skips that subtest too. Every entry
-# names the milestone whose work removes it:
-#   milestone 7 (the operator CLI)
-#   - TestPlatformMigrationsAndKeyCheck, "the old key alone: healthy, one warning;
-#     rotate-secrets-key re-seals the check": runs the command rotate-secrets-key.
-# Milestone 6 removed every other entry: the /mcp route, call_tool and the call log are ported.
-COMPAT_GO_SKIP_ENTRIES := \
-	^TestPlatformMigrationsAndKeyCheck$$/^the_old_key_alone:_healthy,_one_warning;_rotate-secrets-key_re-seals_the_check$$
+# subtest name are underscores; an entry names the milestone whose work removes it). Since milestone 7
+# the list is empty: nothing is skipped for the Go image. With no entry, COMPAT_GO_SKIP is empty and
+# -skip is not passed at all (see the compat-go recipe).
+COMPAT_GO_SKIP_ENTRIES :=
 
 space := $(subst ,, )
 COMPAT_GO_SKIP := $(subst $(space),|,$(strip $(COMPAT_GO_SKIP_ENTRIES)))
