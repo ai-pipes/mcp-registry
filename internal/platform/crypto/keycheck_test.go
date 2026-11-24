@@ -5,12 +5,15 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"os"
-	"strings"
 	"testing"
 
 	"github.com/ai-pipes/mcp-registry/internal/platform/crypto"
 )
 
+// checkPlain is the check text of the reference 1.0.x: PLAIN in
+// v1.0.1:apps/server/src/platform/crypto/key-check.ts (unchanged since 1.0.0). It is pinned here
+// rather than read from that file, so the test does not depend on the TypeScript tree; whether the
+// two images really accept each other's key check is judged by the compat suite.
 const checkPlain = "mcp-registry key check v1"
 
 func randKey(t *testing.T) []byte {
@@ -92,12 +95,18 @@ func TestJudgeOpensTheValueSealedByTypeScript(t *testing.T) {
 	}
 }
 
-func TestCheckTextMatchesTypeScriptSource(t *testing.T) {
-	src, err := os.ReadFile("../../../apps/server/src/platform/crypto/key-check.ts")
-	if err != nil {
-		t.Fatal(err)
+// The check text is the reference's, not a free choice: a database whose key check the reference
+// sealed must judge ok here and the reverse (compat TestPlatformStartsOnReferenceDatabase and
+// TestPlatformReverseHandOver judge both images on one database). checkPlain is pinned above; this
+// test proves Judge accepts exactly that text and nothing near it.
+func TestCheckTextIsPinnedToTheReference(t *testing.T) {
+	key := randKey(t)
+	if got := crypto.Judge(sealWith(t, key, checkPlain), crypto.NewKeys(key, nil)); got != crypto.KeyCheckOK {
+		t.Fatalf("Judge of the reference text = %q, want ok", got)
 	}
-	if !strings.Contains(string(src), "const PLAIN = '"+checkPlain+"';") {
-		t.Fatalf("key-check.ts no longer holds the declaration const PLAIN = %q: the Go check text must change with it", checkPlain)
+	for _, near := range []string{"mcp-registry key check v2", "mcp-registry key check v1 ", "MCP-registry key check v1", ""} {
+		if got := crypto.Judge(sealWith(t, key, near), crypto.NewKeys(key, nil)); got != crypto.KeyCheckMismatch {
+			t.Errorf("Judge of %q = %q, want mismatch: the check text must be exactly %q", near, got, checkPlain)
+		}
 	}
 }

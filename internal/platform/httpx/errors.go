@@ -15,7 +15,7 @@ import (
 const errBodyTooLarge = "request body is too large"
 
 // StatusFor is the HTTP status of an error code: the table of the reference server
-// (apps/server/src/platform/http/errors.ts), plus internal -> 500. Any other invalid_* is 422,
+// (v1.0.1:apps/server/src/platform/http/errors.ts), plus internal -> 500. Any other invalid_* is 422,
 // everything else 400.
 func StatusFor(code string) int {
 	switch code {

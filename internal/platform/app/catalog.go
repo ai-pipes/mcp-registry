@@ -13,7 +13,7 @@ import (
 	"github.com/ai-pipes/mcp-registry/internal/platform/upstream"
 )
 
-// Operator-facing texts of apps/server/src/platform/scheduler.ts.
+// Operator-facing texts of the reference v1.0.1:apps/server/src/platform/scheduler.ts.
 const (
 	msgCatalogSyncDone = "catalog sync: done"
 	msgCatalogSyncFail = "catalog sync: run failed"

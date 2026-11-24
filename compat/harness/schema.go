@@ -3,8 +3,8 @@
 package harness
 
 // REST endpoint -> response contract. A scenario passes the contract name its endpoint returns
-// to Response.JSON. Derived from the route files under apps/server/src/modules/*/interfaces/http/
-// and apps/server/src/platform/http/ (the zod schema each handler parses or types its body with).
+// to Response.JSON. Derived from the route files under v1.0.1:apps/server/src/modules/*/interfaces/http/
+// and v1.0.1:apps/server/src/platform/http/ (the zod schema each handler parses or types its body with).
 // Every non-2xx JSON body is ErrorBody. A name ending in "[]" validates a JSON array whose items
 // match the named contract: the contracts package has no list schema for those three endpoints
 // (the handlers return a bare array typed by the item schema).

@@ -25,7 +25,7 @@ var errCredentialsNotBound = errors.New("sync credentials: the connections servi
 // lateSyncCredentials is the catalog's SyncCredentials port over the public APIs of identity (is
 // the owner still an enabled admin) and connections (the person's own secret). It holds no rules:
 // whose connection may serve and what a failure means are the catalog's (SyncOwner in
-// catalog/domain). It is the counterpart of apps/server/src/platform/upstream/sync-credentials.ts.
+// catalog/domain). It is the counterpart of the reference v1.0.1:apps/server/src/platform/upstream/sync-credentials.ts.
 //
 // Construction cycle: the catalog service needs this port, and the connections ServerDirectory
 // needs the catalog service. The catalog is therefore built with this adapter first and the

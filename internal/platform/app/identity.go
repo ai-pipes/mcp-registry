@@ -17,7 +17,7 @@ import (
 	"github.com/ai-pipes/mcp-registry/internal/platform/scheduler"
 )
 
-// Operator-facing texts of apps/server/src/platform/{bootstrap,scheduler}.ts.
+// Operator-facing texts of the reference v1.0.1:apps/server/src/platform/{bootstrap,scheduler}.ts.
 const (
 	msgFirstStartLink       = "first start: open this one-time link within 15 minutes to sign in as admin"
 	msgFirstStartFailed     = "first start: could not issue the sign-in link"

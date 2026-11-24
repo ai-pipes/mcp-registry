@@ -4,7 +4,7 @@ package compat_test
 
 // Operator CLI scenarios: `--version`, create-user, create-token, login-link, create-server, sync,
 // reindex, reset-key-check, rotate-secrets-key, the key guard and the refusal of a database from a
-// newer version. Source: apps/server/test/cli.int.test.ts, scripts/smoke.sh and
+// newer version. Source: v1.0.1:apps/server/test/cli.int.test.ts, scripts/smoke.sh and
 // scripts/quickstart-smoke.sh.
 //
 // The CLI is part of the stable surface ("CLI commands and exit codes"), so unlike log messages the

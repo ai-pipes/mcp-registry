@@ -10,7 +10,7 @@
 //   docker run --rm --network none -v "$PWD":/repo:ro -v "$OUT":/out mcp-registry:compat-ts \
 //     node /repo/internal/modules/search/infra/onnx/testdata/gen/reference.mjs \
 //     /app/apps/server/node_modules/@huggingface/transformers/dist/transformers.node.mjs \
-//     /app/models /repo/apps/server/test/fixtures/tools /out
+//     /app/models /repo/compat/fixtures/tools /out
 import { writeFileSync } from 'node:fs';
 import { curated, extra, fuzz } from './texts.mjs';
 

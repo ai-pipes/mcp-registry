@@ -37,14 +37,14 @@ func Tools(names ...string) []Tool {
 }
 
 // FixtureTools returns the recorded tools/list of a real upstream: "gitea" (61 tools) or
-// "youtrack" (23), from apps/server/test/fixtures/tools. It panics if the fixture cannot be read,
+// "youtrack" (23), from compat/fixtures/tools. It panics if the fixture cannot be read,
 // since that is a broken checkout and not a test outcome.
 func FixtureTools(name string) []Tool {
 	_, here, _, ok := runtime.Caller(0)
 	if !ok {
 		panic("fakes: cannot locate the fixtures")
 	}
-	root := filepath.Join(filepath.Dir(here), "..", "..", "apps", "server", "test", "fixtures", "tools")
+	root := filepath.Join(filepath.Dir(here), "..", "fixtures", "tools")
 	raw, err := os.ReadFile(filepath.Join(root, name+".json"))
 	if err != nil {
 		panic(fmt.Sprintf("fakes: fixture %q: %v", name, err))

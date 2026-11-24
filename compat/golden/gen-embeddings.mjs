@@ -8,7 +8,7 @@
 //     reads a JSON array of texts from stdin, writes the JSON rows [{text, ids, vec}] to stdout.
 //   node gen-embeddings.mjs <path to transformers entry> <model directory> <repo root> <out.json>
 //     embeds a fixed list of 110 texts (the passages of the Gitea and YouTrack fixtures read from
-//     <repo root>/apps/server/test/fixtures/tools, queries, odd Unicode, two very long texts); kept
+//     <repo root>/compat/fixtures/tools, queries, odd Unicode, two very long texts); kept
 //     as the query-side reference for the Go embedder's unit tests of a later milestone.
 //
 // <model directory> holds Xenova/multilingual-e5-small (the image's /app/models, or one fetched by
@@ -24,7 +24,7 @@ if (fromStdin) {
   texts.push(...JSON.parse(readFileSync(0, 'utf8')));
 } else {
   for (const f of ['gitea', 'youtrack']) {
-    const j = JSON.parse(readFileSync(`${repo}/apps/server/test/fixtures/tools/${f}.json`, 'utf8'));
+    const j = JSON.parse(readFileSync(`${repo}/compat/fixtures/tools/${f}.json`, 'utf8'));
     const tools = j.tools ?? j;
     for (const t of tools) texts.push(`passage: ${f}. ${f} server\n${t.name} ${t.title ?? ''}\n${t.description ?? ''}`);
   }

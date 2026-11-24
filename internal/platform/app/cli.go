@@ -19,7 +19,7 @@ import (
 )
 
 // usageOrder is the fixed order of the commands in the usage text (the order of USAGE in
-// apps/server/src/platform/cli-commands.ts); registered commands not listed follow by name.
+// v1.0.1:apps/server/src/platform/cli-commands.ts); registered commands not listed follow by name.
 var usageOrder = []string{
 	"create-user", "create-token", "login-link", "create-server", "sync", "reindex",
 	"rotate-secrets-key", "reset-key-check",

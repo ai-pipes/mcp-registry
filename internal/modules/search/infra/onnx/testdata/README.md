@@ -13,8 +13,11 @@ Regenerate `reference.json` and `pooling.json`:
 docker run --rm --network none -v "$PWD":/repo:ro -v "$OUT":/out mcp-registry:compat-ts \
   node /repo/internal/modules/search/infra/onnx/testdata/gen/reference.mjs \
   /app/apps/server/node_modules/@huggingface/transformers/dist/transformers.node.mjs \
-  /app/models /repo/apps/server/test/fixtures/tools /out
+  /app/models /repo/compat/fixtures/tools /out
 ```
 
-then copy `$OUT/*.json` here. The normaliser pairs depend on the Unicode version of the Node that
+then copy `$OUT/*.json` here and format them with `pnpm exec vp fmt` (the generator writes compact
+JSON; the committed files are formatted). Provenance: v1.0.1. The last run in the reference 1.0.1
+with the fixtures of `compat/fixtures/tools` reproduced both committed files byte for byte after
+formatting. The normaliser pairs depend on the Unicode version of the Node that
 made them (17.0 here); Go's `golang.org/x/text` has its own tables, and the test compares them.
