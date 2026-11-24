@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ai-pipes/mcp-registry/internal/kernel"
 	"github.com/ai-pipes/mcp-registry/internal/modules/catalog"
@@ -384,5 +385,143 @@ func TestResetInterrupted(t *testing.T) {
 	var ce *CommandErr
 	if !errors.As(err, &ce) || ce.Msg != "interrupted" || stdout != "" || len(audit.entries) != 0 {
 		t.Errorf("%v %q", err, stdout)
+	}
+}
+
+// runKeysExit runs a key command the way the CLI does: exit code, stdout, stderr.
+func runKeysExit(ctx context.Context, t *testing.T, w keysWiring, name string, args ...string) (code int, stdout, stderr string) {
+	t.Helper()
+	var out, errb bytes.Buffer
+	for _, c := range w.commands() {
+		if c.Name == name {
+			code = runCommand(ctx, c, CLIIO{Stdout: &out, Stderr: &errb}, args, discardLogger(), "USAGE\n")
+			return code, out.String(), errb.String()
+		}
+	}
+	t.Fatalf("no command %s", name)
+	return 0, "", ""
+}
+
+// The audit of a completed key operation runs on a context that cannot be cancelled and has a
+// deadline of about 5 s, whatever the command's own context does.
+// Mutation: pass ctx instead of the WithoutCancel(+timeout) context in recordDone.
+func TestKeyOperationsAuditOnADetachedContextWithADeadline(t *testing.T) {
+	for _, name := range []string{"rotate-secrets-key", "reset-key-check"} {
+		t.Run(name, func(t *testing.T) {
+			w, _, _, _ := fakeKeys(true)
+			ctx, cancel := context.WithCancel(context.Background())
+			w.removeCheck = func(context.Context) (bool, error) { cancel(); return true, nil }
+			w.resealCheck = func(context.Context, crypto.Keys) (string, error) { cancel(); return crypto.KeyCheckAbsent, nil }
+			called := false
+			w.audit = auditErr(func(actx context.Context) error {
+				called = true
+				if ctx.Err() == nil {
+					t.Error("the command's context was not cancelled in this test")
+				}
+				if actx.Err() != nil {
+					t.Errorf("the audit context is cancelled: %v", actx.Err())
+				}
+				dl, ok := actx.Deadline()
+				if left := time.Until(dl); !ok || left <= 0 || left > 5*time.Second {
+					t.Errorf("deadline %v (set %v), want within (0, 5s]", left, ok)
+				}
+				return nil
+			})
+			args := []string{}
+			if name == "reset-key-check" {
+				args = []string{"--yes"}
+			}
+			if code, _, _ := runKeysExit(ctx, t, w, name, args...); code != 0 || !called {
+				t.Errorf("code %d audited %v", code, called)
+			}
+		})
+	}
+}
+
+// A genuine failure of the audit write (the context alive): the unexpected-failure path, nothing on
+// stdout, not `interrupted`.
+// Mutation: print the output before the audit, or map every audit error to `interrupted`.
+func TestKeyOperationsAuditWriteFailure(t *testing.T) {
+	for _, name := range []string{"rotate-secrets-key", "reset-key-check"} {
+		t.Run(name, func(t *testing.T) {
+			w, _, _, _ := fakeKeys(true)
+			w.removeCheck = func(context.Context) (bool, error) { return true, nil }
+			w.audit = auditErr(func(context.Context) error { return errors.New("insert: connection reset") })
+			args := []string{}
+			if name == "reset-key-check" {
+				args = []string{"--yes"}
+			}
+			code, stdout, stderr := runKeysExit(context.Background(), t, w, name, args...)
+			if code != 1 || stdout != "" || stderr != "error: unexpected failure\n" {
+				t.Errorf("code %d stdout %q stderr %q", code, stdout, stderr)
+			}
+		})
+	}
+}
+
+// Some secrets unreadable and a cancel as the key check step returns: the same as without the
+// cancel.
+// Mutation: check ctx.Err() after the key check step again.
+func TestRotatePartialFailureWithALateCancel(t *testing.T) {
+	run := func(cancelLate bool) (int, string, string, []kernel.AuditEntry) {
+		w, audit, _, _ := fakeKeys(true)
+		ctx, cancel := context.WithCancel(context.Background())
+		w.resealServers = func(context.Context, kernel.SecretBox, kernel.SecretBox) (catalog.ResealSummary, error) {
+			return catalog.ResealSummary{Resealed: 1, Failed: []string{"a"}}, nil
+		}
+		w.resealConns = func(context.Context, kernel.SecretBox, kernel.SecretBox) (connections.ResealSummary, error) {
+			return connections.ResealSummary{Current: 2, Failed: []string{"u1/s1"}}, nil
+		}
+		w.resealCheck = func(context.Context, crypto.Keys) (string, error) {
+			if cancelLate {
+				cancel()
+			}
+			return kernel.ResealCurrent, nil
+		}
+		code, stdout, stderr := runKeysExit(ctx, t, w, "rotate-secrets-key")
+		return code, stdout, stderr, audit.entries
+	}
+	c1, o1, e1, a1 := run(false)
+	c2, o2, e2, a2 := run(true)
+	wantOut := "server secrets: 1 re-sealed, 0 already under the new key\nconnections: 0 re-sealed, 2 already under the new key\nkey check: already current\n"
+	wantErr := "error: neither key opens (left as they were):\n  server a\n  connection u1/s1\n"
+	if c2 != 1 || o2 != wantOut || e2 != wantErr || c1 != c2 || o1 != o2 || e1 != e2 {
+		t.Errorf("late cancel: %d %q %q; plain: %d %q %q", c2, o2, e2, c1, o1, e1)
+	}
+	if len(a2) != 1 || len(a1) != 1 {
+		t.Fatalf("audit entries %d / %d", len(a1), len(a2))
+	}
+	srv := a2[0].Meta["servers"].(map[string]any)
+	con := a2[0].Meta["connections"].(map[string]any)
+	if srv["failed"] != 1 || con["failed"] != 1 {
+		t.Errorf("%+v", a2[0].Meta)
+	}
+}
+
+// A failing state-changing step with a live context is an unexpected failure: no audit, no output,
+// not `interrupted`.
+// Mutation: treat any error of the step as an interrupt, or audit before the step returned.
+func TestKeyStepFailureWithALiveContext(t *testing.T) {
+	boom := errors.New("conn closed")
+	for name, tc := range map[string]struct {
+		cmd  string
+		args []string
+		edit func(*keysWiring)
+	}{
+		"reset removeCheck": {"reset-key-check", []string{"--yes"}, func(w *keysWiring) {
+			w.removeCheck = func(context.Context) (bool, error) { return false, boom }
+		}},
+		"rotate resealCheck": {"rotate-secrets-key", nil, func(w *keysWiring) {
+			w.resealCheck = func(context.Context, crypto.Keys) (string, error) { return "", boom }
+		}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			w, audit, _, _ := fakeKeys(true)
+			tc.edit(&w)
+			code, stdout, stderr := runKeysExit(context.Background(), t, w, tc.cmd, tc.args...)
+			if code != 1 || stdout != "" || stderr != "error: unexpected failure\n" || len(audit.entries) != 0 {
+				t.Errorf("code %d stdout %q stderr %q audit %v", code, stdout, stderr, audit.entries)
+			}
+		})
 	}
 }

@@ -27,7 +27,9 @@ const keyCheckPlain = "mcp-registry key check v1"
 
 // Keys are the configured secrets keys: SECRETS_KEY and, while rotating, SECRETS_KEY_OLD. Raw
 // bytes: the type prints, logs and encodes as "[Redacted]" through every verb (the pattern of
-// config.SecretBytes), so a key cannot reach a log line or an error by accident.
+// config.SecretBytes), so a key cannot reach a log line or an error by accident. Limit: fmt writes an unexported field of
+// another struct by reflection without calling methods, so a Keys held in such a field prints its
+// bytes raw (config.SecretBytes avoids it by holding a pointer); never keep Keys that way.
 type Keys struct{ Current, Previous []byte }
 
 const keysRedacted = "[Redacted]"
