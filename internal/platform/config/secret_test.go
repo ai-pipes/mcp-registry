@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	jsonv2 "encoding/json/v2"
 	"fmt"
+	"log/slog"
 	"reflect"
 	"strings"
 	"testing"
@@ -180,5 +181,71 @@ func TestUnsetSecretsStayDistinguishable(t *testing.T) {
 	}
 	if cfg.DatabasePassword.IsSet() || cfg.SecretsKeyOld.IsSet() || !cfg.SecretsKey.IsSet() || !cfg.DatabaseURL.IsSet() {
 		t.Fatal("unset secrets must be the zero value, set ones must report IsSet")
+	}
+}
+
+type (
+	secHolder struct {
+		s config.Secret
+		b config.SecretBytes
+	}
+	secNested   struct{ in secHolder }
+	secPtr      struct{ b *config.SecretBytes }
+	secSlice    struct{ bs []config.SecretBytes }
+	secMap      struct{ m map[string]config.SecretBytes }
+	secExported struct {
+		S config.Secret
+		B config.SecretBytes
+	}
+)
+
+// However a secret is held (an unexported field, nested, behind a pointer, in a slice or a map),
+// no verb, JSON encoder or slog handler shows it: plaintext, hex, base64 or the decimal byte list.
+// A verb that does not suit a pointer makes fmt print the dereferenced pointee, so a pointee must
+// hold nothing but another pointer.
+func TestSecretsAreUnprintableHoweverHeld(t *testing.T) {
+	raw := bytes.Repeat([]byte{0xA7, 0x5C}, 16)
+	text := "ZZ-plain-text-secret"
+	b, s := config.NewSecretBytes(raw), config.NewSecret(text)
+	forbidden := []string{
+		string(raw), hex.EncodeToString(raw), base64.StdEncoding.EncodeToString(raw),
+		base64.RawURLEncoding.EncodeToString(raw), fmt.Sprintf("%v", raw)[1:20], text,
+		hex.EncodeToString([]byte(text)), base64.StdEncoding.EncodeToString([]byte(text)),
+		strings.TrimSuffix(strings.TrimPrefix(fmt.Sprintf("%v", []byte(text)), "["), "]")[:20],
+	}
+	check := func(what, out string) {
+		t.Helper()
+		for _, f := range forbidden {
+			if strings.Contains(out, f) {
+				t.Errorf("%s shows a secret: %.120q", what, out)
+				return
+			}
+		}
+	}
+	h := secHolder{s, b}
+	holders := map[string]any{
+		"unexported": h, "pointer to it": &h,
+		"nested":     secNested{h},
+		"behind ptr": secPtr{&b}, "pointer to ptr holder": &secPtr{&b},
+		"slice": secSlice{[]config.SecretBytes{b}}, "map": secMap{map[string]config.SecretBytes{"k": b}},
+		"slice of holders": []secHolder{h}, "map of holders": map[string]secHolder{"k": h},
+	}
+	for name, v := range holders {
+		for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%q", "%x", "%d"} {
+			check(name+" "+verb, fmt.Sprintf(verb, v))
+		}
+		var tx, js bytes.Buffer
+		slog.New(slog.NewTextHandler(&tx, nil)).Info("m", "v", v)
+		slog.New(slog.NewJSONHandler(&js, nil)).Info("m", "v", v)
+		check(name+" slog text", tx.String())
+		check(name+" slog json", js.String())
+	}
+	j, err := json.Marshal(secExported{s, b})
+	if err != nil {
+		t.Fatal(err)
+	}
+	check("json", string(j))
+	if got := string(b.Reveal()); got != string(raw) {
+		t.Error("Reveal must still return the value")
 	}
 }
