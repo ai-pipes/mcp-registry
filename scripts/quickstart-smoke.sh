@@ -127,7 +127,7 @@ wait_healthy
 step "the first log record is 'starting' with the version"
 first_record="$(app_log | grep -m1 '"msg"' || true)"
 grep -q '"msg":"starting"' <<<"$first_record" || fail "the first app log record is not 'starting'"
-version="$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' apps/server/package.json | head -n 1)"
+version="$(tr -d '[:space:]' < VERSION)"
 grep -qF "\"version\":\"${version}\"" <<<"$first_record" || fail "the 'starting' record has no version ${version}"
 echo "starting: version ${version}"
 

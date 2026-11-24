@@ -16,7 +16,7 @@ COPY packages/contracts/package.json packages/contracts/
 # onnxruntime-node needs no install script: its npm package ships the Linux x64/arm64 binaries
 # (the postinstall only fetches optional CUDA files).
 RUN pnpm install --frozen-lockfile --ignore-scripts
-COPY tsconfig.base.json vite.config.ts ./
+COPY tsconfig.base.json vite.config.ts VERSION ./
 COPY packages/contracts packages/contracts
 COPY apps/server apps/server
 RUN pnpm build
@@ -60,7 +60,6 @@ RUN sh /native-src/fetch.sh "linux-${TARGETARCH}" /native \
 #     the base of the parity check; the default target stays `runtime` below, the last stage of
 #     this file. ----------------------------------------------------------------------------------
 FROM golang:1.27-bookworm@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea AS go-build
-ARG VERSION=dev
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -69,7 +68,9 @@ COPY cmd cmd
 COPY internal internal
 # The migrations are embedded from the TypeScript server's folder (apps/server/migrations/embed.go).
 COPY apps/server/migrations apps/server/migrations
-RUN CGO_ENABLED=1 CGO_LDFLAGS="-L/native" go build -tags onnx -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/mcp-registry ./cmd/mcp-registry
+# The version is the root VERSION file, read here: an image cannot report `dev`.
+COPY VERSION VERSION
+RUN CGO_ENABLED=1 CGO_LDFLAGS="-L/native" go build -tags onnx -trimpath -ldflags "-s -w -X main.version=$(cat VERSION)" -o /out/mcp-registry ./cmd/mcp-registry
 
 # --- go: the Go image. No ENTRYPOINT (the compat suite runs the CLI in the same image by replacing
 #     the command), no HEALTHCHECK yet (the TypeScript one runs node). The binary is dynamically

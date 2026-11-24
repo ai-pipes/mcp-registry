@@ -1,7 +1,8 @@
 GOLANGCI_LINT := github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0
 GO_ARCH_LINT := github.com/fe3dback/go-arch-lint@v1.19.2
 GOFUMPT := mvdan.cc/gofumpt@v0.12.0
-VERSION := $(shell node -p "require('./apps/server/package.json').version")
+# The version of the gateway: the root VERSION file, the only source (no Node needed).
+VERSION := $(strip $(shell cat VERSION))
 
 .PHONY: native-libs native-model go-test-onnx go-test-onnx-parity go-vet-onnx go-lint-onnx go-verify-onnx compat compat-selfcheck compat-schemas compat-reference print-reference-image compat-image-ts compat-image-go compat-go e2e-flows e2e-flows-go go-lint go-lint-new go-fmt-check go-arch-lint go-verify go-test-int go-build print-go-arch-lint print-golangci-lint
 
@@ -42,7 +43,7 @@ go-verify: go-lint go-arch-lint
 	# Docker-free tests of the suite itself (none boots a stack; they pass with the Docker socket
 	# unreachable). A test that needs no Docker is added here by name.
 	go test -tags compat -count=1 -run '^(TestAppArgsPublishTheContainerPortAndKeepFileContentOffTheCommandLine|TestAppEnvReadsTheEnvironment|TestCheckUpdate|TestCheckUpdateAllowedReadsTheEnvironment|TestCLIResultStringMasksTokensAndLinkCodes|TestDefaultImageAndCLIFollowTheEnvironment|TestDoChunkedExpectingEarlyRefusalSendsNoContentLength|TestDoExpectingEarlyRefusalReturnsTheAnswerWhateverHappenedToTheWrite|TestErrorNamesSchemaAndPath|TestEveryContractHasASchema|TestEveryDeviationHasADescriptionAndIsUsedByAScenario|TestFinishSavesTheLogOnlyForAFailedTest|TestFixedFollowsTheEnvironment|TestListSuffixAndUnknownName|TestLogFileName|TestLoopbackHostResolution|TestOneOffCLIContainerNeverPutsAValueOnTheCommandLine|TestOtherFormatsAreAsserted|TestParseAppEnv|TestParseFixed|TestPortTakenRecognisesDockersMessages|TestPublicHostAndExtraHostsReachTheContainerArguments|TestRedactTruncates|TestReferenceImageFollowsItsVariable|TestResponseDecode|TestSaveLogDoesNothingWithoutADirectory|TestSchemaRejectsExtraAndMissingFields|TestScrubRemovesCredentialShapes|TestScrubRemovesTheContentOfSecretFiles|TestSecretValuesListTheBareDatabasePasswordToo|TestServerViewWithSecretFieldIsRejected|TestTheReferenceIsPinnedByDigestTheSameEverywhere|TestUpdateRefusesNonReferenceImage|TestURLFormatsAreAsserted|TestWriteLogScrubsAndCreatesTheDirectory)$$' ./compat/harness/
-	go test -tags compat -count=1 -run '^(TestAuditPagingProblem|TestCreateServerSyncFailureProblem|TestMCPReaderIsLenient|TestRetryAfterProblem|TestSearchReadyProblem|TestToolFixtureCopiesEqualTheOriginals)$$' ./compat/
+	go test -tags compat -count=1 -run '^(TestAuditPagingProblem|TestCreateServerSyncFailureProblem|TestMCPReaderIsLenient|TestRetryAfterProblem|TestSearchReadyProblem|TestToolFixtureCopiesEqualTheOriginals|TestVersionFileEqualsTheServerPackage)$$' ./compat/
 	go test ./...
 	$(MAKE) go-test-int
 
@@ -84,16 +85,16 @@ compat-image-ts:
 # The Go image (Dockerfile target go), tagged mcp-registry:compat-go: cgo, build tag onnx, ONNX
 # Runtime and the model inside. It is built natively for the host architecture; PLATFORM builds
 # another one (emulated where needed): make compat-image-go PLATFORM=linux/amd64, tagged
-# mcp-registry:compat-go-linux-amd64 so that the host image is not overwritten. The version comes
-# from the same place as for go-build. The default target (runtime, the TypeScript image) is
+# mcp-registry:compat-go-linux-amd64 so that the host image is not overwritten. The Dockerfile
+# reads the version from the VERSION file itself (no build argument), as go-build does. The default target (runtime, the TypeScript image) is
 # untouched.
 PLATFORM :=
 GO_IMAGE := mcp-registry:compat-go$(if $(PLATFORM),-$(subst /,-,$(PLATFORM)))
 compat-image-go:
-	@test -n "$(VERSION)" || { echo "compat-image-go: the version read from apps/server/package.json is empty (is node on PATH?)"; exit 1; }
-	docker build $(if $(PLATFORM),--platform $(PLATFORM)) --target go --build-arg VERSION=$(VERSION) -t $(GO_IMAGE) .
+	@test -n "$(VERSION)" || { echo "compat-image-go: the version read from VERSION is empty"; exit 1; }
+	docker build $(if $(PLATFORM),--platform $(PLATFORM)) --target go -t $(GO_IMAGE) .
 	@got="$$(docker run --rm $(if $(PLATFORM),--platform $(PLATFORM)) $(GO_IMAGE) mcp-registry --version)"; \
-	if [ "$$got" != "$(VERSION)" ]; then echo "compat-image-go: the image reports version '$$got', the package says '$(VERSION)'"; exit 1; fi
+	if [ "$$got" != "$(VERSION)" ]; then echo "compat-image-go: the image reports version '$$got', VERSION says '$(VERSION)'"; exit 1; fi
 
 # The scenarios the Go server passes so far (the milestone list); it grows with every milestone.
 # Both variables are set with := here, so an environment variable of the same name does NOT

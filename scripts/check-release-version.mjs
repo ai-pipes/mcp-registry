@@ -1,5 +1,5 @@
 // Release guard: `node scripts/check-release-version.mjs <tag>` fails unless the tag is `v` plus
-// the version in apps/server/package.json (the only source of the gateway version), and
+// the version in the root VERSION file (the only source of the gateway version), and
 // CHANGELOG.md must have a dated heading `## [<version>] - YYYY-MM-DD` for it (so
 // `## [1.0.0] - Unreleased` blocks the release until it is dated).
 // `--rehearsal` (every non-tag workflow run: manual or pull request) only requires a non-empty version, prints it and skips the tag
@@ -14,20 +14,17 @@ if (tag === undefined || tag === '') {
   process.exit(2);
 }
 
-const pkg = JSON.parse(
-  readFileSync(new URL('../apps/server/package.json', import.meta.url), 'utf8'),
-);
-const version = typeof pkg.version === 'string' ? pkg.version : '';
+const version = readFileSync(new URL('../VERSION', import.meta.url), 'utf8').trim();
 if (tag === '--rehearsal') {
   if (version === '') {
-    console.error('apps/server/package.json has no version');
+    console.error('VERSION has no version');
     process.exit(1);
   }
   console.log(version);
   process.exit(0);
 }
 if (tag !== `v${version}`) {
-  console.error(`tag ${tag} does not match apps/server/package.json version ${version}`);
+  console.error(`tag ${tag} does not match the VERSION file ${version}`);
   process.exit(1);
 }
 const changelog = readFileSync(new URL('../CHANGELOG.md', import.meta.url), 'utf8');
