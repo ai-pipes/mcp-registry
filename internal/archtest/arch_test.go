@@ -329,3 +329,41 @@ func depguardDenies(t *testing.T, fixture, pkg string) {
 		t.Fatalf("want exactly one depguard issue about %s, got %+v", pkg, rep.Issues)
 	}
 }
+
+// goRuleFixtures are the rules this package checks in Go (not through go-arch-lint), each with a
+// fixture that must be reported and one that must pass. A rule without a failing fixture does not
+// count: add both together, and the rule here.
+var goRuleFixtures = []struct {
+	rule, failing, passing string
+	count                  func(fixture string) (int, error)
+}{
+	{"domain-is-pure (standard library)", "domain-stdlib", "domain-stdlib-allowed", func(f string) (int, error) {
+		v, err := ImpureDomainImports("testdata/" + f)
+		return len(v), err
+	}},
+	{"schema ownership", "schema-foreign", "schema-allowed", func(f string) (int, error) {
+		v, err := ForeignSchemaRefs("testdata/" + f)
+		return len(v), err
+	}},
+	{"plain secret fields", "plain-secret-field", "plain-secret-field-allowed", func(f string) (int, error) {
+		v, err := PlainSecretFields("testdata/"+f, map[string]string{"modules/demo/app.Problem.Code": "an error code"})
+		return len(v), err
+	}},
+	{"secrets into empty interfaces", "secret-into-any", "secret-into-any-allowed", func(f string) (int, error) {
+		v, err := SecretsIntoEmptyInterfacesInFiles(repoRoot, "testdata/"+f)
+		return len(v), err
+	}},
+}
+
+func TestEveryGoRuleHasAFailingFixture(t *testing.T) {
+	for _, tc := range goRuleFixtures {
+		t.Run(tc.rule, func(t *testing.T) {
+			if n, err := tc.count(tc.failing); err != nil || n == 0 {
+				t.Fatalf("fixture %s is not reported (%d, %v); a rule without a failing fixture does not count", tc.failing, n, err)
+			}
+			if n, err := tc.count(tc.passing); err != nil || n != 0 {
+				t.Fatalf("fixture %s is reported (%d, %v)", tc.passing, n, err)
+			}
+		})
+	}
+}

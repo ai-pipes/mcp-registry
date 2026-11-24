@@ -36,7 +36,8 @@ func NewSecretBytes(b []byte) SecretBytes {
 
 // Format implements fmt.Formatter. fmt prints a struct reached through a pointer under a verb that
 // does not suit pointers (%s on a Config, say) by reflection with all methods switched off, which
-// would write ClientSecret raw; a Formatter on the client itself is still honoured there.
+// would write ClientSecret raw; a Formatter on the client itself is still honoured there. The
+// secret's own marker text (String) is what is written, so no secret value reaches fmt.
 func (c OIDCClient) Format(f fmt.State, _ rune) {
-	_, _ = fmt.Fprintf(f, "{%s %s %s}", c.Issuer, c.ClientID, c.ClientSecret)
+	_, _ = fmt.Fprintf(f, "{%s %s %s}", c.Issuer, c.ClientID, c.ClientSecret.String())
 }
