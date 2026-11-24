@@ -63,10 +63,10 @@ func TestResealServerSecrets(t *testing.T) {
 		}
 		deps := h.deps
 		deps.Box = newBox
-		if got, _, _ := app.GetServerSecret(ctx, deps, "alpha"); got != "alpha-key" {
+		if got, _, _ := getServerSecret(ctx, deps, "alpha"); got != "alpha-key" {
 			t.Fatalf("alpha = %q", got)
 		}
-		if got, _, _ := app.GetServerSecret(ctx, deps, "beta"); got != "beta-key" {
+		if got, _, _ := getServerSecret(ctx, deps, "beta"); got != "beta-key" {
 			t.Fatalf("beta = %q", got)
 		}
 	})
@@ -110,7 +110,7 @@ func TestResealServerSecrets(t *testing.T) {
 		}
 		deps := h.deps
 		deps.Box = newBox
-		if got, _, _ := app.GetServerSecret(ctx, deps, "alpha"); got != "admin-set-meanwhile" {
+		if got, _, _ := getServerSecret(ctx, deps, "alpha"); got != "admin-set-meanwhile" {
 			t.Fatalf("alpha = %q", got)
 		}
 	})

@@ -93,7 +93,7 @@ func TestCreateServer(t *testing.T) {
 		if strings.Contains(string(blob), "hunter2") || strings.Contains(string(blob), "aHVudGVy") {
 			t.Fatalf("secret leaked: %s", blob)
 		}
-		got, ok, err := app.GetServerSecret(ctx, h.deps, "gitea")
+		got, ok, err := getServerSecret(ctx, h.deps, "gitea")
 		if err != nil || !ok || got != "hunter2" {
 			t.Fatalf("GetServerSecret = %q %v %v", got, ok, err)
 		}
@@ -244,7 +244,7 @@ func TestUpdateServerAndTheSecret(t *testing.T) {
 		if err != nil || v.SecretSet {
 			t.Fatalf("view = %+v, err = %v", v, err)
 		}
-		if _, ok, _ := app.GetServerSecret(ctx, h.deps, "gitea"); ok {
+		if _, ok, _ := getServerSecret(ctx, h.deps, "gitea"); ok {
 			t.Fatal("secret still stored")
 		}
 		equalStrings(t, h.audit.actions(), []string{"server.update", "server.secret_clear"})
@@ -279,7 +279,7 @@ func TestUpdateServerAndTheSecret(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got, _, _ := app.GetServerSecret(ctx, h.deps, "gitea"); got != "k" {
+		if got, _, _ := getServerSecret(ctx, h.deps, "gitea"); got != "k" {
 			t.Fatalf("secret = %q", got)
 		}
 		equalStrings(t, h.audit.actions(), []string{"server.update"})
@@ -331,11 +331,11 @@ func TestSetSecret(t *testing.T) {
 		if !h.servers.writes[0].SecretWritten {
 			t.Fatal("secret not written")
 		}
-		if got, ok, _ := app.GetServerSecret(ctx, h.deps, "gitea"); !ok || got != "topsecret" {
+		if got, ok, _ := getServerSecret(ctx, h.deps, "gitea"); !ok || got != "topsecret" {
 			t.Fatalf("secret = %q", got)
 		}
 		wantCode(t, app.SetSecret(ctx, h.deps, app.SetSecretCommand{Principal: admin, Slug: "gitea", Secret: nil}), "ok")
-		if _, ok, _ := app.GetServerSecret(ctx, h.deps, "gitea"); ok {
+		if _, ok, _ := getServerSecret(ctx, h.deps, "gitea"); ok {
 			t.Fatal("secret not cleared")
 		}
 		want := []kernel.AuditEntry{
@@ -501,16 +501,16 @@ func TestUpstreamQueries(t *testing.T) {
 	t.Run("GetServerSecret is absent for unknown or secretless servers, and an unreadable secret is an error", func(t *testing.T) {
 		h := newHarness()
 		h.mustCreate(t, "gitea", nil)
-		if _, ok, err := app.GetServerSecret(ctx, h.deps, "gitea"); ok || err != nil {
+		if _, ok, err := getServerSecret(ctx, h.deps, "gitea"); ok || err != nil {
 			t.Fatalf("ok=%v err=%v", ok, err)
 		}
-		if _, ok, err := app.GetServerSecret(ctx, h.deps, "zz"); ok || err != nil {
+		if _, ok, err := getServerSecret(ctx, h.deps, "zz"); ok || err != nil {
 			t.Fatalf("ok=%v err=%v", ok, err)
 		}
 		h.mustCreate(t, "shared", ptr("k"), func(f *app.ServerFields) { f.Auth = authShared })
 		deps := h.deps
 		deps.Box = fakeBox{id: "other"}
-		if _, _, err := app.GetServerSecret(ctx, deps, "shared"); err == nil {
+		if _, _, err := getServerSecret(ctx, deps, "shared"); err == nil {
 			t.Fatal("a secret no key opens must be an error")
 		}
 	})
@@ -633,7 +633,7 @@ func TestRepositoryErrorsPropagate(t *testing.T) {
 	if _, err := app.ListServerTools(ctx, h.deps, admin, "gitea"); err != boom {
 		t.Fatalf("err = %v", err)
 	}
-	if _, _, err := app.GetServerSecret(ctx, h.deps, "gitea"); err != boom {
+	if _, _, err := getServerSecret(ctx, h.deps, "gitea"); err != boom {
 		t.Fatalf("err = %v", err)
 	}
 	if _, _, err := app.GetServerSecretFor(ctx, h.deps, app.ServerCallTarget{Slug: "gitea"}); err != boom {

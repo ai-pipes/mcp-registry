@@ -79,7 +79,7 @@ compat-image-go:
 # Both variables are set with := here, so an environment variable of the same name does NOT
 # override them; override on the make command line instead:
 #   make compat-go COMPAT_GO_TESTS='TestConfigRefused TestPlatformWithoutPeople'
-#   make compat-go COMPAT_GO_SKIP=
+#   make compat-go COMPAT_GO_SKIP=TestCLIKeys   # nothing is skipped by default
 # In a value given that way (or edited here), `$$` is a literal `$` for make; a value is passed to
 # go test inside single quotes, so it must not contain one.
 #

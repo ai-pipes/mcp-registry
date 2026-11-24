@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/ai-pipes/mcp-registry/internal/kernel"
 	"github.com/jackc/pgx/v5"
@@ -24,8 +25,30 @@ const (
 // apps/server/src/platform/crypto/key-check.ts (pinned by a test that reads that file).
 const keyCheckPlain = "mcp-registry key check v1"
 
-// Keys are the configured secrets keys: SECRETS_KEY and, while rotating, SECRETS_KEY_OLD.
+// Keys are the configured secrets keys: SECRETS_KEY and, while rotating, SECRETS_KEY_OLD. Raw
+// bytes: the type prints, logs and encodes as "[Redacted]" through every verb (the pattern of
+// config.SecretBytes), so a key cannot reach a log line or an error by accident.
 type Keys struct{ Current, Previous []byte }
+
+const keysRedacted = "[Redacted]"
+
+// Format implements fmt.Formatter for every verb (without it %d or %x would print the bytes).
+func (Keys) Format(f fmt.State, _ rune) { _, _ = f.Write([]byte(keysRedacted)) }
+
+// String implements fmt.Stringer.
+func (Keys) String() string { return keysRedacted }
+
+// GoString implements fmt.GoStringer (the %#v verb).
+func (Keys) GoString() string { return keysRedacted }
+
+// LogValue implements slog.LogValuer.
+func (Keys) LogValue() slog.Value { return slog.StringValue(keysRedacted) }
+
+// MarshalJSON implements encoding/json.Marshaler (also honoured by encoding/json/v2).
+func (Keys) MarshalJSON() ([]byte, error) { return []byte(`"` + keysRedacted + `"`), nil }
+
+// MarshalText implements encoding.TextMarshaler.
+func (Keys) MarshalText() ([]byte, error) { return []byte(keysRedacted), nil }
 
 func opensToPlain(key, sealed []byte) bool {
 	box, err := NewAESGCMBox(key, nil)

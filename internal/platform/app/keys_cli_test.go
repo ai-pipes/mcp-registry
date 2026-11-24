@@ -211,7 +211,7 @@ func TestRotateParsesBeforeLookingAtTheKey(t *testing.T) {
 	}
 }
 
-// An interrupt: one line, no success lines, no audit record.
+// An interrupt before the key check step has completed: one line, no success lines, no audit.
 func TestRotateInterrupted(t *testing.T) {
 	for name, edit := range map[string]func(*keysWiring, context.CancelFunc){
 		"catalog": func(w *keysWiring, cancel context.CancelFunc) {
@@ -231,12 +231,6 @@ func TestRotateInterrupted(t *testing.T) {
 				cancel()
 				return connections.ResealSummary{Failed: []string{}}, nil
 			}
-		},
-		"audit": func(w *keysWiring, cancel context.CancelFunc) {
-			w.audit = auditErr(func(ctx context.Context) error { cancel(); return ctx.Err() })
-		},
-		"cancelled after the audit write": func(w *keysWiring, cancel context.CancelFunc) {
-			w.audit = auditErr(func(context.Context) error { cancel(); return nil })
 		},
 		"an error that does not wrap the cancel": func(w *keysWiring, cancel context.CancelFunc) {
 			w.resealCheck = func(context.Context, crypto.Keys) (string, error) {
@@ -262,6 +256,34 @@ func TestRotateInterrupted(t *testing.T) {
 			}
 			if ce != nil && ce.Msg != "interrupted" || stdout != "" {
 				t.Errorf("success lines %q", stdout)
+			}
+		})
+	}
+}
+
+// Once the key check step has returned, the state has changed: the audit is written on a context
+// that cannot be cancelled and the command reports normally.
+func TestRotateAuditSurvivesACancel(t *testing.T) {
+	for name, edit := range map[string]func(*keysWiring, context.CancelFunc, *bool){
+		"cancelled during the audit write": func(w *keysWiring, cancel context.CancelFunc, seen *bool) {
+			w.audit = auditErr(func(ctx context.Context) error { cancel(); *seen = true; return ctx.Err() })
+		},
+		"cancelled after the audit write": func(w *keysWiring, cancel context.CancelFunc, seen *bool) {
+			w.audit = auditErr(func(ctx context.Context) error { *seen = true; err := ctx.Err(); cancel(); return err })
+		},
+		"cancelled as the key check returned": func(w *keysWiring, cancel context.CancelFunc, seen *bool) {
+			w.resealCheck = func(context.Context, crypto.Keys) (string, error) { cancel(); return crypto.KeyCheckAbsent, nil }
+			w.audit = auditErr(func(ctx context.Context) error { *seen = true; return ctx.Err() })
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			w, _, _, _ := fakeKeys(true)
+			ctx, cancel := context.WithCancel(context.Background())
+			seen := false
+			edit(&w, cancel, &seen)
+			stdout, err := runKeysCmd(ctx, t, w, "rotate-secrets-key")
+			if err != nil || !seen || !strings.Contains(stdout, "key check: none stored") || !strings.Contains(stdout, "connections:") {
+				t.Errorf("err %v audited %v stdout %q", err, seen, stdout)
 			}
 		})
 	}
@@ -326,15 +348,31 @@ type auditFunc func(kernel.AuditEntry)
 
 func (f auditFunc) Record(_ context.Context, e kernel.AuditEntry) error { f(e); return nil }
 
-func TestResetInterruptedDuringTheAuditWrite(t *testing.T) {
-	w, _, _, _ := fakeKeys(true)
-	ctx, cancel := context.WithCancel(context.Background())
-	w.removeCheck = func(context.Context) (bool, error) { return true, nil }
-	w.audit = auditErr(func(ctx context.Context) error { cancel(); return ctx.Err() })
-	stdout, err := runKeysCmd(ctx, t, w, "reset-key-check", "--yes")
-	var ce *CommandErr
-	if !errors.As(err, &ce) || ce.Msg != "interrupted" || stdout != "" {
-		t.Errorf("%v %q", err, stdout)
+// The removal has returned: the audit is written on a context that cannot be cancelled and the
+// command reports normally, whenever the cancel arrives.
+func TestResetAuditSurvivesACancel(t *testing.T) {
+	for name, after := range map[string]bool{"during the audit write": false, "after the audit write": true} {
+		t.Run(name, func(t *testing.T) {
+			w, _, _, _ := fakeKeys(true)
+			ctx, cancel := context.WithCancel(context.Background())
+			w.removeCheck = func(context.Context) (bool, error) { return true, nil }
+			seen := false
+			w.audit = auditErr(func(ctx context.Context) error {
+				if !after {
+					cancel()
+				}
+				seen = true
+				err := ctx.Err()
+				if after {
+					cancel()
+				}
+				return err
+			})
+			stdout, err := runKeysCmd(ctx, t, w, "reset-key-check", "--yes")
+			if err != nil || !seen || !strings.Contains(stdout, "key check removed") {
+				t.Errorf("err %v audited %v stdout %q", err, seen, stdout)
+			}
+		})
 	}
 }
 

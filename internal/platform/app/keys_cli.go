@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/ai-pipes/mcp-registry/internal/kernel"
 	"github.com/ai-pipes/mcp-registry/internal/modules/catalog"
@@ -93,10 +94,25 @@ func interrupted(ctx context.Context, err error) error {
 	return err
 }
 
-// rotate is `rotate-secrets-key`, in the reference's order: arguments, SECRETS_KEY_OLD, the two
-// single-key boxes, the catalog, connections, the two lines, the key check and its line, the audit
-// record, the failures. The boxes must each hold ONE key: the process's own box also opens with
-// the old key, as the "new" side it would call every old secret already current.
+// auditTimeout bounds the audit write of a key operation that has already changed state.
+const auditTimeout = 5 * time.Second
+
+// recordDone writes the audit record of a key operation whose state change is complete. The
+// command's context no longer matters here: a cancel must not leave a removed key check or a
+// finished rotation without its record, so the write runs on a context that cannot be cancelled
+// (5 s). A genuine failure of the write is an ordinary error.
+func (w keysWiring) recordDone(ctx context.Context, e kernel.AuditEntry) error {
+	actx, cancel := context.WithTimeout(context.WithoutCancel(ctx), auditTimeout)
+	defer cancel()
+	return w.audit.Record(actx, e)
+}
+
+// rotate is `rotate-secrets-key`: arguments, SECRETS_KEY_OLD, the two single-key boxes, the
+// catalog, connections, the key check (a cancel up to here is `error: interrupted`, nothing printed
+// or audited), then the audit record on a context that cannot be cancelled, and only then the
+// three lines and the failures (the reference prints the lines first; ruling 2 and its amendment).
+// The boxes must each hold ONE key: the process's own box also opens with the old key, as the
+// "new" side it would call every old secret already current.
 func (w keysWiring) rotate(ctx context.Context, cio CLIIO, args []string) error {
 	p, err := argSpec{}.parse(args)
 	if err != nil {
@@ -133,24 +149,20 @@ func (w keysWiring) rotate(ctx context.Context, cio CLIIO, args []string) error 
 	if err != nil {
 		return interrupted(ctx, err)
 	}
-	if ctx.Err() != nil {
-		return CommandError(msgInterrupted)
-	}
 
+	// The state has changed: from here the context no longer matters (see recordDone).
 	// Audited also when something failed; `failed` is a count, keyCheck the raw verdict.
-	if err := w.audit.Record(ctx, kernel.AuditEntry{Action: "secrets.rotate", Meta: map[string]any{
+	if err := w.recordDone(ctx, kernel.AuditEntry{Action: "secrets.rotate", Meta: map[string]any{
 		"via":         "cli",
 		"servers":     map[string]any{"resealed": servers.Resealed, "current": servers.Current, "failed": len(servers.Failed)},
 		"connections": map[string]any{"resealed": conns.Resealed, "current": conns.Current, "failed": len(conns.Failed)},
 		"keyCheck":    verdict,
 	}}); err != nil {
-		return interrupted(ctx, err)
-	}
-	if ctx.Err() != nil {
-		return CommandError(msgInterrupted)
+		return err
 	}
 
-	// The work is done: only now the three lines (an interrupt never leaves a success line).
+	// The work is done and recorded: now the three lines (an interrupt never leaves a success line
+	// before that point).
 	out(cio, resealLine("server secrets", servers.Resealed, servers.Current))
 	out(cio, resealLine("connections", conns.Resealed, conns.Current))
 	out(cio, "key check: "+keyCheckText(verdict))
@@ -171,8 +183,9 @@ func (w keysWiring) rotate(ctx context.Context, cio CLIIO, args []string) error 
 	return CommandError(msgNeitherKeyOpen + "\n  " + strings.Join(failed, "\n  "))
 }
 
-// reset is `reset-key-check --yes`: the parser's errors win over the missing --yes; the audit
-// record is written before the output, also when nothing was removed.
+// reset is `reset-key-check --yes`: the parser's errors win over the missing --yes; once the
+// removal has returned the audit record is written (on a context that cannot be cancelled) before
+// the output, also when nothing was removed.
 func (w keysWiring) reset(ctx context.Context, cio CLIIO, args []string) error {
 	p, err := argSpec{Bools: []string{"yes"}}.parse(args)
 	if err != nil {
@@ -188,10 +201,10 @@ func (w keysWiring) reset(ctx context.Context, cio CLIIO, args []string) error {
 	if err != nil {
 		return interrupted(ctx, err)
 	}
-	if err := w.audit.Record(ctx, kernel.AuditEntry{Action: "secrets.key_check_reset", Meta: map[string]any{
+	if err := w.recordDone(ctx, kernel.AuditEntry{Action: "secrets.key_check_reset", Meta: map[string]any{
 		"via": "cli", "removed": removed,
 	}}); err != nil {
-		return interrupted(ctx, err)
+		return err
 	}
 	if removed {
 		out(cio, msgKeyCheckGone)
