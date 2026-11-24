@@ -308,6 +308,7 @@ func TestRotateSecretsKeyKeyCheckVerdicts(t *testing.T) {
 			t.Error("the check is not under the new key alone")
 		}
 		sameJSON(t, e.audits("secrets.rotate")[0], `{"via":"cli","servers":{"resealed":0,"current":0,"failed":0},"connections":{"resealed":0,"current":0,"failed":0},"keyCheck":"resealed"}`)
+		e.noKeyMaterial(r)
 		r = e.run(e.rotate, "rotate-secrets-key")
 		if r.code != 0 || r.stdout != rotateStdout([2]int{0, 0}, [2]int{0, 0}, "already current") {
 			t.Fatalf("again: %+v", r)
@@ -325,6 +326,7 @@ func TestRotateSecretsKeyKeyCheckVerdicts(t *testing.T) {
 			t.Error("the check changed")
 		}
 		sameJSON(t, e.audits("secrets.rotate")[0], `{"via":"cli","servers":{"resealed":0,"current":0,"failed":0},"connections":{"resealed":0,"current":0,"failed":0},"keyCheck":"unreadable"}`)
+		e.noKeyMaterial(r)
 	})
 }
 
@@ -376,6 +378,7 @@ func TestRotateSecretsKeyWithAStrangerAsTheOldKey(t *testing.T) {
 	if _, ok := e.opens(e.oldBox, e.bytes(`select secret from catalog.servers where slug = 'alpha'`)); !ok {
 		t.Error("the secret was changed")
 	}
+	e.noKeyMaterial(r)
 }
 
 func TestRotateSecretsKeyNeedsTheOldKey(t *testing.T) {
@@ -449,6 +452,7 @@ func TestResetKeyCheck(t *testing.T) {
 	}
 	sameJSON(t, logs[0], `{"via":"cli","removed":true}`)
 	sameJSON(t, logs[1], `{"via":"cli","removed":false}`)
+	e.noKeyMaterial(r)
 }
 
 // A mismatching key: the guard does not run for either command, so no `warning:` line, and the
@@ -474,6 +478,7 @@ func TestKeyCommandsDoNotWarnOnAMismatch(t *testing.T) {
 	if e.count(`select count(*) from platform.key_check`) != 0 {
 		t.Error("the check is still there, or the CLI created one")
 	}
+	e.noKeyMaterial(r)
 }
 
 // noKeyMaterial: no key, secret or ciphertext in the output, the log (stderr) or the audit, in
@@ -487,6 +492,8 @@ func (e *keysEnv) noKeyMaterial(r cliRun, extraSealed ...[]byte) {
 	for _, col := range []string{
 		`select secret from catalog.servers where secret is not null`,
 		`select access from connections.connections`,
+		`select refresh from connections.connections where refresh is not null`,
+		`select sealed from platform.key_check`,
 	} {
 		ctx := context.Background()
 		c, err := pgx.Connect(ctx, e.url)

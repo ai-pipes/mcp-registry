@@ -170,6 +170,16 @@ func TestRotateKeyCheckLines(t *testing.T) {
 	}
 }
 
+// Q2 of the inventory: a key check whose compare-and-set was lost is reported as current.
+func TestRotateLostKeyCheckSwapIsAlreadyCurrent(t *testing.T) {
+	w, audit, _, _ := fakeKeys(true)
+	w.resealCheck = func(context.Context, crypto.Keys) (string, error) { return kernel.ResealCurrent, nil }
+	stdout, err := runKeysCmd(context.Background(), t, w, "rotate-secrets-key")
+	if err != nil || !strings.HasSuffix(stdout, "key check: already current\n") || audit.entries[0].Meta["keyCheck"] != "current" {
+		t.Errorf("%v %q %v", err, stdout, audit.entries)
+	}
+}
+
 func TestRotateWithoutTheOldKeyIsACommandErrorBeforeAnyWork(t *testing.T) {
 	w, audit, _, _ := fakeKeys(false)
 	w.resealServers = func(context.Context, kernel.SecretBox, kernel.SecretBox) (catalog.ResealSummary, error) {
@@ -222,6 +232,18 @@ func TestRotateInterrupted(t *testing.T) {
 				return connections.ResealSummary{Failed: []string{}}, nil
 			}
 		},
+		"audit": func(w *keysWiring, cancel context.CancelFunc) {
+			w.audit = auditErr(func(ctx context.Context) error { cancel(); return ctx.Err() })
+		},
+		"cancelled after the audit write": func(w *keysWiring, cancel context.CancelFunc) {
+			w.audit = auditErr(func(context.Context) error { cancel(); return nil })
+		},
+		"an error that does not wrap the cancel": func(w *keysWiring, cancel context.CancelFunc) {
+			w.resealCheck = func(context.Context, crypto.Keys) (string, error) {
+				cancel()
+				return "", errors.New("conn closed")
+			}
+		},
 		"key check": func(w *keysWiring, cancel context.CancelFunc) {
 			w.resealCheck = func(ctx context.Context, _ crypto.Keys) (string, error) {
 				cancel()
@@ -238,7 +260,7 @@ func TestRotateInterrupted(t *testing.T) {
 			if !errors.As(err, &ce) || ce.Msg != "interrupted" || len(audit.entries) != 0 {
 				t.Errorf("%v %v", err, audit.entries)
 			}
-			if name != "key check" && stdout != "" {
+			if ce != nil && ce.Msg != "interrupted" || stdout != "" {
 				t.Errorf("success lines %q", stdout)
 			}
 		})
@@ -296,9 +318,25 @@ func TestResetAuditsBeforeThePrintAlsoWhenNothingWasRemoved(t *testing.T) {
 	}
 }
 
+type auditErr func(ctx context.Context) error
+
+func (f auditErr) Record(ctx context.Context, _ kernel.AuditEntry) error { return f(ctx) }
+
 type auditFunc func(kernel.AuditEntry)
 
 func (f auditFunc) Record(_ context.Context, e kernel.AuditEntry) error { f(e); return nil }
+
+func TestResetInterruptedDuringTheAuditWrite(t *testing.T) {
+	w, _, _, _ := fakeKeys(true)
+	ctx, cancel := context.WithCancel(context.Background())
+	w.removeCheck = func(context.Context) (bool, error) { return true, nil }
+	w.audit = auditErr(func(ctx context.Context) error { cancel(); return ctx.Err() })
+	stdout, err := runKeysCmd(ctx, t, w, "reset-key-check", "--yes")
+	var ce *CommandErr
+	if !errors.As(err, &ce) || ce.Msg != "interrupted" || stdout != "" {
+		t.Errorf("%v %q", err, stdout)
+	}
+}
 
 func TestResetInterrupted(t *testing.T) {
 	w, audit, _, _ := fakeKeys(true)

@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 
@@ -87,7 +86,8 @@ func keyCheckText(verdict string) string {
 // interrupted turns an error caused by the command's own cancelled context into the one
 // interrupt line (every step is idempotent; a repeat finishes the job).
 func interrupted(ctx context.Context, err error) error {
-	if ctx.Err() != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+	// The command's own context decides: a driver error need not wrap the cancel.
+	if ctx.Err() != nil {
 		return CommandError(msgInterrupted)
 	}
 	return err
@@ -129,14 +129,13 @@ func (w keysWiring) rotate(ctx context.Context, cio CLIIO, args []string) error 
 	if ctx.Err() != nil {
 		return CommandError(msgInterrupted)
 	}
-	out(cio, resealLine("server secrets", servers.Resealed, servers.Current))
-	out(cio, resealLine("connections", conns.Resealed, conns.Current))
-
 	verdict, err := w.resealCheck(ctx, crypto.Keys{Current: current, Previous: old})
 	if err != nil {
 		return interrupted(ctx, err)
 	}
-	out(cio, "key check: "+keyCheckText(verdict))
+	if ctx.Err() != nil {
+		return CommandError(msgInterrupted)
+	}
 
 	// Audited also when something failed; `failed` is a count, keyCheck the raw verdict.
 	if err := w.audit.Record(ctx, kernel.AuditEntry{Action: "secrets.rotate", Meta: map[string]any{
@@ -147,6 +146,14 @@ func (w keysWiring) rotate(ctx context.Context, cio CLIIO, args []string) error 
 	}}); err != nil {
 		return interrupted(ctx, err)
 	}
+	if ctx.Err() != nil {
+		return CommandError(msgInterrupted)
+	}
+
+	// The work is done: only now the three lines (an interrupt never leaves a success line).
+	out(cio, resealLine("server secrets", servers.Resealed, servers.Current))
+	out(cio, resealLine("connections", conns.Resealed, conns.Current))
+	out(cio, "key check: "+keyCheckText(verdict))
 
 	var failed []string
 	for _, slug := range servers.Failed {
