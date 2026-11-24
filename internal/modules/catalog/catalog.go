@@ -193,12 +193,6 @@ func (s *Service) GetServerForUpstream(ctx context.Context, slug string) (*Serve
 	return app.GetServerForUpstream(ctx, s.d, slug)
 }
 
-// GetServerSecret is the opened secret of a server (the shared key, or the OAuth client secret);
-// ok is false when there is none. A secret no key opens is an error.
-func (s *Service) GetServerSecret(ctx context.Context, slug string) (secret string, ok bool, err error) {
-	return app.GetServerSecret(ctx, s.d, slug)
-}
-
 // GetServerSecretFor is the opened secret of a server for a caller holding a call target read
 // earlier: found only when the secret belongs to that target's configuration (one read of the
 // server judges both); moved when the server no longer sends its secret where the target would,
