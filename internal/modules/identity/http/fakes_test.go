@@ -32,8 +32,8 @@ func (o *fakeOIDC) AuthorizationURL(_ context.Context, in app.OIDCAuthorizationI
 	}
 	u, _ := url.Parse("https://id.example/authorize")
 	q := u.Query()
-	q.Set("state", in.State)
-	q.Set("nonce", in.Nonce)
+	q.Set("state", in.State.Reveal())
+	q.Set("nonce", in.Nonce.Reveal())
 	q.Set("code_challenge", in.CodeChallenge)
 	u.RawQuery = q.Encode()
 	return u, nil
@@ -318,7 +318,7 @@ func (r fakeSessions) DeleteDead(_ context.Context, c domain.SessionCutoffs) (in
 type fakePending struct{ s *store }
 
 func (r fakePending) Insert(_ context.Context, p app.PendingLogin) error {
-	r.s.pending[p.State] = p
+	r.s.pending[p.State.Reveal()] = p
 	return nil
 }
 

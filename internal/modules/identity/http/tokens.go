@@ -20,6 +20,9 @@ type tokenSummary struct {
 	RevokedAt  *string `json:"revokedAt"`
 }
 
+// createTokenResponse is the wire form of a created token: the one response that carries the
+// token's plain value, filled from CreatedToken.Token by an explicit Reveal. It is built only to be
+// written and is never kept or printed.
 type createTokenResponse struct {
 	ID     string `json:"id"`
 	Prefix string `json:"prefix"`
@@ -72,7 +75,7 @@ func (h *handlers) createToken(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteDomainError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, createTokenResponse{ID: t.ID, Prefix: t.Prefix, Token: t.Token})
+	writeJSON(w, http.StatusCreated, createTokenResponse{ID: t.ID, Prefix: t.Prefix, Token: t.Token.Reveal()})
 }
 
 func (h *handlers) revokeToken(w http.ResponseWriter, r *http.Request) {

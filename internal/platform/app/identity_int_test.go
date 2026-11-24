@@ -142,7 +142,7 @@ func (s *realServer) person(sub string, role idapp.RoleChoice) string {
 	if err != nil {
 		s.t.Fatal(err)
 	}
-	return s.signIn(link.Code)
+	return s.signIn(link.Code.Reveal())
 }
 
 // firstLinkCode is the code of the one first-start record of the log.

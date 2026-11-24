@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ai-pipes/mcp-registry/internal/kernel"
 	"github.com/ai-pipes/mcp-registry/internal/modules/identity/app"
 	"github.com/ai-pipes/mcp-registry/internal/modules/identity/domain"
 )
@@ -35,7 +36,7 @@ func issue(t *testing.T, f *fixture, sub string) app.IssuedLink {
 }
 
 func redeem(f *fixture, code, ip string) (string, error) {
-	return app.CompleteLinkLogin(ctx, f.Deps, app.CompleteLinkLoginInput{Code: code, IP: ip})
+	return app.CompleteLinkLogin(ctx, f.Deps, app.CompleteLinkLoginInput{Code: kernel.NewSecret(code), IP: ip})
 }
 
 func failedAudits(f *fixture) []map[string]any {
@@ -56,11 +57,11 @@ func TestIssueLoginLinkStoresTheHashNotTheCode(t *testing.T) {
 	f := newFixture()
 	user := person(t, f, "alice", false)
 	link := issue(t, f, "alice")
-	if !strings.HasPrefix(link.Code, "ll_") {
+	if !strings.HasPrefix(link.Code.Reveal(), "ll_") {
 		t.Fatalf("code = %q", link.Code)
 	}
-	stored, ok := f.Store.links[f.Deps.Hasher.Hex(link.Code)]
-	if !ok || stored.UserID != user.ID || stored.CodeHash != f.Deps.Hasher.Hex(link.Code) {
+	stored, ok := f.Store.links[f.Deps.Hasher.Hex(link.Code.Reveal())]
+	if !ok || stored.UserID != user.ID || stored.CodeHash != f.Deps.Hasher.Hex(link.Code.Reveal()) {
 		t.Fatalf("stored = %+v", stored)
 	}
 	want := f.Clock.Now().Add(15 * time.Minute)
@@ -68,7 +69,7 @@ func TestIssueLoginLinkStoresTheHashNotTheCode(t *testing.T) {
 		t.Fatalf("expiry %v / %v, want %v", link.ExpiresAt, stored.ExpiresAt, want)
 	}
 	for _, c := range f.Store.links {
-		if c.CodeHash == link.Code {
+		if c.CodeHash == link.Code.Reveal() {
 			t.Fatal("the code itself is stored")
 		}
 	}
@@ -76,7 +77,7 @@ func TestIssueLoginLinkStoresTheHashNotTheCode(t *testing.T) {
 	if len(entries) != 1 || entries[0].ActorID != nil || entries[0].Target == nil || *entries[0].Target != user.ID || len(entries[0].Meta) != 0 {
 		t.Fatalf("audit = %+v", entries)
 	}
-	if strings.Contains(strings.Join(auditText(f), " "), link.Code) {
+	if strings.Contains(strings.Join(auditText(f), " "), link.Code.Reveal()) {
 		t.Fatal("the code reached the audit log")
 	}
 }
@@ -108,9 +109,9 @@ func TestIssueLoginLinkReplacesTheEarlierLink(t *testing.T) {
 	person(t, f, "alice", false)
 	a := issue(t, f, "alice")
 	b := issue(t, f, "alice")
-	_, err := redeem(f, a.Code, "1.1.1.1")
+	_, err := redeem(f, a.Code.Reveal(), "1.1.1.1")
 	_ = wantCode(t, err, domain.CodeInvalidLink)
-	if _, err := redeem(f, b.Code, "1.1.1.1"); err != nil {
+	if _, err := redeem(f, b.Code.Reveal(), "1.1.1.1"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -160,7 +161,7 @@ func TestCompleteLinkLoginSignsInOnce(t *testing.T) {
 	user := person(t, f, "alice", false)
 	link := issue(t, f, "alice")
 	f.Clock.Advance(time.Minute)
-	sessionID, err := redeem(f, link.Code, "1.1.1.1")
+	sessionID, err := redeem(f, link.Code.Reveal(), "1.1.1.1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,10 +179,10 @@ func TestCompleteLinkLoginSignsInOnce(t *testing.T) {
 		len(logins[0].Meta) != 1 || logins[0].Meta["via"] != "link" {
 		t.Fatalf("audit = %+v", logins)
 	}
-	if strings.Contains(strings.Join(auditText(f), " "), link.Code) || strings.Contains(strings.Join(auditText(f), " "), sessionID) {
+	if strings.Contains(strings.Join(auditText(f), " "), link.Code.Reveal()) || strings.Contains(strings.Join(auditText(f), " "), sessionID) {
 		t.Fatal("a secret reached the audit log")
 	}
-	_, err = redeem(f, link.Code, "1.1.1.1")
+	_, err = redeem(f, link.Code.Reveal(), "1.1.1.1")
 	_ = wantCode(t, err, domain.CodeInvalidLink)
 }
 
@@ -190,7 +191,7 @@ func TestCompleteLinkLoginSuccessOrderAndNoLimiter(t *testing.T) {
 	person(t, f, "alice", false)
 	link := issue(t, f, "alice")
 	seq := f.record()
-	if _, err := redeem(f, link.Code, "9.9.9.9"); err != nil {
+	if _, err := redeem(f, link.Code.Reveal(), "9.9.9.9"); err != nil {
 		t.Fatal(err)
 	}
 	want := []string{"links.consume", "users.findById", "sessions.insert", "users.touchLastLogin", "audit:auth.login"}
@@ -207,7 +208,7 @@ func TestCompleteLinkLoginExpiredLinkIsRefusedAndAudited(t *testing.T) {
 	user := person(t, f, "alice", false)
 	link := issue(t, f, "alice")
 	f.Clock.Advance(15 * time.Minute) // expired from the very instant
-	_, err := redeem(f, link.Code, "1.1.1.1")
+	_, err := redeem(f, link.Code.Reveal(), "1.1.1.1")
 	e := wantCode(t, err, domain.CodeInvalidLink)
 	if e.Message != "the link is invalid or has expired" {
 		t.Fatalf("message = %q", e.Message)
@@ -230,7 +231,7 @@ func TestCompleteLinkLoginJustBeforeExpirySucceeds(t *testing.T) {
 	person(t, f, "alice", false)
 	link := issue(t, f, "alice")
 	f.Clock.Advance(15*time.Minute - time.Nanosecond)
-	if _, err := redeem(f, link.Code, "1.1.1.1"); err != nil {
+	if _, err := redeem(f, link.Code.Reveal(), "1.1.1.1"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -240,7 +241,7 @@ func TestCompleteLinkLoginDisabledPersonIsRefusedAndAudited(t *testing.T) {
 	user := person(t, f, "alice", false)
 	link := issue(t, f, "alice")
 	f.Store.userByID(user.ID).Disabled = true
-	_, err := redeem(f, link.Code, "1.1.1.1")
+	_, err := redeem(f, link.Code.Reveal(), "1.1.1.1")
 	e := wantCode(t, err, domain.CodeDisabled)
 	if e.Message != "account is disabled" {
 		t.Fatalf("message = %q", e.Message)
@@ -299,7 +300,7 @@ func TestCompleteLinkLoginPersonGoneIsInvalidLinkWithoutActor(t *testing.T) {
 	person(t, f, "alice", false)
 	link := issue(t, f, "alice")
 	f.Store.users = nil
-	_, err := redeem(f, link.Code, "1.1.1.1")
+	_, err := redeem(f, link.Code.Reveal(), "1.1.1.1")
 	_ = wantCode(t, err, domain.CodeInvalidLink)
 	entries := f.Audit.Actions("auth.login_failed")
 	if len(entries) != 1 || entries[0].ActorID != nil || entries[0].Meta["reason"] != "invalid_link" {
@@ -313,7 +314,7 @@ func TestCompleteLinkLoginExpiredLinkOfAGonePersonHasNoActor(t *testing.T) {
 	link := issue(t, f, "alice")
 	f.Store.users = nil
 	f.Clock.Advance(time.Hour)
-	_, err := redeem(f, link.Code, "1.1.1.1")
+	_, err := redeem(f, link.Code.Reveal(), "1.1.1.1")
 	_ = wantCode(t, err, domain.CodeInvalidLink)
 	entries := f.Audit.Actions("auth.login_failed")
 	if len(entries) != 1 || entries[0].ActorID != nil {
@@ -348,7 +349,7 @@ func TestCompleteLinkLoginRefusalOrderAuditBeforeLimiter(t *testing.T) {
 			link := issue(t, f, "alice")
 			c.setup(f, user.ID)
 			seq := f.record()
-			if _, err := redeem(f, link.Code, "1.1.1.1"); err == nil {
+			if _, err := redeem(f, link.Code.Reveal(), "1.1.1.1"); err == nil {
 				t.Fatal("want a refusal")
 			}
 			if !slices.Equal(seq.Calls, c.want) {
@@ -379,12 +380,12 @@ func TestCompleteLinkLoginLockedAddressGetsRateLimitedOverEveryReason(t *testing
 		{"disabled", func(f *fixture, id string) string {
 			code := issue(t, f, "alice").Code
 			f.Store.userByID(id).Disabled = true
-			return code
+			return code.Reveal()
 		}},
 		{"expired", func(f *fixture, _ string) string {
 			code := issue(t, f, "alice").Code
 			f.Clock.Advance(time.Hour)
-			return code
+			return code.Reveal()
 		}},
 	}
 	for _, c := range cases {
@@ -411,7 +412,7 @@ func TestCompleteLinkLoginLockedAddressStillAuditsTheConsumedLink(t *testing.T) 
 	link := issue(t, f, "alice")
 	f.Store.userByID(user.ID).Disabled = true
 	f.LinkLimiter.Deny = true
-	_, err := redeem(f, link.Code, "2.2.2.2")
+	_, err := redeem(f, link.Code.Reveal(), "2.2.2.2")
 	_ = wantCode(t, err, domain.CodeRateLimited)
 	if m := failedAudits(f); len(m) != 1 || m[0]["reason"] != "disabled" {
 		t.Fatalf("audit = %v", m)
@@ -423,7 +424,7 @@ func TestCompleteLinkLoginValidCodeWorksFromALockedOutAddress(t *testing.T) {
 	person(t, f, "alice", false)
 	link := issue(t, f, "alice")
 	f.LinkLimiter.Deny, f.LinkLimiter.RetryAfter = true, 30
-	if _, err := redeem(f, link.Code, "2.2.2.2"); err != nil {
+	if _, err := redeem(f, link.Code.Reveal(), "2.2.2.2"); err != nil {
 		t.Fatal(err)
 	}
 	if len(f.LinkLimiter.Hits) != 0 {
@@ -447,7 +448,7 @@ func TestCompleteLinkLoginStoreAndAuditFailuresAreReturnedUnchanged(t *testing.T
 		person(t, f, "alice", false)
 		link := issue(t, f, "alice")
 		f.Random.Fail = boom
-		if _, err := redeem(f, link.Code, "1.1.1.1"); !errors.Is(err, boom) {
+		if _, err := redeem(f, link.Code.Reveal(), "1.1.1.1"); !errors.Is(err, boom) {
 			t.Fatalf("err = %v", err)
 		}
 	})
@@ -456,7 +457,7 @@ func TestCompleteLinkLoginStoreAndAuditFailuresAreReturnedUnchanged(t *testing.T
 		person(t, f, "alice", false)
 		link := issue(t, f, "alice")
 		f.Audit.Fail = boom
-		if _, err := redeem(f, link.Code, "1.1.1.1"); !errors.Is(err, boom) {
+		if _, err := redeem(f, link.Code.Reveal(), "1.1.1.1"); !errors.Is(err, boom) {
 			t.Fatalf("err = %v", err)
 		}
 	})
@@ -466,7 +467,7 @@ func TestCompleteLinkLoginStoreAndAuditFailuresAreReturnedUnchanged(t *testing.T
 		link := issue(t, f, "alice")
 		f.Store.userByID(user.ID).Disabled = true
 		f.Audit.Fail = boom
-		if _, err := redeem(f, link.Code, "1.1.1.1"); !errors.Is(err, boom) {
+		if _, err := redeem(f, link.Code.Reveal(), "1.1.1.1"); !errors.Is(err, boom) {
 			t.Fatalf("err = %v", err)
 		}
 		if len(f.LinkLimiter.Hits) != 0 {
@@ -636,7 +637,7 @@ func TestLoginCodeAndLinkSessionAre32RandomBytes(t *testing.T) {
 	link := issue(t, f, "alice")
 	wantSizes(t, r, 32)
 	r.Sizes = nil
-	if _, err := redeem(f, link.Code, "1.1.1.1"); err != nil {
+	if _, err := redeem(f, link.Code.Reveal(), "1.1.1.1"); err != nil {
 		t.Fatal(err)
 	}
 	wantSizes(t, r, 32)

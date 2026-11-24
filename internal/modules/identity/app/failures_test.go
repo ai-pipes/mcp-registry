@@ -193,7 +193,7 @@ func TestStoreFailuresPropagate(t *testing.T) {
 		bob, sid := signIn(t, f, "bob", []string{"mcp-users"})
 		tok, _ := app.CreateToken(ctx, f.Deps, bob, "x")
 		f.Store.sessions[f.Deps.Hasher.Hex(sid)].LastSeenAt = f.Clock.Now()
-		return f, root, bob, sid, tok.Token
+		return f, root, bob, sid, tok.Token.Reveal()
 	}
 	type call func(d app.Deps, root, bob domain.Principal, sid, tok string) error
 	cases := []struct {

@@ -19,6 +19,8 @@ type meResponse struct {
 	Groups []string `json:"groups"`
 }
 
+// linkLoginRequest is the wire form of the body (a decoding DTO): the code is wrapped into a
+// kernel.Secret as soon as it is validated.
 type linkLoginRequest struct {
 	Code *string `json:"code"`
 }
@@ -55,7 +57,7 @@ func (h *handlers) link(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteDomainError(w, r, err)
 		return
 	}
-	sessionID, err := app.CompleteLinkLogin(r.Context(), h.d, app.CompleteLinkLoginInput{Code: code, IP: httpx.ClientIPOf(r)})
+	sessionID, err := app.CompleteLinkLogin(r.Context(), h.d, app.CompleteLinkLoginInput{Code: kernel.NewSecret(code), IP: httpx.ClientIPOf(r)})
 	if err != nil {
 		de, ok := domain.AsError(err)
 		if !ok {
@@ -129,7 +131,7 @@ func (h *handlers) callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	clearLoginBindingCookie(w, h.o.CookieSecure)
-	res, err := app.CompleteOIDCLogin(r.Context(), h.d, app.CompleteOIDCLoginInput{State: state, Code: code, Iss: iss, IP: httpx.ClientIPOf(r)})
+	res, err := app.CompleteOIDCLogin(r.Context(), h.d, app.CompleteOIDCLoginInput{State: kernel.NewSecret(state), Code: kernel.NewSecret(code), Iss: iss, IP: httpx.ClientIPOf(r)})
 	if err != nil {
 		// The browser came back from the provider: a page with a fixed code, not a JSON 500.
 		if de, ok := kernel.AsDomainError(err); ok {
@@ -140,7 +142,7 @@ func (h *handlers) callback(w http.ResponseWriter, r *http.Request) {
 		redirect(w, "/?loginError=internal")
 		return
 	}
-	setSessionCookie(w, res.SessionID, h.o.CookieSecure)
+	setSessionCookie(w, res.SessionID.Reveal(), h.o.CookieSecure)
 	redirect(w, res.ReturnTo)
 }
 

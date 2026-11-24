@@ -55,7 +55,7 @@ func oidcConfigFor(cfg config.Config, logger *slog.Logger) idinfra.OIDCConfig {
 	return idinfra.OIDCConfig{
 		Issuer:       cfg.OIDC.Issuer,
 		ClientID:     cfg.OIDC.ClientID,
-		ClientSecret: cfg.OIDC.ClientSecret.Reveal(),
+		ClientSecret: cfg.OIDC.ClientSecret,
 		RedirectURI:  resolveURL(cfg.PublicURL, "/api/auth/callback"),
 		Scopes:       cfg.OIDCScopes,
 		GroupsClaim:  cfg.OIDCGroupsClaim,

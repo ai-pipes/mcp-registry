@@ -28,17 +28,17 @@ func StartOIDCLogin(ctx context.Context, deps Deps, in StartOIDCLoginInput) (*ur
 		return nil, err
 	}
 	authURL, err := deps.OIDC.AuthorizationURL(ctx, OIDCAuthorizationInput{
-		State:         state,
-		Nonce:         nonce,
+		State:         kernel.NewSecret(state),
+		Nonce:         kernel.NewSecret(nonce),
 		CodeChallenge: deps.Hasher.Base64URL(codeVerifier),
 	})
 	if err != nil {
 		return nil, err
 	}
 	if err := deps.PendingLogins.Insert(ctx, PendingLogin{
-		State:        state,
-		CodeVerifier: codeVerifier,
-		Nonce:        nonce,
+		State:        kernel.NewSecret(state),
+		CodeVerifier: kernel.NewSecret(codeVerifier),
+		Nonce:        kernel.NewSecret(nonce),
 		ReturnTo:     domain.NormalizeReturnTo(in.ReturnTo),
 		ExpiresAt:    domain.LoginStateExpiry(deps.Clock.Now()),
 	}); err != nil {
@@ -48,17 +48,19 @@ func StartOIDCLogin(ctx context.Context, deps Deps, in StartOIDCLoginInput) (*ur
 }
 
 // CompleteOIDCLoginInput is the input of CompleteOIDCLogin; Iss is the callback's iss parameter
-// when the provider sent one, IP the client address the callback limiter counts.
+// when the provider sent one, IP the client address the callback limiter counts. State and code
+// are kernel.Secret.
 type CompleteOIDCLoginInput struct {
-	State string
-	Code  string
+	State kernel.Secret
+	Code  kernel.Secret
 	Iss   *string
 	IP    string
 }
 
-// OIDCLoginResult is a finished sign-in: the new session id and where to send the browser.
+// OIDCLoginResult is a finished sign-in: the new session id (a kernel.Secret) and where to send
+// the browser.
 type OIDCLoginResult struct {
-	SessionID string
+	SessionID kernel.Secret
 	ReturnTo  string
 }
 
@@ -70,7 +72,7 @@ type OIDCLoginResult struct {
 // successful exchange never touches the limiter. A policy refusal or a disabled person is
 // audited before the refusal is returned.
 func CompleteOIDCLogin(ctx context.Context, deps Deps, in CompleteOIDCLoginInput) (OIDCLoginResult, error) {
-	pending, err := deps.PendingLogins.Consume(ctx, in.State)
+	pending, err := deps.PendingLogins.Consume(ctx, in.State.Reveal())
 	if err != nil {
 		return OIDCLoginResult{}, err
 	}
@@ -152,5 +154,5 @@ func CompleteOIDCLogin(ctx context.Context, deps Deps, in CompleteOIDCLoginInput
 	}); err != nil {
 		return OIDCLoginResult{}, err
 	}
-	return OIDCLoginResult{SessionID: sessionID, ReturnTo: pending.ReturnTo}, nil
+	return OIDCLoginResult{SessionID: kernel.NewSecret(sessionID), ReturnTo: pending.ReturnTo}, nil
 }

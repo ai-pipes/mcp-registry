@@ -12,17 +12,19 @@ import (
 // Lookups return (nil, nil) when nothing matches; an error means the store failed.
 
 // OIDCAuthorizationInput is what the provider needs to build an authorization URL (Code + PKCE S256).
+// State and nonce are secrets of the attempt (kernel.Secret); the challenge is public.
 type OIDCAuthorizationInput struct {
-	State         string
+	State         kernel.Secret
 	CodeChallenge string
-	Nonce         string
+	Nonce         kernel.Secret
 }
 
-// OIDCExchangeInput is a callback's code with the secrets of the attempt it belongs to.
+// OIDCExchangeInput is a callback's code with the secrets of the attempt it belongs to, each a
+// kernel.Secret.
 type OIDCExchangeInput struct {
-	Code         string
-	CodeVerifier string
-	Nonce        string
+	Code         kernel.Secret
+	CodeVerifier kernel.Secret
+	Nonce        kernel.Secret
 	// Iss is the iss parameter of the callback when the provider sent one (RFC 9207); nil otherwise.
 	Iss *string
 }
@@ -91,11 +93,12 @@ type SessionRecord struct {
 	ExpiresAt  time.Time
 }
 
-// PendingLogin is a started, not yet completed OIDC login. One-time: Consume removes it.
+// PendingLogin is a started, not yet completed OIDC login. One-time: Consume removes it. Its state,
+// verifier and nonce are kernel.Secret.
 type PendingLogin struct {
-	State        string
-	CodeVerifier string
-	Nonce        string
+	State        kernel.Secret
+	CodeVerifier kernel.Secret
+	Nonce        kernel.Secret
 	ReturnTo     string
 	ExpiresAt    time.Time
 }

@@ -18,6 +18,7 @@ import (
 	"github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
 
+	"github.com/ai-pipes/mcp-registry/internal/kernel"
 	"github.com/ai-pipes/mcp-registry/internal/modules/identity/app"
 	"github.com/ai-pipes/mcp-registry/internal/modules/identity/domain"
 	"github.com/ai-pipes/mcp-registry/internal/platform/logging"
@@ -41,7 +42,7 @@ const (
 type OIDCConfig struct {
 	Issuer       string
 	ClientID     string
-	ClientSecret string
+	ClientSecret kernel.Secret
 	// RedirectURI is the absolute URL of /api/auth/callback on this server.
 	RedirectURI string
 	// Scopes is space-separated; empty means DefaultOIDCScopes.
@@ -110,6 +111,8 @@ func NewOIDCProvider(cfg OIDCConfig) *OIDCProvider {
 
 type discovered struct {
 	provider *oidc.Provider
+	// oauth has no ClientSecret: it is added to a copy for the one request that sends it, so the
+	// cached configuration never holds the plain secret.
 	oauth    oauth2.Config
 	verifier *oidc.IDTokenVerifier
 	issuer   string
@@ -212,7 +215,7 @@ func (p *OIDCProvider) fetchDiscovery(ctx context.Context) (*discovered, error) 
 	return &discovered{
 		provider: prov,
 		oauth: oauth2.Config{
-			ClientID: p.cfg.ClientID, ClientSecret: p.cfg.ClientSecret, Endpoint: endpoint,
+			ClientID: p.cfg.ClientID, Endpoint: endpoint,
 			RedirectURL: p.cfg.RedirectURI, Scopes: strings.Fields(p.cfg.Scopes),
 		},
 		// Provider.Verifier takes the signing algorithms from id_token_signing_alg_values_supported.
@@ -228,8 +231,8 @@ func (p *OIDCProvider) AuthorizationURL(ctx context.Context, in app.OIDCAuthoriz
 	if err != nil {
 		return nil, err
 	}
-	raw := d.oauth.AuthCodeURL(in.State,
-		oidc.Nonce(in.Nonce),
+	raw := d.oauth.AuthCodeURL(in.State.Reveal(),
+		oidc.Nonce(in.Nonce.Reveal()),
 		oauth2.SetAuthURLParam("code_challenge", in.CodeChallenge),
 		oauth2.SetAuthURLParam("code_challenge_method", "S256"))
 	return url.Parse(raw)
@@ -252,7 +255,9 @@ func (p *OIDCProvider) Exchange(ctx context.Context, in app.OIDCExchangeInput) (
 
 	cctx := oidc.ClientContext(ctx, p.client)
 	tctx, cancel := context.WithTimeout(cctx, requestTimeout)
-	tok, err := d.oauth.Exchange(tctx, in.Code, oauth2.VerifierOption(in.CodeVerifier))
+	conf := d.oauth
+	conf.ClientSecret = p.cfg.ClientSecret.Reveal()
+	tok, err := conf.Exchange(tctx, in.Code.Reveal(), oauth2.VerifierOption(in.CodeVerifier.Reveal()))
 	cancel()
 	if err != nil {
 		return domain.OIDCClaims{}, p.tokenError(ctx, err)
@@ -273,7 +278,7 @@ func (p *OIDCProvider) Exchange(ctx context.Context, in app.OIDCExchangeInput) (
 		}
 		return domain.OIDCClaims{}, fmt.Errorf("oidc: ID token rejected: %w", err)
 	}
-	if idt.Nonce != in.Nonce {
+	if idt.Nonce != in.Nonce.Reveal() {
 		return domain.OIDCClaims{}, errors.New("oidc: the ID token's nonce is not ours")
 	}
 	if idt.Subject == "" {

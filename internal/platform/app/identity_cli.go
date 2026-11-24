@@ -93,9 +93,11 @@ func (w identityWiring) createToken(ctx context.Context, cio CLIIO, args []strin
 	if err != nil {
 		return err
 	}
-	out(cio, t.Token)
+	// The command's output is the token itself: the one place it is shown, by an explicit Reveal.
+	token := t.Token.Reveal()
+	out(cio, token)
 	out(cio, fmt.Sprintf(`claude mcp add --transport http mcp-registry %s --header "Authorization: Bearer %s"`,
-		resolveURL(w.rt.Config.PublicURL, "/mcp"), t.Token))
+		resolveURL(w.rt.Config.PublicURL, "/mcp"), token))
 	_, _ = io.WriteString(cio.Stderr, "The token is shown only once; store it now.\n")
 	return nil
 }
@@ -113,6 +115,6 @@ func (w identityWiring) loginLink(ctx context.Context, cio CLIIO, args []string)
 	if err != nil {
 		return err
 	}
-	out(cio, domain.LoginLinkURL(w.rt.Config.PublicURL, l.Code))
+	out(cio, domain.LoginLinkURL(w.rt.Config.PublicURL, l.Code.Reveal()))
 	return nil
 }

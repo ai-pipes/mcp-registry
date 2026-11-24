@@ -254,7 +254,7 @@ func (e *env) signIn(sub string, admin bool) (*http.Cookie, domain.User) {
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	r := e.do("POST", "/api/auth/link", `{"code":"`+link.Code+`"}`)
+	r := e.do("POST", "/api/auth/link", `{"code":"`+link.Code.Reveal()+`"}`)
 	if r.StatusCode != 204 {
 		e.t.Fatalf("sign-in: %d %s", r.StatusCode, bodyOf(e.t, r))
 	}
@@ -275,7 +275,7 @@ func (e *env) newLinkCode(sub string) string {
 	if err != nil {
 		e.t.Fatal(err)
 	}
-	return l.Code
+	return l.Code.Reveal()
 }
 
 func TestMethods(t *testing.T) {
