@@ -512,20 +512,20 @@ next:
 // parseServer is the one decoder of a server definition: every issue in schema order, and the
 // input (valid only when there are none). create adds slug and secret (the REST create body);
 // withSlug without secret is a server file; neither is a PUT body.
-func parseServer(root *node, create, withSlug bool) (app.ServerInput, *string, []issue) {
+func parseServer(root *node, create, withSlug bool) (app.ServerInput, kernel.Secret, []issue) {
 	if root.kind != kindObject {
-		return app.ServerInput{}, nil, []issue{{"", "expected an object"}}
+		return app.ServerInput{}, kernel.Secret{}, []issue{{"", "expected an object"}}
 	}
 	var s shape
 	in := app.ServerInput{Fields: s.fields(root)}
-	var secret *string
+	var secret kernel.Secret
 	if create || withSlug {
 		in.Slug = s.patterned(root, "", "slug")
 	}
 	if create {
 		if n := root.member("secret"); n != nil && n.kind != kindNull {
 			if v, ok := s.anyText(n, "secret"); ok { // sealed as bytes: a NUL is fine
-				secret = &v
+				secret = kernel.NewSecret(v)
 			}
 		}
 	}
@@ -543,14 +543,14 @@ func parseServer(root *node, create, withSlug bool) (app.ServerInput, *string, [
 
 // serverRequest is the body of POST (create true: slug and secret too) or PUT /api/servers; the
 // answer is the first issue.
-func serverRequest(r *http.Request, create bool) (app.ServerInput, *string, error) {
+func serverRequest(r *http.Request, create bool) (app.ServerInput, kernel.Secret, error) {
 	root, err := readBody(r)
 	if err != nil {
-		return app.ServerInput{}, nil, err
+		return app.ServerInput{}, kernel.Secret{}, err
 	}
 	in, secret, issues := parseServer(root, create, false)
 	if len(issues) > 0 {
-		return app.ServerInput{}, nil, issues[0].err()
+		return app.ServerInput{}, kernel.Secret{}, issues[0].err()
 	}
 	return in, secret, nil
 }
@@ -594,22 +594,23 @@ func objectBody(r *http.Request) (*node, error) {
 	return root, nil
 }
 
-// secretRequest is {"secret": string | null}; null clears. The length is the use case's to check.
-func secretRequest(r *http.Request) (*string, error) {
+// secretRequest is {"secret": string | null}; null clears (the unset Secret). The length is the
+// use case's to check.
+func secretRequest(r *http.Request) (kernel.Secret, error) {
 	root, err := objectBody(r)
 	if err != nil {
-		return nil, err
+		return kernel.Secret{}, err
 	}
 	n := root.member("secret")
 	if n != nil && n.kind == kindNull {
-		return nil, nil
+		return kernel.Secret{}, nil
 	}
 	var s shape
 	v, ok := s.anyText(n, "secret") // sealed as bytes: a NUL is fine
 	if !ok {
-		return nil, s.issues[0].err()
+		return kernel.Secret{}, s.issues[0].err()
 	}
-	return &v, nil
+	return kernel.NewSecret(v), nil
 }
 
 // statusRequest is {"status": "active" | "disabled"}.

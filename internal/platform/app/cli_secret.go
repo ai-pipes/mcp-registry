@@ -7,6 +7,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/ai-pipes/mcp-registry/internal/kernel"
 	"github.com/ai-pipes/mcp-registry/internal/modules/catalog"
 )
 
@@ -30,26 +31,26 @@ const secretPrompt = "Secret: "
 // mode holds a secret, from stdin: typed without echo on a terminal, otherwise the whole stream
 // with ONE trailing newline (`\n` or `\r\n`) removed. Nothing means no secret (nil). A mode that
 // holds none never touches stdin. The secret is never part of an error.
-func readSecret(ctx context.Context, cio CLIIO, secretEnv *string, auth catalog.AuthMode) (*string, error) {
+func readSecret(ctx context.Context, cio CLIIO, secretEnv *string, auth catalog.AuthMode) (kernel.Secret, error) {
 	if secretEnv != nil {
 		value := cio.Env[*secretEnv]
 		if value == "" {
-			return nil, UsageError(*secretEnv + " is unset or empty")
+			return kernel.Secret{}, UsageError(*secretEnv + " is unset or empty")
 		}
-		return &value, nil
+		return kernel.NewSecret(value), nil
 	}
 	if !auth.HoldsSecret() {
-		return nil, nil
+		return kernel.Secret{}, nil
 	}
 	typed, err := readSecretInput(ctx, cio)
 	if err != nil {
-		return nil, err
+		return kernel.Secret{}, err
 	}
 	typed = stripNewline(typed)
 	if typed == "" {
-		return nil, nil
+		return kernel.Secret{}, nil
 	}
-	return &typed, nil
+	return kernel.NewSecret(typed), nil
 }
 
 // readSecretInput is readSecretInput of cli-input.ts: on a terminal one line typed without echo

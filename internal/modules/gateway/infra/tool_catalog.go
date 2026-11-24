@@ -13,7 +13,7 @@ import (
 type catalogAPI interface {
 	GetToolFor(ctx context.Context, p catalog.Principal, ref string) (catalog.ToolView, error)
 	GetServerForUpstream(ctx context.Context, slug string) (*catalog.ServerCallTarget, error)
-	GetServerSecretFor(ctx context.Context, target catalog.ServerCallTarget) (string, catalog.SecretLookup, error)
+	GetServerSecretFor(ctx context.Context, target catalog.ServerCallTarget) (kernel.Secret, catalog.SecretLookup, error)
 }
 
 // toolCatalog is app.ToolCatalog over the catalog's public API (createCatalogToolCatalog of the
@@ -46,7 +46,7 @@ func (c toolCatalog) ServerFor(ctx context.Context, slug string) (*catalog.Serve
 
 // ServerSecret is the decrypted shared secret for the target read earlier: found only while it
 // belongs to that target's configuration.
-func (c toolCatalog) ServerSecret(ctx context.Context, target catalog.ServerCallTarget) (string, catalog.SecretLookup, error) {
+func (c toolCatalog) ServerSecret(ctx context.Context, target catalog.ServerCallTarget) (kernel.Secret, catalog.SecretLookup, error) {
 	return c.api.GetServerSecretFor(ctx, target)
 }
 

@@ -55,8 +55,8 @@ func TestResealServerSecrets(t *testing.T) {
 			if st.UpdatedAt.UnixNano() != before[slug] {
 				t.Fatalf("%s: updated_at moved", slug)
 			}
-			if st.SealedSecret != nil {
-				if _, err := oldBox.Open(st.SealedSecret); err == nil {
+			if st.SealedSecret.IsSet() {
+				if _, err := oldBox.Open(st.SealedSecret.Reveal()); err == nil {
 					t.Fatalf("%s: the old key still opens it", slug)
 				}
 			}
@@ -85,12 +85,12 @@ func TestResealServerSecrets(t *testing.T) {
 	t.Run("a secret neither key opens is reported and left as it is", func(t *testing.T) {
 		h := resealHarness(t)
 		lost := sealedUnder(t, fakeBox{id: "lost"}, "x")
-		h.servers.setRow("beta", func(st *domain.ServerState) { st.SealedSecret = lost })
+		h.servers.setRow("beta", func(st *domain.ServerState) { st.SealedSecret = domain.SealedSecretOf(lost) })
 		r, _ := app.ResealServerSecrets(ctx, h.deps.Servers, oldBox, newBox)
 		if !reflect.DeepEqual(r, app.ResealSummary{Resealed: 1, Current: 0, Failed: []string{"beta"}}) {
 			t.Fatalf("summary = %+v", r)
 		}
-		if string(h.servers.row(t, "beta").SealedSecret) != string(lost) {
+		if string(h.servers.row(t, "beta").SealedSecret.Reveal()) != string(lost) {
 			t.Fatal("an unreadable secret was changed")
 		}
 	})
@@ -101,7 +101,9 @@ func TestResealServerSecrets(t *testing.T) {
 		h.servers.replaceHook = func(slug string) {
 			if slug == "alpha" && !raced {
 				raced = true
-				h.servers.setRow("alpha", func(st *domain.ServerState) { st.SealedSecret = sealedUnder(t, newBox, "admin-set-meanwhile") })
+				h.servers.setRow("alpha", func(st *domain.ServerState) {
+					st.SealedSecret = domain.SealedSecretOf(sealedUnder(t, newBox, "admin-set-meanwhile"))
+				})
 			}
 		}
 		r, _ := app.ResealServerSecrets(ctx, h.deps.Servers, oldBox, newBox)
@@ -122,7 +124,9 @@ func TestResealServerSecrets(t *testing.T) {
 			if slug == "alpha" {
 				attempts++
 				// Every attempt loses: the stored secret changes (under the old key) before the swap.
-				h.servers.setRow("alpha", func(st *domain.ServerState) { st.SealedSecret = sealedUnder(t, oldBox, "churn"+strconv.Itoa(attempts)) })
+				h.servers.setRow("alpha", func(st *domain.ServerState) {
+					st.SealedSecret = domain.SealedSecretOf(sealedUnder(t, oldBox, "churn"+strconv.Itoa(attempts)))
+				})
 			}
 		}
 		r, _ := app.ResealServerSecrets(ctx, h.deps.Servers, oldBox, newBox)

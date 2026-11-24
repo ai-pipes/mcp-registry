@@ -29,7 +29,7 @@ type ToolCatalog interface {
 	// (catalog.Service.GetServerSecretFor): SecretFound only while the secret belongs to that
 	// target's configuration (an empty secret that is set is returned as such), SecretNotSet when
 	// none is set, SecretMoved when the server no longer sends its secret where the target would.
-	ServerSecret(ctx context.Context, target catalog.ServerCallTarget) (secret string, found catalog.SecretLookup, err error)
+	ServerSecret(ctx context.Context, target catalog.ServerCallTarget) (secret kernel.Secret, found catalog.SecretLookup, err error)
 }
 
 // PersonalCredentials is the person's own secret for a server. *connections.Service implements
@@ -56,9 +56,9 @@ type ArgsValidator interface {
 }
 
 // SecretComparer compares two secrets in constant time (crypto/subtle in infra: crypto is not
-// allowed in this layer).
+// allowed in this layer, and kernel.Secret is not comparable with ==).
 type SecretComparer interface {
-	Equal(a, b string) bool
+	Equal(a, b kernel.Secret) bool
 }
 
 // CallLogEntry is one row of the call log: who, with which token, what, when, how long, how it

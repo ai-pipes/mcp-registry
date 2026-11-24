@@ -53,7 +53,7 @@ func (tools) ListByServer(context.Context, string) ([]*domain.Tool, error) {
 func state(slug string, status domain.ServerStatus, sealed []byte) domain.ServerState {
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	return domain.ServerState{
-		Slug: slug, Name: "Gitea", Description: "Git", URL: "https://mcp.example.com/g", SealedSecret: sealed,
+		Slug: slug, Name: "Gitea", Description: "Git", URL: "https://mcp.example.com/g", SealedSecret: domain.SealedSecretOf(sealed),
 		Auth:   domain.AuthMode{Kind: domain.AuthSharedSecret, Header: "X-Key", Template: "{secret}"},
 		Access: domain.Access{Kind: domain.AccessAll}, TimeoutMs: 1000, Status: status, CreatedAt: now, UpdatedAt: now,
 	}
@@ -84,12 +84,12 @@ func TestServiceAnswersWhatOtherModulesAsk(t *testing.T) {
 	if target, err := svc.GetServerForUpstream(ctx, "beta"); err != nil || target != nil {
 		t.Fatalf("a disabled server has no call target: %+v %v", target, err)
 	}
-	if secret, found, err := svc.GetServerSecretFor(ctx, *target); err != nil || found != catalog.SecretFound || secret != "key" {
+	if secret, found, err := svc.GetServerSecretFor(ctx, *target); err != nil || found != catalog.SecretFound || secret.Reveal() != "key" {
 		t.Fatalf("GetServerSecretFor: %q %v %v", secret, found, err)
 	}
 	moved := *target
 	moved.URL = "https://elsewhere.example.com/g"
-	if secret, found, err := svc.GetServerSecretFor(ctx, moved); err != nil || found != catalog.SecretMoved || secret != "" {
+	if secret, found, err := svc.GetServerSecretFor(ctx, moved); err != nil || found != catalog.SecretMoved || secret.Reveal() != "" {
 		t.Fatalf("GetServerSecretFor, another URL: %q %v %v", secret, found, err)
 	}
 	slugs, err := svc.ListServerSlugs(ctx)

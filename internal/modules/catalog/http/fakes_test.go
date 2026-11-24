@@ -10,7 +10,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -57,7 +56,7 @@ type fakeServers struct {
 func stateOf(s *domain.Server, version int64) domain.ServerState {
 	return domain.ServerState{
 		Slug: s.Slug(), Version: version, Name: s.Name(), Description: s.Description(), URL: s.URL(), Auth: s.Auth(),
-		SealedSecret: slices.Clone(s.SealedSecret()), Access: s.Access(), TimeoutMs: s.TimeoutMs(), DailyLimit: s.DailyLimit(),
+		SealedSecret: domain.SealedSecretOf(s.SealedSecret()), Access: s.Access(), TimeoutMs: s.TimeoutMs(), DailyLimit: s.DailyLimit(),
 		Status: s.Status(), LastSyncAt: s.LastSyncAt(), LastSyncError: s.LastSyncError(), SyncUserID: s.SyncUserID(),
 		CreatedAt: s.CreatedAt(), UpdatedAt: s.UpdatedAt(),
 	}
@@ -454,7 +453,7 @@ func (e *env) addServer(slug string, secret *string, tools ...string) {
 			Name: "Gitea", Description: "Git hosting", URL: "https://mcp.example.com/gitea",
 			Auth: domain.AuthMode{Kind: domain.AuthNone}, Access: domain.Access{Kind: domain.AccessAll},
 		}},
-		Secret: secret,
+		Secret: secretFromPtr(secret),
 	})
 	if err != nil {
 		e.t.Fatalf("create %s: %v", slug, err)
@@ -498,3 +497,11 @@ func validServer(slug string) map[string]any {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+// secretFromPtr is the secret a *string stands for: nil is unset.
+func secretFromPtr(p *string) kernel.Secret {
+	if p == nil {
+		return kernel.Secret{}
+	}
+	return kernel.NewSecret(*p)
+}

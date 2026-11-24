@@ -58,7 +58,7 @@ func (c *fakeCatalog) ServerFor(_ context.Context, slug string) (*catalog.Server
 
 // ServerSecret models one read of the stored row: the secret is handed out only while the row's
 // destination (auth kind, and the URL for shared_secret) is the target's.
-func (c *fakeCatalog) ServerSecret(_ context.Context, target catalog.ServerCallTarget) (string, catalog.SecretLookup, error) {
+func (c *fakeCatalog) ServerSecretPlain(_ context.Context, target catalog.ServerCallTarget) (string, catalog.SecretLookup, error) {
 	if c.onSecret != nil {
 		c.onSecret()
 	}
@@ -258,11 +258,11 @@ type equalSecrets struct {
 	calls int
 }
 
-func (e *equalSecrets) Equal(a, b string) bool {
+func (e *equalSecrets) Equal(a, b kernel.Secret) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.calls++
-	return a == b
+	return a.Reveal() == b.Reveal()
 }
 
 func (e *equalSecrets) count() int {
@@ -397,3 +397,11 @@ func sp(s string) *string { return &s }
 func ip(i int) *int       { return &i }
 
 func contains(s, sub string) bool { return strings.Contains(s, sub) }
+
+func (c *fakeCatalog) ServerSecret(ctx context.Context, target catalog.ServerCallTarget) (kernel.Secret, catalog.SecretLookup, error) {
+	v, found, err := c.ServerSecretPlain(ctx, target)
+	if found != catalog.SecretFound {
+		return kernel.Secret{}, found, err
+	}
+	return kernel.NewSecret(v), found, err
+}

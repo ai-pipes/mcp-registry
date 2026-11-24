@@ -77,7 +77,7 @@ type fakeServers struct {
 func state(s *domain.Server, version int64) domain.ServerState {
 	return domain.ServerState{
 		Slug: s.Slug(), Version: version, Name: s.Name(), Description: s.Description(), URL: s.URL(), Auth: s.Auth(),
-		SealedSecret: slices.Clone(s.SealedSecret()), Access: s.Access(), TimeoutMs: s.TimeoutMs(), DailyLimit: s.DailyLimit(),
+		SealedSecret: domain.SealedSecretOf(s.SealedSecret()), Access: s.Access(), TimeoutMs: s.TimeoutMs(), DailyLimit: s.DailyLimit(),
 		Status: s.Status(), LastSyncAt: s.LastSyncAt(), LastSyncError: s.LastSyncError(), SyncUserID: s.SyncUserID(),
 		CreatedAt: s.CreatedAt(), UpdatedAt: s.UpdatedAt(),
 	}
@@ -182,10 +182,10 @@ func (r *fakeServers) ReplaceSealedSecret(_ context.Context, slug string, old, n
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	st, ok := r.rows[slug]
-	if !ok || st.SealedSecret == nil || !bytes.Equal(st.SealedSecret, old) {
+	if !ok || !st.SealedSecret.IsSet() || !bytes.Equal(st.SealedSecret.Reveal(), old) {
 		return false, nil
 	}
-	st.SealedSecret = slices.Clone(next)
+	st.SealedSecret = domain.SealedSecretOf(next)
 	r.rows[slug] = st
 	return true, nil
 }
@@ -472,7 +472,7 @@ func input(slug string, mut ...func(*app.ServerFields)) app.ServerInput {
 }
 
 func createCmd(slug string, secret *string, mut ...func(*app.ServerFields)) app.CreateServerCommand {
-	return app.CreateServerCommand{Principal: admin, Input: input(slug, mut...), Secret: secret}
+	return app.CreateServerCommand{Principal: admin, Input: input(slug, mut...), Secret: secretFromPtr(secret)}
 }
 
 func (h *harness) mustCreate(t *testing.T, slug string, secret *string, mut ...func(*app.ServerFields)) {
@@ -533,4 +533,15 @@ func oauthMode() domain.AuthMode {
 	o.AuthorizeURL = "https://git.example.com/authorize"
 	o.TokenURL = "https://git.example.com/token"
 	return domain.AuthMode{Kind: domain.AuthOAuthUser, Header: "Authorization", Template: "Bearer {secret}", OAuth: o}
+}
+
+// secretOf is a set secret with the value s.
+func secretOf(s string) kernel.Secret { return kernel.NewSecret(s) }
+
+// secretFromPtr is the secret a *string stands for: nil is unset.
+func secretFromPtr(p *string) kernel.Secret {
+	if p == nil {
+		return kernel.Secret{}
+	}
+	return kernel.NewSecret(*p)
 }

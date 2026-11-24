@@ -73,9 +73,10 @@ type ToolRepository interface {
 }
 
 // PersonalCredential is the answer of SyncCredentials.PersonalSecret: the person's own upstream
-// secret (an OAuth access token or a PAT, raw), or why there is none (Failure set, Secret empty).
+// secret (an OAuth access token or a PAT, raw, a kernel.Secret), or why there is none (Failure
+// set, Secret unset).
 type PersonalCredential struct {
-	Secret  string
+	Secret  kernel.Secret
 	Failure domain.PersonalCredentialFailure
 }
 

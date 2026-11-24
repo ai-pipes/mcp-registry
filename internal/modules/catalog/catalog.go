@@ -199,7 +199,7 @@ func (s *Service) GetServerForUpstream(ctx context.Context, slug string) (*Serve
 // earlier: found only when the secret belongs to that target's configuration (one read of the
 // server judges both); moved when the server no longer sends its secret where the target would,
 // or is gone; not_set when there is none. A secret no key opens is an error.
-func (s *Service) GetServerSecretFor(ctx context.Context, target ServerCallTarget) (string, SecretLookup, error) {
+func (s *Service) GetServerSecretFor(ctx context.Context, target ServerCallTarget) (kernel.Secret, SecretLookup, error) {
 	return app.GetServerSecretFor(ctx, s.d, target)
 }
 

@@ -83,11 +83,11 @@ func TestASecretMayHoldANUL(t *testing.T) {
 	if r := e.admin("POST", "/api/servers", body); r.Status != 201 || !strings.Contains(r.Body, `"secretSet":true`) {
 		t.Fatalf("create: %d %s", r.Status, r.Body)
 	}
-	if plain, err := (fakeBox{}).Open(e.servers.rows["nulsecret"].SealedSecret); err != nil || plain != "a\x00b" {
+	if plain, err := (fakeBox{}).Open(e.servers.rows["nulsecret"].SealedSecret.Reveal()); err != nil || plain != "a\x00b" {
 		t.Fatalf("stored %q, %v", plain, err)
 	}
 	wantReply(t, e.admin("PUT", "/api/servers/nulsecret/secret", `{"secret":"c\u0000d"}`), 204, "")
-	if plain, _ := (fakeBox{}).Open(e.servers.rows["nulsecret"].SealedSecret); plain != "c\x00d" {
+	if plain, _ := (fakeBox{}).Open(e.servers.rows["nulsecret"].SealedSecret.Reveal()); plain != "c\x00d" {
 		t.Fatalf("stored %q", plain)
 	}
 }

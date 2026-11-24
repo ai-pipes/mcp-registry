@@ -99,7 +99,7 @@ func (c *fakeCredentials) PersonalSecret(_ context.Context, _ app.ServerCallTarg
 	if !ok {
 		return app.PersonalCredential{Failure: c.failure}, nil
 	}
-	return app.PersonalCredential{Secret: tok}, nil
+	return app.PersonalCredential{Secret: kernel.NewSecret(tok)}, nil
 }
 
 type recordingLogger struct {

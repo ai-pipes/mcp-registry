@@ -1,7 +1,6 @@
 package domain
 
 import (
-	"slices"
 	"strconv"
 	"time"
 
@@ -102,7 +101,7 @@ type ServerState struct {
 	Description  string
 	URL          string
 	Auth         AuthMode
-	SealedSecret []byte // nil: no secret
+	SealedSecret kernel.SecretBytes // the zero value: no secret (ciphertext is not printed either)
 	Access       Access
 	TimeoutMs    int
 	DailyLimit   *int
@@ -179,7 +178,6 @@ func RehydrateServer(st ServerState) *Server {
 func (st ServerState) clone() ServerState {
 	st.Auth = st.Auth.Clone()
 	st.Access = st.Access.Clone()
-	st.SealedSecret = slices.Clone(st.SealedSecret)
 	st.DailyLimit = copyInt(st.DailyLimit)
 	st.LastSyncAt = copyTime(st.LastSyncAt)
 	st.LastSyncError = copyString(st.LastSyncError)
@@ -250,7 +248,7 @@ func (s *Server) CreatedAt() time.Time { return s.s.CreatedAt }
 func (s *Server) UpdatedAt() time.Time { return s.s.UpdatedAt }
 
 // SecretSet returns the server's SecretSet.
-func (s *Server) SecretSet() bool { return s.s.SealedSecret != nil }
+func (s *Server) SecretSet() bool { return s.s.SealedSecret.IsSet() }
 
 // SecretGoesTo reports whether the stored secret belongs to the configuration url + auth (one a
 // caller read earlier): true unless an edit from this server's configuration to that one would
@@ -267,9 +265,26 @@ func (s *Server) SecretChanged() bool { return s.secretDirty }
 // CanBeUsedBy reports whether the actor may use this server (see CanUse).
 func (s *Server) CanBeUsedBy(a Actor) bool { return CanUse(s.s.Access, s.s.Status, a) }
 
-// SealedSecret is the encrypted secret (nil: none), for the repository and for opening it in a
-// use case. Never serialise it.
-func (s *Server) SealedSecret() []byte { return slices.Clone(s.s.SealedSecret) }
+// SealedSecret is the encrypted secret (nil: none), a copy, for the repository and for opening it
+// in a use case. Never serialise it.
+func (s *Server) SealedSecret() []byte {
+	if !s.s.SealedSecret.IsSet() {
+		return nil
+	}
+	if b := s.s.SealedSecret.Reveal(); b != nil {
+		return b
+	}
+	return []byte{}
+}
+
+// SealedSecretOf is the stored form of a sealed secret: nil is "no secret", any other value
+// (empty included) is kept, copied.
+func SealedSecretOf(sealed []byte) kernel.SecretBytes {
+	if sealed == nil {
+		return kernel.SecretBytes{}
+	}
+	return kernel.NewSecretBytes(sealed)
+}
 
 // Changes is a partial edit: only the fields marked with Some are changed.
 type Changes struct {
@@ -299,11 +314,11 @@ func (s *Server) Update(c Changes, now time.Time) (secretCleared bool, err error
 		return false, err
 	}
 	searchable := v.name != s.s.Name || v.description != s.s.Description || !v.access.Equal(s.s.Access)
-	secretCleared = s.s.SealedSecret != nil && secretDestinationChanged(current, v)
+	secretCleared = s.s.SealedSecret.IsSet() && secretDestinationChanged(current, v)
 	s.s.Name, s.s.Description, s.s.URL, s.s.Auth, s.s.Access = v.name, v.description, v.url, v.auth, v.access
 	s.s.TimeoutMs, s.s.DailyLimit, s.s.UpdatedAt = v.timeoutMs, v.dailyLimit, now
 	if secretCleared {
-		s.s.SealedSecret = nil
+		s.s.SealedSecret = kernel.SecretBytes{}
 		s.secretDirty = true
 	}
 	if searchable {
@@ -315,7 +330,7 @@ func (s *Server) Update(c Changes, now time.Time) (secretCleared bool, err error
 // ReplaceSealedSecret stores the same secret sealed under another key (SECRETS_KEY rotation).
 // Not an edit: updatedAt and the events stay as they are.
 func (s *Server) ReplaceSealedSecret(sealed []byte) {
-	s.s.SealedSecret = slices.Clone(sealed)
+	s.s.SealedSecret = SealedSecretOf(sealed)
 	s.secretDirty = true
 }
 
@@ -328,7 +343,7 @@ func (s *Server) SetSealedSecret(sealed []byte, now time.Time) error {
 	if len(sealed) == 0 {
 		return invalidServer("secret must be non-blank and at most " + strconv.Itoa(maxSecret) + " characters")
 	}
-	s.s.SealedSecret = slices.Clone(sealed)
+	s.s.SealedSecret = SealedSecretOf(sealed)
 	s.s.UpdatedAt = now
 	s.secretDirty = true
 	return nil
@@ -336,7 +351,7 @@ func (s *Server) SetSealedSecret(sealed []byte, now time.Time) error {
 
 // ClearSecret removes the stored secret; always allowed.
 func (s *Server) ClearSecret(now time.Time) {
-	s.s.SealedSecret = nil
+	s.s.SealedSecret = kernel.SecretBytes{}
 	s.s.UpdatedAt = now
 	s.secretDirty = true
 }

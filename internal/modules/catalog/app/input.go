@@ -89,10 +89,10 @@ func ValidateServerInput(in ServerInput) []Issue {
 // ValidateCreateRequest is ValidateServerInput plus the secret the REST body may carry (1..4096
 // characters, last in schema order). A secret given through the CLI does not go through this:
 // the domain judges it.
-func ValidateCreateRequest(in ServerInput, secret *string) []Issue {
+func ValidateCreateRequest(in ServerInput, secret kernel.Secret) []Issue {
 	issues := ValidateServerInput(in)
-	if secret != nil {
-		issues = append(issues, ValidateSecret(*secret)...)
+	if secret.IsSet() {
+		issues = append(issues, ValidateSecret(secret.Reveal())...)
 	}
 	return issues
 }

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ai-pipes/mcp-registry/internal/kernel"
 	"github.com/ai-pipes/mcp-registry/internal/modules/catalog"
 	"github.com/ai-pipes/mcp-registry/internal/modules/connections/app"
 )
@@ -35,7 +36,7 @@ func (f *fakeCatalog) GetServerForUpstream(_ context.Context, slug string) (*cat
 	return f.targets[slug], nil
 }
 
-func (f *fakeCatalog) GetServerSecretFor(_ context.Context, t catalog.ServerCallTarget) (string, catalog.SecretLookup, error) {
+func (f *fakeCatalog) GetServerSecretForPlain(_ context.Context, t catalog.ServerCallTarget) (string, catalog.SecretLookup, error) {
 	f.targetOf = append(f.targetOf, t)
 	if f.secretEr != nil {
 		return "", "", f.secretEr
@@ -169,4 +170,12 @@ func TestClientSecretForZeroWhenUnsetMovedAndErrorsNeverCarryIt(t *testing.T) {
 			t.Errorf("error carries the secret: %s", text)
 		}
 	}
+}
+
+func (f *fakeCatalog) GetServerSecretFor(ctx context.Context, t catalog.ServerCallTarget) (kernel.Secret, catalog.SecretLookup, error) {
+	v, found, err := f.GetServerSecretForPlain(ctx, t)
+	if found != catalog.SecretFound {
+		return kernel.Secret{}, found, err
+	}
+	return kernel.NewSecret(v), found, err
 }

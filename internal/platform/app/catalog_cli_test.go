@@ -71,7 +71,7 @@ func TestReadSecretFromAPipe(t *testing.T) {
 				t.Fatal(err)
 			}
 			switch {
-			case tc.want == nil && got != nil, tc.want != nil && (got == nil || *got != *tc.want):
+			case tc.want == nil && got.IsSet(), tc.want != nil && (!got.IsSet() || got.Reveal() != *tc.want):
 				t.Errorf("got %v, want %v", got, tc.want)
 			}
 			if errOut.Len() != 0 {
@@ -83,16 +83,16 @@ func TestReadSecretFromAPipe(t *testing.T) {
 
 func TestReadSecretSkipsStdinForAModeWithoutOne(t *testing.T) {
 	cio, _, _ := cioOf(tripReader{t}, nil)
-	if got, err := readSecret(context.Background(), cio, nil, noneMode); err != nil || got != nil {
+	if got, err := readSecret(context.Background(), cio, nil, noneMode); err != nil || got.IsSet() {
 		t.Fatalf("%v %v", got, err)
 	}
 	// An OAuth server holds the client secret, a PAT server the person's own token.
 	cio, _, _ = cioOf(strings.NewReader("c\n"), nil)
-	if got, _ := readSecret(context.Background(), cio, nil, catalog.AuthMode{Kind: catalog.AuthOAuthUser}); got == nil || *got != "c" {
+	if got, _ := readSecret(context.Background(), cio, nil, catalog.AuthMode{Kind: catalog.AuthOAuthUser}); !got.IsSet() || got.Reveal() != "c" {
 		t.Errorf("oauth_user holds a secret: %v", got)
 	}
 	cio, _, _ = cioOf(tripReader{t}, nil)
-	if got, err := readSecret(context.Background(), cio, nil, catalog.AuthMode{Kind: catalog.AuthPATUser}); err != nil || got != nil {
+	if got, err := readSecret(context.Background(), cio, nil, catalog.AuthMode{Kind: catalog.AuthPATUser}); err != nil || got.IsSet() {
 		t.Errorf("pat_user holds none: %v %v", got, err)
 	}
 }
@@ -101,12 +101,12 @@ func TestReadSecretFromTheEnvironment(t *testing.T) {
 	name := "K"
 	cio, _, _ := cioOf(tripReader{t}, map[string]string{"K": "from-env\n"})
 	got, err := readSecret(context.Background(), cio, &name, sharedSecretMode)
-	if err != nil || got == nil || *got != "from-env\n" {
+	if err != nil || !got.IsSet() || got.Reveal() != "from-env\n" {
 		t.Fatalf("the variable is taken as it is (no newline stripping): %v %v", got, err)
 	}
 	// The variable wins even for a mode that holds no secret? TypeScript reads it first: yes.
 	cio, _, _ = cioOf(tripReader{t}, map[string]string{"K": "x"})
-	if got, _ := readSecret(context.Background(), cio, &name, noneMode); got == nil || *got != "x" {
+	if got, _ := readSecret(context.Background(), cio, &name, noneMode); !got.IsSet() || got.Reveal() != "x" {
 		t.Errorf("--secret-env is read before the mode is asked: %v", got)
 	}
 	for _, env := range []map[string]string{{}, {"K": ""}} {
@@ -124,7 +124,7 @@ func TestReadSecretOnATerminal(t *testing.T) {
 	cio, _, errOut := cioOf(tripReader{t}, nil)
 	cio.Terminal = term
 	got, err := readSecret(context.Background(), cio, nil, sharedSecretMode)
-	if err != nil || got == nil || *got != "typed" {
+	if err != nil || !got.IsSet() || got.Reveal() != "typed" {
 		t.Fatalf("%v %v", got, err)
 	}
 	if errOut.String() != "Secret: \n" {
@@ -132,14 +132,14 @@ func TestReadSecretOnATerminal(t *testing.T) {
 	}
 	term = &fakeTerminal{}
 	cio.Terminal = term
-	if got, _ := readSecret(context.Background(), cio, nil, sharedSecretMode); got != nil {
+	if got, _ := readSecret(context.Background(), cio, nil, sharedSecretMode); got.IsSet() {
 		t.Errorf("an empty line is no secret: %v", got)
 	}
 	// A mode without a secret never prompts.
 	term = &fakeTerminal{line: "x"}
 	cio, _, errOut = cioOf(tripReader{t}, nil)
 	cio.Terminal = term
-	if got, _ := readSecret(context.Background(), cio, nil, noneMode); got != nil || term.read != 0 || errOut.Len() != 0 {
+	if got, _ := readSecret(context.Background(), cio, nil, noneMode); got.IsSet() || term.read != 0 || errOut.Len() != 0 {
 		t.Errorf("none prompted: %v %d %q", got, term.read, errOut.String())
 	}
 }
@@ -148,7 +148,7 @@ func TestATerminalFailureIsNeverQuoted(t *testing.T) {
 	cio, out, errOut := cioOf(tripReader{t}, nil)
 	cio.Terminal = &fakeTerminal{line: "half-typed", err: errors.New("read /dev/tty: s3cret-leak")}
 	got, err := readSecret(context.Background(), cio, nil, sharedSecretMode)
-	if got != nil || err == nil {
+	if got.IsSet() || err == nil {
 		t.Fatalf("%v %v", got, err)
 	}
 	for _, text := range []string{err.Error(), out.String(), errOut.String()} {
@@ -172,7 +172,7 @@ func TestAnInterruptAbortsTheSecretReadWithANewline(t *testing.T) {
 		cio, _, errOut := cioOf(tripReader{t}, nil)
 		cio.Terminal = term
 		got, err := readSecret(context.Background(), cio, nil, sharedSecretMode)
-		if got != nil || !errors.As(err, &failed) || failed.Msg != "interrupted" {
+		if got.IsSet() || !errors.As(err, &failed) || failed.Msg != "interrupted" {
 			t.Errorf("%s: %v %v", name, got, err)
 		}
 		if errOut.String() != "Secret: \n" {
@@ -202,7 +202,7 @@ func TestAnInterruptAbortsTheSecretReadWithANewline(t *testing.T) {
 	cancel()
 	cio, _, _ = cioOf(tripReader{t}, nil)
 	cio.Terminal = &fakeTerminal{line: "late"}
-	if got, err := readSecret(ctx, cio, nil, sharedSecretMode); got != nil || err == nil {
+	if got, err := readSecret(ctx, cio, nil, sharedSecretMode); got.IsSet() || err == nil {
 		t.Errorf("a cancelled command used the secret: %v %v", got, err)
 	}
 }
@@ -242,7 +242,7 @@ func TestInvalidUTF8OnAPipeIsReplacedAsJavaScriptDoes(t *testing.T) {
 	} {
 		cio, _, _ := cioOf(strings.NewReader(in), nil)
 		got, err := readSecret(context.Background(), cio, nil, sharedSecretMode)
-		if err != nil || got == nil || *got != want {
+		if err != nil || !got.IsSet() || got.Reveal() != want {
 			t.Errorf("%q: got %v, want %q", in, got, want)
 		}
 	}

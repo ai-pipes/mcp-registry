@@ -29,11 +29,14 @@ func (f fakeCatalog) GetServerForUpstream(context.Context, string) (*catalog.Ser
 	return f.target, nil
 }
 
-func (f fakeCatalog) GetServerSecretFor(_ context.Context, target catalog.ServerCallTarget) (string, catalog.SecretLookup, error) {
+func (f fakeCatalog) GetServerSecretFor(_ context.Context, target catalog.ServerCallTarget) (kernel.Secret, catalog.SecretLookup, error) {
 	if f.asked != nil {
 		*f.asked = target
 	}
-	return f.secret, f.found, f.secErr
+	if f.found != catalog.SecretFound {
+		return kernel.Secret{}, f.found, f.secErr
+	}
+	return kernel.NewSecret(f.secret), f.found, f.secErr
 }
 
 func TestToolForMapsBusinessRefusalsToNotFoundAndKeepsUnexpectedErrors(t *testing.T) {
@@ -74,7 +77,7 @@ func TestServerForAndSecretPassThrough(t *testing.T) {
 	var asked catalog.ServerCallTarget
 	c = toolCatalog{api: fakeCatalog{secret: "", found: catalog.SecretFound, asked: &asked}}
 	secret, found, err := c.ServerSecret(context.Background(), *target)
-	if err != nil || found != catalog.SecretFound || secret != "" || asked != *target {
+	if err != nil || found != catalog.SecretFound || secret.Reveal() != "" || asked != *target {
 		t.Fatalf("an empty secret that is set stays set, for the target given: %q %v %v %+v", secret, found, err, asked)
 	}
 	moved := toolCatalog{api: fakeCatalog{found: catalog.SecretMoved}}
@@ -104,7 +107,7 @@ func TestConstantTimeSecrets(t *testing.T) {
 		{"", "x", false},
 		{"a longer secret value", "a", false},
 	} {
-		if got := c.Equal(tc.a, tc.b); got != tc.want {
+		if got := c.Equal(kernel.NewSecret(tc.a), kernel.NewSecret(tc.b)); got != tc.want {
 			t.Errorf("Equal(%q, %q) = %v", tc.a, tc.b, got)
 		}
 	}

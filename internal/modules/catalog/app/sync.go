@@ -175,7 +175,7 @@ func headersFor(ctx context.Context, deps Deps, server *domain.Server, startedBy
 		if credential.Failure != "" {
 			return nil, domain.FailureOfCredential(credential.Failure), nil
 		}
-		return domain.HeaderFor(server.Auth(), kernel.NewSecret(credential.Secret)), "", nil
+		return domain.HeaderFor(server.Auth(), credential.Secret), "", nil
 	default:
 		sealed := server.SealedSecret()
 		if sealed == nil {
