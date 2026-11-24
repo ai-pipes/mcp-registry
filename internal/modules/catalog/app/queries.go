@@ -57,21 +57,6 @@ func GetServer(ctx context.Context, deps Deps, p Principal, slug string) (Server
 	return ServerView{}, kernel.NewDomainError(domain.CodeNotFound, "server not found")
 }
 
-// GetServerSecret is the opened server secret, for the gateway when it builds the upstream
-// header; ok is false when there is none (unknown server or no secret). A secret no key opens is
-// an error.
-func GetServerSecret(ctx context.Context, deps Deps, slug string) (secret string, ok bool, err error) {
-	server, err := deps.Servers.FindBySlug(ctx, slug)
-	if err != nil || server == nil || server.SealedSecret() == nil {
-		return "", false, err
-	}
-	plain, err := deps.Box.Open(server.SealedSecret())
-	if err != nil {
-		return "", false, err
-	}
-	return plain, true, nil
-}
-
 // SecretLookup is what GetServerSecretFor found.
 type SecretLookup string
 

@@ -324,8 +324,8 @@ func (d *directory) Config(_ context.Context, slug string) (*app.ServerConfig, e
 	return nil, nil
 }
 
-func (*directory) ClientSecret(context.Context, string) (app.ClientSecret, error) {
-	return app.ClientSecret{}, nil
+func (*directory) ClientSecretFor(context.Context, app.ServerConfig) (app.ClientSecret, bool, error) {
+	return app.ClientSecret{}, false, nil
 }
 
 func (d *directory) remove(slug string) {

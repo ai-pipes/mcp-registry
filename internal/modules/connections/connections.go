@@ -142,14 +142,6 @@ func (s *Service) ResolveForSending(ctx context.Context, userID string, target S
 	return app.ResolveForSending(ctx, s.d, app.ResolveQuery{UserID: userID, ForceRefresh: forceRefresh}, app.ServerConfigOf(target))
 }
 
-// ResolveWithoutSending is the person's secret for a caller that sends it nowhere (it only asks
-// whether the person has one). It is the explicitly named path without the target's configuration;
-// every caller that sends the secret to a server uses ResolveForSending. The result must never
-// feed a header or be sent anywhere: nothing ties it to the configuration it would go to.
-func (s *Service) ResolveWithoutSending(ctx context.Context, q ResolveQuery) (CredentialResult, error) {
-	return app.ResolveWithoutSending(ctx, s.d, q)
-}
-
 // MarkExpired turns a ready connection expired because upstream rejected its credential (the
 // gateway decides when: a PAT at once, an OAuth token whose just-refreshed replacement was
 // rejected too). An unknown or already expired connection is left alone.

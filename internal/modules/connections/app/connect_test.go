@@ -432,7 +432,7 @@ func TestDisconnect(t *testing.T) {
 		if len(recs) != 1 || recs[0].Action != "connection.disconnect" || *recs[0].Target != "gitea" || len(recs[0].Meta) != 0 {
 			t.Fatalf("audit: %s", h.audit.text())
 		}
-		want := []string{"store.delete", "audit:connection.disconnect", "servers.config", "servers.client_secret", "servers.config", "oauth.revoke"}
+		want := []string{"store.delete", "audit:connection.disconnect", "servers.config", "servers.client_secret", "oauth.revoke"}
 		if got := h.j.all(); !slices.Equal(got, want) {
 			t.Fatalf("sequence:\n got %v\nwant %v", got, want)
 		}
@@ -588,9 +588,8 @@ func TestDisconnect(t *testing.T) {
 		}
 	})
 
-	t.Run("a server that vanishes or loses its OAuth between the two reads gets no revoke", func(t *testing.T) {
+	t.Run("a server that loses its OAuth between the reads gets no revoke", func(t *testing.T) {
 		for name, change := range map[string]func(g *fakeServer){
-			"disabled":        func(g *fakeServer) { g.disabled = true },
 			"no OAuth config": func(g *fakeServer) { g.oauth = nil },
 		} {
 			t.Run(name, func(t *testing.T) {
@@ -613,7 +612,28 @@ func TestDisconnect(t *testing.T) {
 		}
 	})
 
-	t.Run("the revoke uses the configuration of the second read", func(t *testing.T) {
+	// The secret read does not judge the status (the caller has its own rule): a server disabled
+	// after the configuration was read still gets the revoke at the address the token was issued
+	// for, which did not change.
+	t.Run("a server disabled between the reads still gets the revoke at the unchanged address", func(t *testing.T) {
+		h := newHarness(t)
+		h.withRevokeURL()
+		h.connect(alice, "gitea")
+		g := h.gitea()
+		h.dir.onSecret = func() {
+			h.dir.mu.Lock()
+			defer h.dir.mu.Unlock()
+			g.disabled = true
+		}
+		if err := disconnect(h, "gitea"); err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(h.oauth.revoked(), []string{"R1"}) || h.store.size() != 0 {
+			t.Fatalf("revoked %v, rows %d", h.oauth.revoked(), h.store.size())
+		}
+	})
+
+	t.Run("the revoke uses the configuration read first", func(t *testing.T) {
 		h := newHarness(t)
 		h.withRevokeURL()
 		h.connect(alice, "gitea")
@@ -622,13 +642,13 @@ func TestDisconnect(t *testing.T) {
 			h.dir.mu.Lock()
 			defer h.dir.mu.Unlock()
 			o := *g.oauth
-			o.Scopes = []string{"changed-between-reads"} // not fingerprinted: the revoke still goes out
+			o.Scopes = []string{"changed-between-reads"} // not a destination of the secret: the revoke still goes out, with the configuration read first
 			g.oauth = &o
 		}
 		if err := disconnect(h, "gitea"); err != nil {
 			t.Fatal(err)
 		}
-		if len(h.oauth.revokeConfigs) != 1 || !slices.Equal(h.oauth.revokeConfigs[0].Scopes, []string{"changed-between-reads"}) {
+		if len(h.oauth.revokeConfigs) != 1 || !slices.Equal(h.oauth.revokeConfigs[0].Scopes, []string{}) {
 			t.Fatalf("revoke configs %+v", h.oauth.revokeConfigs)
 		}
 	})

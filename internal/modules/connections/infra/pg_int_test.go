@@ -658,3 +658,113 @@ func TestPendingInsertPrunesWhatExpiredMoreThanAnHourAgo(t *testing.T) {
 		t.Fatalf("left: %v", states)
 	}
 }
+
+// keyBox is a secret box with one key, for the rotation tests: a sealed value names its key, so
+// a box opens only what it sealed.
+type keyBox byte
+
+func (b keyBox) Seal(plain string) ([]byte, error) {
+	return append([]byte{0xee, byte(b)}, plain...), nil
+}
+
+func (b keyBox) Open(sealed []byte) (string, error) {
+	if len(sealed) < 2 || sealed[0] != 0xee || sealed[1] != byte(b) {
+		return "", errors.New("keyBox: cannot open")
+	}
+	return string(sealed[2:]), nil
+}
+
+// A token renewal and `rotate-secrets-key` meet on the connection row's lock: whichever comes
+// second waits and judges the row the first one left, so neither overwrites the other's tokens
+// with older ones. Both orders of sealing are covered: the renewal sealed with the new key (the
+// documented procedure: the app restarted on the new key first) and with the old one.
+func TestKeyRotationWaitsForATokenRenewalHoldingTheRowLock(t *testing.T) {
+	oldBox, newBox := keyBox(1), keyBox(2)
+	for _, c := range []struct {
+		name        string
+		renewalWith keyBox
+		current     int
+		resealed    int
+	}{
+		{"renewal sealed with the new key: counted current, bytes are the renewal's", newBox, 1, 0},
+		{"renewal sealed with the old key: re-sealed to the new key, same tokens", oldBox, 0, 1},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			pool, s := setup(t)
+			ctx := ctxT(t)
+			seal := func(b keyBox, plain string) domain.Sealed {
+				out, err := b.Seal(plain)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return domain.Sealed(out)
+			}
+			exp := t0.Add(time.Hour)
+			save(t, s, domain.ConnectOAuth(domain.OAuthConnect{
+				UserID: userA, Server: "gitea", IssuedFor: fpOAuth, Now: t0,
+				Tokens: domain.SealedTokens{Access: seal(oldBox, "A-before"), Refresh: seal(oldBox, "R-before"), ExpiresAt: &exp},
+			}))
+
+			inside := make(chan struct{})
+			release := make(chan struct{})
+			renewed := make(chan error, 1)
+			var written domain.SealedTokens
+			go func() {
+				renewed <- s.Connections.WithLock(ctx, userA, "gitea", func(lctx context.Context, cur *domain.Connection) (*domain.Connection, error) {
+					close(inside)
+					select { // the provider call of the renewal; a failed test must not leave it holding the connection
+					case <-release:
+					case <-lctx.Done():
+						return nil, lctx.Err()
+					}
+					next := t0.Add(2 * time.Hour)
+					written = domain.SealedTokens{Access: seal(c.renewalWith, "A-renewed"), Refresh: seal(c.renewalWith, "R-renewed"), ExpiresAt: &next}
+					cur.Refreshed(written, t0.Add(time.Minute))
+					return cur, nil
+				})
+			}()
+			<-inside
+
+			type result struct {
+				sum app.ResealSummary
+				err error
+			}
+			rotated := make(chan result, 1)
+			go func() {
+				sum, err := app.ResealConnections(ctx, s.Connections, oldBox, newBox)
+				rotated <- result{sum, err}
+			}()
+			blockedBy(ctx, t, pool, 1)
+			select {
+			case r := <-rotated:
+				t.Fatalf("the rotation ran while the renewal held the lock: %+v", r)
+			default:
+			}
+			close(release)
+			if err := <-renewed; err != nil {
+				t.Fatal(err)
+			}
+			r := <-rotated
+			if r.err != nil || r.sum.Current != c.current || r.sum.Resealed != c.resealed || len(r.sum.Failed) != 0 {
+				t.Fatalf("summary %+v, err %v; want current %d resealed %d", r.sum, r.err, c.current, c.resealed)
+			}
+
+			var got *domain.Connection
+			if err := s.Connections.WithLock(ctx, userA, "gitea", func(_ context.Context, cur *domain.Connection) (*domain.Connection, error) {
+				got = cur
+				return nil, nil
+			}); err != nil || got == nil {
+				t.Fatalf("read back: %v %v", got, err)
+			}
+			if c.renewalWith == newBox && (!bytes.Equal(got.AccessToken(), written.Access) || !bytes.Equal(got.RefreshToken(), written.Refresh)) {
+				t.Fatal("the stored bytes are not the renewal's: the rotation overwrote them")
+			}
+			if a, err := newBox.Open(got.AccessToken()); err != nil || a != "A-renewed" {
+				t.Fatalf("access under the new key: %q %v", a, err)
+			}
+			if r, err := newBox.Open(got.RefreshToken()); err != nil || r != "R-renewed" {
+				t.Fatalf("refresh under the new key: %q %v", r, err)
+			}
+		})
+	}
+}

@@ -217,7 +217,16 @@ func TestCLIKeys(t *testing.T) {
 		patUp := fakes.StartUpstream(t, fakes.UpstreamOptions{Tools: fakes.Tools("echo"), RequireHeader: [2]string{"X-Token", "pat " + pat}})
 		shared, personal := harness.Unique("cli-rot-shared"), harness.Unique("cli-rot-pat")
 		cliOK(t, s, secret+"\n", "create-server", "--json", cliServerFile(t, s, sharedUp, shared, "shared_secret"), "--as", ownerSub)
-		cliOK(t, s, "", "create-server", "--json", cliServerFile(t, s, patUp, personal, "pat_user", fakes.WithHeader("X-Token", "pat {secret}")), "--as", ownerSub)
+		// A pat_user server has no connection yet, so its first sync fails: the reference exits 0,
+		// the decided create-server-sync-exit exits 1 (the server is created either way).
+		if s.Fixed(harness.DevCreateServerSyncExit) {
+			r := s.CLI(t, "", "create-server", "--json", cliServerFile(t, s, patUp, personal, "pat_user", fakes.WithHeader("X-Token", "pat {secret}")), "--as", ownerSub)
+			if problem := createServerSyncFailureProblem(r); problem != "" {
+				t.Fatalf("create-server of %s: %s: %v", personal, problem, r)
+			}
+		} else {
+			cliOK(t, s, "", "create-server", "--json", cliServerFile(t, s, patUp, personal, "pat_user", fakes.WithHeader("X-Token", "pat {secret}")), "--as", ownerSub)
+		}
 		if r := owner.Do(t, "PUT", "/api/connections/"+personal+"/pat", map[string]string{"token": pat}); r.Status != 204 {
 			t.Fatalf("PUT pat: %d %s", r.Status, r.Body)
 		}

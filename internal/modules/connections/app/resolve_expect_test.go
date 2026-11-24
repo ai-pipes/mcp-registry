@@ -236,7 +236,7 @@ func TestResolveRefusesWhenTheConfigurationChangedWhileTheClientSecretWasRead(t 
 		g.oauth = &o
 		g.clientSecret = "the-new-client-secret"
 	}
-	r, err := app.ResolveWithoutSending(ctx, h.d, app.ResolveQuery{UserID: "alice", Server: "gitea"})
+	r, err := h.resolveVia(ctx, h.d, app.ResolveQuery{UserID: "alice", Server: "gitea"})
 	wantFailure(t, r, err, app.FailureUnavailable)
 	after, _ := h.store.snap("alice", "gitea")
 	if !reflect.DeepEqual(before, after) || len(h.oauth.refreshed()) != 0 || len(h.audit.all()) != 0 {

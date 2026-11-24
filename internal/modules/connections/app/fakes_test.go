@@ -483,6 +483,8 @@ type fakeOAuth struct {
 	revokeCalls   []string
 	revokeSecrets []string
 	revokeConfigs []catalog.OAuthClientConfig
+	// refreshSecrets are the client secrets the provider's refresh calls carried.
+	refreshSecrets []exchangeSecret
 
 	// refreshFn, when set, answers refresh calls; otherwise `next` does.
 	refreshFn func(c context.Context, refreshToken string) (app.TokenSet, error)
@@ -495,6 +497,11 @@ type fakeOAuth struct {
 	// entered receives a value when a refresh call starts, gate blocks it until closed.
 	entered chan string
 	gate    chan struct{}
+}
+
+type exchangeSecret struct {
+	value string
+	set   bool
 }
 
 type exchangeCall struct {
@@ -531,11 +538,13 @@ func (o *fakeOAuth) ExchangeCode(c context.Context, _ catalog.OAuthClientConfig,
 	return out, nil
 }
 
-func (o *fakeOAuth) Refresh(c context.Context, _ catalog.OAuthClientConfig, _ app.ClientSecret, refreshToken string) (app.TokenSet, error) {
+func (o *fakeOAuth) Refresh(c context.Context, _ catalog.OAuthClientConfig, secret app.ClientSecret, refreshToken string) (app.TokenSet, error) {
 	// The provider call is the one thing allowed under the lock: not a violation.
 	o.j.add("oauth.refresh")
+	sv, set := secret.Value()
 	o.mu.Lock()
 	o.refreshCalls = append(o.refreshCalls, refreshToken)
+	o.refreshSecrets = append(o.refreshSecrets, exchangeSecret{sv, set})
 	fn, next, entered, gate := o.refreshFn, o.next, o.entered, o.gate
 	o.mu.Unlock()
 	if entered != nil {
@@ -604,12 +613,15 @@ type fakeDirectory struct {
 	servers []*fakeServer
 	// onConfig runs at the start of every Config call.
 	onConfig func()
-	// onSecret runs at the start of every ClientSecret call: an admin changing the server between
+	// onSecret runs at the start of every ClientSecretFor call: an admin changing the server between
 	// the two reads.
-	onSecret  func()
-	secretErr error
-	listErr   error
-	configErr error
+	onSecret func()
+	// afterSecret runs after the secret was read, before the call returns: an admin changing the
+	// server after the read.
+	afterSecret func()
+	secretErr   error
+	listErr     error
+	configErr   error
 }
 
 func (d *fakeDirectory) find(slug string) *fakeServer {
@@ -668,20 +680,65 @@ func (d *fakeDirectory) Config(c context.Context, slug string) (*app.ServerConfi
 	return &cfg, nil
 }
 
-func (d *fakeDirectory) ClientSecret(c context.Context, slug string) (app.ClientSecret, error) {
+// ClientSecretFor is the catalog's GetServerSecretFor as the connections module uses it: one read
+// of the server (any status) judges the destination and returns the secret.
+func (d *fakeDirectory) ClientSecretFor(c context.Context, cfg app.ServerConfig) (app.ClientSecret, bool, error) {
 	d.v.check(c, "servers.client_secret")
 	d.j.add("servers.client_secret")
 	if d.onSecret != nil {
 		d.onSecret()
 	}
+	if d.afterSecret != nil {
+		defer d.afterSecret()
+	}
 	if d.secretErr != nil {
-		return app.ClientSecret{}, d.secretErr
+		return app.ClientSecret{}, false, d.secretErr
 	}
-	s := d.find(slug)
-	if s == nil || !s.hasSecret {
-		return app.ClientSecret{}, nil
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	var s *fakeServer
+	for _, x := range d.servers {
+		if x.slug == cfg.Slug {
+			s = x
+		}
 	}
-	return app.NewClientSecret(s.clientSecret), nil
+	if s == nil || destinationOf(s.kind, s.oauth) != destinationOf(cfg.AuthKind, cfg.OAuth) {
+		return app.ClientSecret{}, true, nil
+	}
+	if !s.hasSecret {
+		return app.ClientSecret{}, false, nil
+	}
+	return app.NewClientSecret(s.clientSecret), false, nil
+}
+
+// destinationOf is where a client secret is sent: the auth kind, and for OAuth the token URL, the
+// revoke URL and the client ID (catalog SecretGoesTo).
+func destinationOf(kind catalog.AuthKind, o *catalog.OAuthClientConfig) string {
+	out := string(kind)
+	if o != nil {
+		rev := "<none>"
+		if o.RevokeURL != nil {
+			rev = *o.RevokeURL
+		}
+		out += "|" + o.TokenURL + "|" + rev + "|" + o.ClientID
+	}
+	return out
+}
+
+// edit is an admin's save: the secret is cleared in the same write when its destination changes.
+func (d *fakeDirectory) edit(slug string, change func(*fakeServer)) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for _, s := range d.servers {
+		if s.slug != slug {
+			continue
+		}
+		before := destinationOf(s.kind, s.oauth)
+		change(s)
+		if destinationOf(s.kind, s.oauth) != before {
+			s.hasSecret, s.clientSecret = false, ""
+		}
+	}
 }
 
 var giteaBase = "https://git.example.com/login/oauth/"
@@ -827,12 +884,22 @@ func failureOf(r app.CredentialResult, err error) string {
 	return "ok"
 }
 
+// resolveVia resolves for sending to the server as the catalog configures it now (an unknown or
+// disabled server is named by its slug alone: nothing is read for it).
+func (h *harness) resolveVia(c context.Context, d app.Deps, q app.ResolveQuery) (app.CredentialResult, error) {
+	to := app.ServerConfig{Slug: q.Server}
+	if s := h.dir.find(q.Server); s != nil {
+		to = h.dir.configOf(s)
+	}
+	return app.ResolveForSending(c, d, q, to)
+}
+
 func (h *harness) resolve(user, server string) (app.CredentialResult, error) {
-	return app.ResolveWithoutSending(ctx, h.d, app.ResolveQuery{UserID: user, Server: server})
+	return h.resolveVia(ctx, h.d, app.ResolveQuery{UserID: user, Server: server})
 }
 
 func (h *harness) resolveForced(user, server string) (app.CredentialResult, error) {
-	return app.ResolveWithoutSending(ctx, h.d, app.ResolveQuery{UserID: user, Server: server, ForceRefresh: true})
+	return h.resolveVia(ctx, h.d, app.ResolveQuery{UserID: user, Server: server, ForceRefresh: true})
 }
 
 func (h *harness) noLockViolations() {

@@ -75,8 +75,15 @@ func (s Secret) MarshalText() ([]byte, error) { return []byte(s.text()), nil }
 // empty.
 type SecretBytes struct {
 	_ [0]func() // makes the type not comparable (see Secret)
-	v *[]byte
+	v *bytesBox
 }
+
+// bytesBox holds only a pointer to the bytes. A verb that does not suit a pointer (%s, %q, %d)
+// makes fmt print "%!s(*T=" and then the dereferenced pointee when it is a slice, array, struct
+// or map, so a pointer straight to the []byte would be written raw in an unexported field of a
+// holder. The pointee here is a struct whose only field is a pointer, which fmt writes as an
+// address.
+type bytesBox struct{ p *[]byte }
 
 // NewSecretBytes wraps a copy of b, so later changes to b do not reach the secret. Nil or empty is
 // "not set": the result is the zero SecretBytes.
@@ -85,7 +92,7 @@ func NewSecretBytes(b []byte) SecretBytes {
 		return SecretBytes{}
 	}
 	c := append([]byte(nil), b...)
-	return SecretBytes{v: &c}
+	return SecretBytes{v: &bytesBox{p: &c}}
 }
 
 // IsSet reports whether the secret has a value.
@@ -97,7 +104,7 @@ func (s SecretBytes) Reveal() []byte {
 	if s.v == nil {
 		return nil
 	}
-	return append([]byte(nil), *s.v...)
+	return append([]byte(nil), *s.v.p...)
 }
 
 func (s SecretBytes) text() string {

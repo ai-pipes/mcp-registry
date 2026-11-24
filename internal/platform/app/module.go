@@ -154,7 +154,8 @@ func modules(rt Runtime) []Module {
 	con := newConnectionsWiring(rt, id, cat)
 	srch := newSearchWiring(rt, cat)
 	gw := newGatewayWiring(rt, id, cat, con, srch)
-	return []Module{id.module(), platformModule(rt, id), cat.module(), srch.module(), con.module(), gw.module()}
+	keys := newKeysWiring(rt, cat, con)
+	return []Module{id.module(), platformModule(rt, id), cat.module(), srch.module(), con.module(), gw.module(), keys.module()}
 }
 
 // platformModule is the platform's own REST routes, guarded with identity's session checks:

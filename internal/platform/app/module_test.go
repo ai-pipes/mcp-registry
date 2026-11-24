@@ -24,9 +24,9 @@ func say(s string) http.Handler {
 
 // Building the modules makes no request (the CLI builds them for every command): a Runtime
 // without a pool is enough.
-func TestTheDefaultModuleListIsIdentityThenThePlatformRoutesThenTheCatalogThenSearchThenConnectionsThenTheGateway(t *testing.T) {
+func TestTheDefaultModuleListIsIdentityThenThePlatformRoutesThenTheCatalogThenSearchThenConnectionsThenTheGatewayThenTheKeyCommands(t *testing.T) {
 	got := modules(bareRuntime(t))
-	if len(got) != 6 {
+	if len(got) != 7 {
 		t.Fatalf("modules() = %d entries", len(got))
 	}
 	paths := func(m Module) (out []string) {
@@ -59,6 +59,11 @@ func TestTheDefaultModuleListIsIdentityThenThePlatformRoutesThenTheCatalogThenSe
 	if g := got[5]; len(g.Jobs) != 1 || g.Jobs[0].Name != "gateway-retention" || g.Jobs[0].Every != 24*time.Hour ||
 		len(g.Handlers) != 0 || len(g.Emits) != 0 || len(g.Closers) != 0 || len(g.Commands) != 0 {
 		t.Errorf("gateway module: %+v", g)
+	}
+	// The key commands are the last module: no routes, jobs or handlers, only the two commands.
+	if k := got[6]; len(k.Routes) != 0 || len(k.Jobs) != 0 || len(k.Handlers) != 0 || len(k.Commands) != 2 ||
+		k.Commands[0].Name != "rotate-secrets-key" || k.Commands[1].Name != "reset-key-check" {
+		t.Errorf("key module: %+v", k)
 	}
 	if len(got[0].Jobs) != 1 || got[0].Jobs[0].Every != 24*time.Hour || got[0].FirstStart == nil {
 		t.Errorf("identity job or first start: %+v", got[0])

@@ -84,13 +84,6 @@ func TestServiceAnswersWhatOtherModulesAsk(t *testing.T) {
 	if target, err := svc.GetServerForUpstream(ctx, "beta"); err != nil || target != nil {
 		t.Fatalf("a disabled server has no call target: %+v %v", target, err)
 	}
-	secret, ok, err := svc.GetServerSecret(ctx, "alpha")
-	if err != nil || !ok || secret != "key" {
-		t.Fatalf("GetServerSecret: %q %v %v", secret, ok, err)
-	}
-	if _, ok, err := svc.GetServerSecret(ctx, "beta"); ok || err != nil {
-		t.Fatalf("no secret: %v %v", ok, err)
-	}
 	if secret, found, err := svc.GetServerSecretFor(ctx, *target); err != nil || found != catalog.SecretFound || secret != "key" {
 		t.Fatalf("GetServerSecretFor: %q %v %v", secret, found, err)
 	}

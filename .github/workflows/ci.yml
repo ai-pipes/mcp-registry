@@ -181,8 +181,8 @@ jobs:
           retention-days: 7
 
   # The Go server (Dockerfile target go) under the compat suite: the scenarios of the milestone pattern
-  # (COMPAT_GO_TESTS and COMPAT_GO_SKIP in the Makefile: since milestone 6 the whole suite but TestCLIKeys and
-  # the one key-rotation subtest, milestone 7; the upgrade scenario is a restart test here, its TypeScript-to-Go
+  # (COMPAT_GO_TESTS in the Makefile: since milestone 7 the whole suite, nothing is skipped
+  # (COMPAT_GO_SKIP is empty); the upgrade scenario is a restart test here, its TypeScript-to-Go
   # leg is milestone 8). The reference image is built too: the scenarios start from it or
   # compare with it. On both architectures, each building both images natively on its own runner:
   # TestSearchStoredVectors compares the stored vectors with the reference's on the same machine, and

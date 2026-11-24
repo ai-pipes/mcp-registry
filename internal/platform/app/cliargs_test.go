@@ -100,7 +100,7 @@ func TestParseArgsCountsPositionalsBeforeRequiredOptions(t *testing.T) {
 	}
 }
 
-func TestUsageNamesEveryCommandOfTheReferenceBeforeTheirMilestones(t *testing.T) {
+func TestUsageNamesEveryCommandOfTheReference(t *testing.T) {
 	got := usageFor(map[string]CLICommand{
 		"create-user":  {Name: "create-user", Usage: "  create-user --x\n"},
 		"create-token": {Name: "create-token", Usage: "  create-token --x\n"},
@@ -110,6 +110,9 @@ func TestUsageNamesEveryCommandOfTheReferenceBeforeTheirMilestones(t *testing.T)
 		"sync":          {Name: "sync", Usage: "  sync --x\n"},
 		// Registered since milestone 4.
 		"reindex": {Name: "reindex", Usage: "  reindex\n"},
+		// Registered since milestone 7.
+		"rotate-secrets-key": {Name: "rotate-secrets-key", Usage: "  rotate-secrets-key\n"},
+		"reset-key-check":    {Name: "reset-key-check", Usage: "  reset-key-check --yes\n"},
 	})
 	for _, name := range usageOrder {
 		if !strings.Contains(got, name) {
