@@ -30,10 +30,13 @@ COPY apps/server/package.json apps/server/
 COPY packages/contracts/package.json packages/contracts/
 RUN pnpm install --frozen-lockfile --prod --ignore-scripts
 
-# --- model: Xenova/multilingual-e5-small (q8), pinned revision, checked by SHA-256 -----------
-FROM node:22-slim@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee AS model
-COPY scripts/download-model.mjs /tmp/download-model.mjs
-RUN node /tmp/download-model.mjs /app/models
+# --- model: the embedding model (q8), pinned revision, every file checked by SHA-256. No Node: the
+#     script and the pins are the ones `make native-model` uses (internal/modules/search/infra/onnx/
+#     native: fetch-model.sh, pins.env); there is no second copy of a URL or a hash in this file.
+#     The golang image (pinned by digest below, the one go-native and go-build use) has curl. -----
+FROM golang:1.27-bookworm@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea AS model
+COPY internal/modules/search/infra/onnx/native/fetch-model.sh internal/modules/search/infra/onnx/native/pins.env /native-src/
+RUN sh /native-src/fetch-model.sh /app/models
 
 # --- smoke-upstream: the test-only upstream MCP server of scripts/smoke.sh -------------------
 #     (apps/server/test/smoke/upstream.ts). Built only with `--target smoke-upstream` by

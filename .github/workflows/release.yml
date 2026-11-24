@@ -35,7 +35,7 @@ on:
       - VERSION
       - apps/server/package.json
       - CHANGELOG.md
-      - scripts/download-model.mjs
+      - internal/modules/search/infra/onnx/native/**
 
 permissions:
   contents: read

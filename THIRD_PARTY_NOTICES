@@ -132,4 +132,4 @@ The MIT licence used below (each entry names its own copyright line; the wording
 
 4. Model Xenova/multilingual-e5-small (ONNX, q8), a conversion of intfloat/multilingual-e5-small
    - MIT. Files under /app/models, downloaded at build time at a pinned revision and checked by
-   SHA-256 (scripts/download-model.mjs). Source: https://huggingface.co/Xenova/multilingual-e5-small
+   SHA-256 (internal/modules/search/infra/onnx/native/fetch-model.sh). Source: https://huggingface.co/Xenova/multilingual-e5-small

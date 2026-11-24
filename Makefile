@@ -257,10 +257,11 @@ native-libs:
 	@test -n "$(ORT_FILE_$(NATIVE_KEY))" || { echo "native-libs: no pinned libraries for $(NATIVE_PLATFORM)"; exit 1; }
 	sh internal/modules/search/infra/onnx/native/fetch.sh $(NATIVE_PLATFORM) $(NATIVE_DIR)
 
-# The model and tokenizer the TypeScript server uses (revision and SHA-256 pinned in the script),
-# in the layout <root>/Xenova/multilingual-e5-small/. Needs node, like VERSION above.
+# The model and tokenizer both servers use (revision and SHA-256 pinned in pins.env), in the layout
+# <root>/<MODEL_NAME>/, fetched by fetch-model.sh (curl and sha256sum, no Node; nothing downloaded
+# is executed). The Dockerfile stage model runs the same script.
 native-model:
-	node scripts/download-model.mjs $(NATIVE_ROOT)/models
+	sh internal/modules/search/infra/onnx/native/fetch-model.sh $(NATIVE_ROOT)/models
 
 go-vet-onnx: native-libs
 	$(ONNX_TEST_ENV) go vet -tags onnx $(ONNX_PKG)

@@ -12,7 +12,7 @@
 //     as the query-side reference for the Go embedder's unit tests of a later milestone.
 //
 // <model directory> holds Xenova/multilingual-e5-small (the image's /app/models, or one fetched by
-// scripts/download-model.mjs).
+// `make native-model`).
 import { readFileSync, writeFileSync } from 'node:fs';
 const [,, tfPath, modelDir, repo, out] = process.argv;
 const { env, pipeline } = await import(tfPath);
