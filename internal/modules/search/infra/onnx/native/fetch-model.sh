@@ -37,7 +37,7 @@ while :; do
 		rm -f "$target" "$target.partial"
 		url="https://huggingface.co/$MODEL_NAME/resolve/$MODEL_REVISION/$file"
 		echo "native-model: downloading $url"
-		curl -fsSL --proto '=https' --proto-redir '=https' --retry 3 --connect-timeout 20 --max-time 600 -o "$target.partial" "$url" ||
+		curl -fsSL --proto '=https' --proto-redir '=https' --retry 3 --retry-all-errors --connect-timeout 20 --max-time 600 -o "$target.partial" "$url" ||
 			{ rm -f "$target.partial"; fail "download of $url failed"; }
 		got=$(sha256 "$target.partial")
 		if [ "$got" != "$want" ]; then

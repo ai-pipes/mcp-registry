@@ -2,7 +2,12 @@ GOLANGCI_LINT := github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0
 GO_ARCH_LINT := github.com/fe3dback/go-arch-lint@v1.19.2
 GOFUMPT := mvdan.cc/gofumpt@v0.12.0
 # The version of the gateway: the root VERSION file, the only source (no Node needed).
-VERSION := $(strip $(shell cat VERSION))
+VERSION := $(strip $(shell cat VERSION 2>/dev/null))
+
+# One guard for every target that stamps the version into a binary or an image.
+.PHONY: check-version
+check-version:
+	@echo '$(VERSION)' | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$$' || { echo "check-version: VERSION must hold MAJOR.MINOR.PATCH, got '$(VERSION)'"; exit 1; }
 
 .PHONY: native-libs native-model go-test-onnx go-test-onnx-parity go-vet-onnx go-lint-onnx go-verify-onnx compat compat-selfcheck compat-schemas compat-reference print-reference-image compat-image-ts compat-image-go compat-go e2e-flows e2e-flows-go go-lint go-lint-new go-fmt-check go-arch-lint go-verify go-test-int go-build print-go-arch-lint print-golangci-lint
 
@@ -90,8 +95,7 @@ compat-image-ts:
 # untouched.
 PLATFORM :=
 GO_IMAGE := mcp-registry:compat-go$(if $(PLATFORM),-$(subst /,-,$(PLATFORM)))
-compat-image-go:
-	@test -n "$(VERSION)" || { echo "compat-image-go: the version read from VERSION is empty"; exit 1; }
+compat-image-go: check-version
 	docker build $(if $(PLATFORM),--platform $(PLATFORM)) --target go -t $(GO_IMAGE) .
 	@got="$$(docker run --rm $(if $(PLATFORM),--platform $(PLATFORM)) $(GO_IMAGE) mcp-registry --version)"; \
 	if [ "$$got" != "$(VERSION)" ]; then echo "compat-image-go: the image reports version '$$got', VERSION says '$(VERSION)'"; exit 1; fi
@@ -230,7 +234,7 @@ e2e-flows-go:
 compat-selfcheck: compat-reference
 	go test -tags "compat selfcheck" -count=1 -timeout 90m -v ./compat/selfcheck/
 
-go-build:
+go-build: check-version
 	go build -ldflags "-X main.version=$(VERSION)" -o bin/mcp-registry ./cmd/mcp-registry
 
 # --- The local embedder (build tag onnx) ---------------------------------------------------------

@@ -33,8 +33,9 @@ RUN pnpm install --frozen-lockfile --prod --ignore-scripts
 # --- model: the embedding model (q8), pinned revision, every file checked by SHA-256. No Node: the
 #     script and the pins are the ones `make native-model` uses (internal/modules/search/infra/onnx/
 #     native: fetch-model.sh, pins.env); there is no second copy of a URL or a hash in this file.
-#     The golang image (pinned by digest below, the one go-native and go-build use) has curl. -----
-FROM golang:1.27-bookworm@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea AS model
+#     The golang image (pinned by digest below, the one go-native and go-build use) has curl. The
+#     files do not depend on the architecture, so the stage runs on the build platform (no emulation). --
+FROM --platform=$BUILDPLATFORM golang:1.27-bookworm@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea AS model
 COPY internal/modules/search/infra/onnx/native/fetch-model.sh internal/modules/search/infra/onnx/native/pins.env /native-src/
 RUN sh /native-src/fetch-model.sh /app/models
 
@@ -71,9 +72,12 @@ COPY cmd cmd
 COPY internal internal
 # The migrations are embedded from the TypeScript server's folder (apps/server/migrations/embed.go).
 COPY apps/server/migrations apps/server/migrations
-# The version is the root VERSION file, read here: an image cannot report `dev`.
+# The version is the root VERSION file, read here: an image cannot report `dev`, and an empty or
+# malformed file fails the build.
 COPY VERSION VERSION
-RUN CGO_ENABLED=1 CGO_LDFLAGS="-L/native" go build -tags onnx -trimpath -ldflags "-s -w -X main.version=$(cat VERSION)" -o /out/mcp-registry ./cmd/mcp-registry
+RUN v="$(tr -d '[:space:]' < VERSION)" \
+    && { echo "$v" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || { echo "VERSION must hold MAJOR.MINOR.PATCH, got '$v'" >&2; exit 1; }; } \
+    && CGO_ENABLED=1 CGO_LDFLAGS="-L/native" go build -tags onnx -trimpath -ldflags "-s -w -X main.version=$v" -o /out/mcp-registry ./cmd/mcp-registry
 
 # --- go: the Go image. No ENTRYPOINT (the compat suite runs the CLI in the same image by replacing
 #     the command), no HEALTHCHECK yet (the TypeScript one runs node). The binary is dynamically
