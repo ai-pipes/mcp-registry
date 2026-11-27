@@ -20,7 +20,7 @@
 #   modules-via-index       another module is imported only by its root package; a module's http
 #                           layer may also import its OWN root (the session guards, the principal),
 #                           which does not make a cycle: a root never imports its http or infra
-#   migrations-only-platform  apps/server/migrations (the embedded SQL files) is imported only by
+#   migrations-only-platform  migrations (the embedded SQL files) is imported only by
 #                           the composition (platform) and the test-support package pgtest
 #   platform-leaves         the leaves platform-{httpx,outbox,logging,db} (internal/platform/...) are
 #                           what a module's http and infra layers may import from platform; domain
@@ -120,10 +120,11 @@ components:
     in: platform/migrate/**
   platform-pgtest:
     in: platform/pgtest/**
-  # The embedded SQL files live with the TypeScript server's migrations (one source of truth);
-  # only platform (internal/platform/migrate's caller, the composition root) and pgtest import them.
+  # The embedded SQL files (the root package migrations, byte for byte the files the 1.x releases
+  # applied); only platform (internal/platform/migrate's caller, the composition root) and pgtest
+  # import them.
   migrations:
-    in: ../apps/server/migrations
+    in: ../migrations
   identity-root:
     in: modules/identity
   identity-domain:

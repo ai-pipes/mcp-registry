@@ -9,13 +9,13 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/ai-pipes/mcp-registry/apps/server/migrations"
 	"github.com/ai-pipes/mcp-registry/internal/kernel"
 	"github.com/ai-pipes/mcp-registry/internal/platform/config"
 	"github.com/ai-pipes/mcp-registry/internal/platform/crypto"
 	"github.com/ai-pipes/mcp-registry/internal/platform/db"
 	"github.com/ai-pipes/mcp-registry/internal/platform/logging"
 	"github.com/ai-pipes/mcp-registry/internal/platform/migrate"
+	"github.com/ai-pipes/mcp-registry/migrations"
 )
 
 // usageOrder is the fixed order of the commands in the usage text (the order of USAGE in

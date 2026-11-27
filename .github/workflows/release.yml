@@ -42,6 +42,7 @@ on:
       - go.sum
       - cmd/**
       - internal/**
+      - migrations/**
       - third_party/**
       - compat/cmd/**
       - LICENSE

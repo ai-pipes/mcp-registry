@@ -3,7 +3,7 @@ import { PostgreSqlContainer } from '@testcontainers/postgresql';
 import { createDb, type Sql } from '../src/platform/db.ts';
 import { migrate } from '../src/platform/migrate.ts';
 
-export const migrationsDir = fileURLToPath(new URL('../migrations', import.meta.url));
+export const migrationsDir = fileURLToPath(new URL('../../../migrations', import.meta.url));
 
 export async function startPg(): Promise<{ sql: Sql; url: string; stop(): Promise<void> }> {
   const container = await new PostgreSqlContainer('pgvector/pgvector:pg17').start();

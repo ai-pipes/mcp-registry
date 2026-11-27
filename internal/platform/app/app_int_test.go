@@ -21,11 +21,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ai-pipes/mcp-registry/apps/server/migrations"
 	"github.com/ai-pipes/mcp-registry/internal/platform/config"
 	"github.com/ai-pipes/mcp-registry/internal/platform/httpx"
 	"github.com/ai-pipes/mcp-registry/internal/platform/logging"
 	"github.com/ai-pipes/mcp-registry/internal/platform/pgtest"
+	"github.com/ai-pipes/mcp-registry/migrations"
 	"github.com/jackc/pgx/v5"
 )
 

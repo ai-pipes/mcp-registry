@@ -66,7 +66,7 @@ func skeleton(t *testing.T, dst string) {
 	t.Helper()
 	internal := filepath.Join(repoRoot, "internal")
 	// The migrations package sits outside internal/ but is a component of its own.
-	writeFile(t, filepath.Join(dst, "apps", "server", "migrations", "doc.go"), []byte("package migrations\n"))
+	writeFile(t, filepath.Join(dst, "migrations", "doc.go"), []byte("package migrations\n"))
 	err := filepath.WalkDir(internal, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -153,7 +153,7 @@ var archFixtures = []struct{ rule, fixture, component, badImport string }{
 	{"deps-only-in-infra (JSON Schema library)", "deps-only-in-infra-jsonschema", "catalog-app", "github.com/santhosh-tekuri/jsonschema/v6"},
 	{"deps-only-in-infra (JSON Schema library in another module's infra)", "jsonschema-other-infra", "catalog-infra", "github.com/santhosh-tekuri/jsonschema/v6"},
 	{"modules-via-index", "modules-via-index", "gateway-infra", modPath + "modules/catalog/domain"},
-	{"migrations-only-platform", "migrations-only-platform", "catalog-infra", "github.com/ai-pipes/mcp-registry/apps/server/migrations"},
+	{"migrations-only-platform", "migrations-only-platform", "catalog-infra", "github.com/ai-pipes/mcp-registry/migrations"},
 	// platform-leaves: modules reach platform only through the leaves, and only from http and infra.
 	{"platform-leaves (app imports a leaf)", "app-imports-leaf", "catalog-app", modPath + "platform/logging"},
 	{"platform-leaves (domain imports a leaf)", "domain-imports-leaf", "catalog-domain", modPath + "platform/db"},

@@ -1,5 +1,5 @@
-// Package migrate applies the versioned SQL files embedded from apps/server/migrations, the same
-// files and the same bookkeeping (platform.schema_migrations) as the TypeScript server.
+// Package migrate applies the versioned SQL files embedded by the root package migrations, the same
+// files and the same bookkeeping (platform.schema_migrations) as the 1.x (TypeScript) releases.
 package migrate
 
 import (

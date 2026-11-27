@@ -48,8 +48,8 @@ RUN go mod download
 COPY --from=go-native /native/libtokenizers.a /native/libtokenizers.a
 COPY cmd cmd
 COPY internal internal
-# The migrations are embedded from the TypeScript server's folder (apps/server/migrations/embed.go).
-COPY apps/server/migrations apps/server/migrations
+# The migrations (embedded by migrations/embed.go).
+COPY migrations migrations
 # The version is the root VERSION file, read here: an image cannot report `dev`, and an empty or
 # malformed file fails the build.
 COPY VERSION VERSION

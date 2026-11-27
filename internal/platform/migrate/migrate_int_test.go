@@ -13,10 +13,10 @@ import (
 	"testing/fstest"
 	"time"
 
-	"github.com/ai-pipes/mcp-registry/apps/server/migrations"
 	"github.com/ai-pipes/mcp-registry/internal/platform/db"
 	"github.com/ai-pipes/mcp-registry/internal/platform/migrate"
 	"github.com/ai-pipes/mcp-registry/internal/platform/pgtest"
+	"github.com/ai-pipes/mcp-registry/migrations"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
