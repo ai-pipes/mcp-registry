@@ -13,10 +13,10 @@ const { alias } = await extractWebpackResolveConfig('./.dependency-cruiser.resol
 
 const FIXTURES = 'apps/web/test/architecture/fixtures';
 
-async function violationsIn(dir: string) {
+async function violationsIn(dir: string, baseDir?: string) {
   const result = await cruise(
     [dir],
-    { ruleSet, validate: true, tsPreCompilationDeps: true },
+    { ruleSet, validate: true, tsPreCompilationDeps: true, ...(baseDir ? { baseDir } : {}) },
     { alias },
   );
   if (typeof result.output === 'string') throw new Error('unexpected string output');
@@ -62,7 +62,28 @@ const BREAKS: {
   },
 ];
 
+/**
+ * `web-only-web-and-contracts` anchors on repository-relative paths (`^apps/web/src`), so its
+ * fixtures are cruised with their own directory as the base: inside, `apps/web/src/a.ts` is the web
+ * app and `e2e/helper.ts` is outside it.
+ */
+async function reachViolations(fixture: string) {
+  const dir = `${FIXTURES}/${fixture}`;
+  const found = await violationsIn('.', dir);
+  return found.filter((v) => v.rule.name === 'web-only-web-and-contracts');
+}
+
 describe('architecture rules', () => {
+  it('web-only-web-and-contracts rejects the web app importing a file outside it', async () => {
+    const found = await reachViolations('web-reach');
+    expect(found).toHaveLength(1);
+    expect(found[0]).toMatchObject({ from: 'apps/web/src/a.ts', to: 'e2e/helper.ts' });
+  });
+
+  it('web-only-web-and-contracts accepts the web app, the contracts and node_modules', async () => {
+    expect(await reachViolations('web-reach-ok')).toEqual([]);
+  });
+
   it.each(BREAKS)('$rule rejects $title', async ({ rule, fixture, from, to }) => {
     const found = await ruleViolations(fixture, rule);
     expect(found).toHaveLength(1);
@@ -73,7 +94,7 @@ describe('architecture rules', () => {
   });
 
   it('every rule of .dependency-cruiser.cjs has at least one failing fixture', () => {
-    const covered = new Set(BREAKS.map((b) => b.rule));
+    const covered = new Set([...BREAKS.map((b) => b.rule), 'web-only-web-and-contracts']);
     const rules = (ruleSet.forbidden ?? []).flatMap((r) => (r.name === undefined ? [] : [r.name]));
     expect(rules.filter((name) => !covered.has(name))).toEqual([]);
   });

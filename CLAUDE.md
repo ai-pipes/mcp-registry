@@ -28,7 +28,7 @@ The rules are machine-checked by `make go-verify` (`make go-arch-lint`, `golangc
 - **Coverage.** `make go-cover`: `domain` and `app` of every module at least 90 % of statements, per package, from the unit tests alone (`internal/archtest/covergate.go`, `TestCoverageThresholdIsNinety`).
 - Business rules live in `domain`, not in use cases: a use case only orchestrates ports and the domain.
 
-The web UI and the contracts have their own rules (`pnpm arch`, dependency-cruiser, `.dependency-cruiser.cjs`): `no-radix`, `api-no-ui`, `no-circular`, each with a failing fixture in `apps/web/test/architecture/fixtures` (`apps/web/test/architecture.test.ts`, test project `arch`).
+The web UI and the contracts have their own rules (`pnpm arch`, dependency-cruiser, `.dependency-cruiser.cjs`): `no-radix`, `api-no-ui`, `web-only-web-and-contracts` (`apps/web/src` imports only `apps/web`, `packages/contracts` and npm packages: not `e2e/`, `scripts/`, `compat/` or root files), `no-circular`, each with a failing fixture in `apps/web/test/architecture/fixtures` (`apps/web/test/architecture.test.ts`, test project `arch`).
 
 Layout: `cmd/mcp-registry`, `internal/{kernel,platform,modules/{identity,catalog,connections,search,gateway}}`, `migrations/`, `compat/` (the compatibility suite, its fakes, fixtures, goldens and schemas), `tools/notices`, `third_party/` (generated licence texts), `apps/web` (SPA), `packages/contracts` (zod schemas of the REST API; `make compat-schemas` exports them to `compat/schemas` for the suite), `e2e/` (Playwright: `csp.spec.ts` and the browser flows).
 

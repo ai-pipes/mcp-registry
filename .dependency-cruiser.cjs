@@ -24,6 +24,17 @@ module.exports = {
       to: { path: '(?:^|/)apps/web/src/components/' },
     },
     {
+      name: 'web-only-web-and-contracts',
+      comment:
+        'the web app (apps/web/src) imports only itself, the contracts package (packages/contracts, ' +
+        'resolved through the workspace symlink to its real path) and npm packages: not e2e/, ' +
+        'scripts/, compat/, the root config or anything else in the repository. Paths are relative ' +
+        'to the repository root.',
+      severity: 'error',
+      from: { path: '^apps/web/src/' },
+      to: { pathNot: '^(?:apps/web|packages/contracts)/|(?:^|/)node_modules/' },
+    },
+    {
       name: 'no-circular',
       comment: 'circular dependencies are forbidden.',
       severity: 'error',
