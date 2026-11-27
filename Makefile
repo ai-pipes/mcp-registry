@@ -123,7 +123,7 @@ print-upgrade-from-image:
 PLATFORM :=
 IMAGE := mcp-registry:compat$(if $(PLATFORM),-$(subst /,-,$(PLATFORM)))
 compat-image: check-version
-	docker build $(if $(PLATFORM),--platform $(PLATFORM)) --target go -t $(IMAGE) .
+	docker build $(if $(PLATFORM),--platform $(PLATFORM)) -t $(IMAGE) .
 	@got="$$(docker run --rm $(if $(PLATFORM),--platform $(PLATFORM)) $(IMAGE) mcp-registry --version)"; \
 	if [ "$$got" != "$(VERSION)" ]; then echo "compat-image: the image reports version '$$got', VERSION says '$(VERSION)'"; exit 1; fi
 

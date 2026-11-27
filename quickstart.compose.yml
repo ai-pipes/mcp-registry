@@ -14,7 +14,7 @@
 #
 # Safari does not accept the `Secure` session cookie on plain http://localhost: use another
 # browser, or start with COOKIE_SECURE=false. A new sign-in link:
-#   docker compose -p mcp-registry exec app node dist/cli.js login-link local-admin
+#   docker compose -p mcp-registry exec app mcp-registry login-link local-admin
 #
 # The port is published on 127.0.0.1 only. To expose it, set BIND_ADDRESS=0.0.0.0 together with a
 # real PUBLIC_URL (the address people use, for example https://mcp.example.com) behind HTTPS.
@@ -75,6 +75,9 @@ services:
     image: ${MCP_REGISTRY_IMAGE:-ghcr.io/ai-pipes/mcp-registry:1}
     init: true
     restart: unless-stopped
+    # The server stops within 10 s of SIGTERM (requests in flight finish first); Docker's default
+    # wait is also 10 s, so give it a margin before the kill.
+    stop_grace_period: 15s
     environment:
       PORT: '3000'
       PUBLIC_URL: ${PUBLIC_URL:-http://localhost:${PORT:-3000}}
@@ -82,7 +85,7 @@ services:
       SECRETS_KEY_FILE: /secrets/secrets_key
       SECRETS_KEY_OLD: ${SECRETS_KEY_OLD:-}
       PGPASSWORD_FILE: /secrets/pg_password
-      # Optional settings; empty means unset (config.ts drops empty values before validation).
+      # Optional settings; empty means unset (the server drops empty values before validation).
       OIDC_ISSUER: ${OIDC_ISSUER:-}
       OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
       OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}

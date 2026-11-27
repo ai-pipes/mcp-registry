@@ -10,9 +10,8 @@
 # deployment started from .env in the same checkout. With SMOKE_IMAGE=<image> the app runs from
 # that prebuilt image (scripts/smoke.prebuilt.compose.yml) instead of being built here; the image
 # is never removed. SMOKE_CLI is how the operator CLI is invoked inside the app container (default
-# `node dist/cli.js`, the TypeScript image; `mcp-registry` for the Go image), so the same script
-# judges either image:
-#   SMOKE_IMAGE=mcp-registry:compat-go SMOKE_CLI=mcp-registry bash scripts/smoke.sh
+# `mcp-registry`; the release workflow passes its IMAGE_CLI):
+#   SMOKE_IMAGE=mcp-registry:compat bash scripts/smoke.sh
 # The test upstream and the MCP client are Go programs (compat/cmd/smoke-upstream, smoke-client),
 # always built from the Dockerfile (target smoke-go); the client runs in the upstream's container
 # and reaches the app as http://app:3000 (ALLOWED_HOSTS=app). Needs docker, curl and openssl. OIDC
@@ -30,7 +29,7 @@ CONTAINER_HEALTH_TIMEOUT=90
 SEARCH_TIMEOUT=120
 TOOL_REF="smoke.echo"
 # The CLI command, split into words (no shell in between).
-read -r -a CLI <<<"${SMOKE_CLI:-node dist/cli.js}"
+read -r -a CLI <<<"${SMOKE_CLI:-mcp-registry}"
 [ "${#CLI[@]}" -gt 0 ] || { echo "SMOKE_CLI is empty" >&2; exit 2; }
 
 # The upstream's shared key: it reaches the app only through the CLI's stdin.
@@ -86,8 +85,8 @@ fail() {
 }
 
 # The image's own HEALTHCHECK must turn the container healthy (bounded). On a timeout the status
-# and the last health log entries are printed (the probes print no secret: the Go one prints one
-# short line, the TypeScript one nothing).
+# and the last health log entries are printed (the probe, `mcp-registry healthcheck`, prints one
+# short line and never a secret).
 wait_container_healthy() {
   local id status deadline=$((SECONDS + CONTAINER_HEALTH_TIMEOUT))
   id="$(compose ps -q app)"
