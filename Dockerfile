@@ -122,11 +122,14 @@ FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d
 # glibc keeps freed native memory per thread arena: repeated failed model loads inflated the resident
 # memory to gigabytes; with two arenas it plateaus (about 660 MB measured).
 ENV MALLOC_ARENA_MAX=2
+# The last step removes the setuid and setgid bits Debian ships (su, passwd, mount, chsh...):
+# nothing in the image needs to change user.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates libstdc++6 tzdata \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system --gid 10001 mcp \
-    && useradd --system --uid 10001 --gid 10001 --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin mcp
+    && useradd --system --uid 10001 --gid 10001 --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin mcp \
+    && find / -xdev -perm /6000 -type f -exec chmod a-s {} +
 COPY --from=go-build /out/mcp-registry /usr/local/bin/mcp-registry
 COPY --from=go-native --chmod=0755 /native/libonnxruntime.so.1 /usr/local/lib/libonnxruntime.so.1
 # A truncated library crashes the process inside dlopen instead of returning an error, so the file

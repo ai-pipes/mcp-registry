@@ -190,7 +190,7 @@ make e2e-flows              # the web UI's browser flows (Playwright, Chromium) 
 The Go image ships the licence texts of everything it redistributes in `/usr/share/licenses/mcp-registry/`: `THIRD_PARTY_NOTICES` (the hand-written overview) and the generated files under `third_party/`. Regenerate them from the repository root when what they describe changes; the tests in `tools/notices` (part of `go test ./...` and so of `make go-verify`) fail until you do:
 
 - A Go dependency changes (`go.mod`): `go run ./tools/notices go` (offline once the module cache has the modules, `go mod download`).
-- A dependency of the web UI changes (`apps/web/package.json`, the lockfile): `pnpm install`, then `go run ./tools/notices web`.
+- A dependency of the web UI changes (`apps/web/package.json`, the lockfile): `pnpm install`, then `go run ./tools/notices web`. The file records a hash of the lockfile entries it was made from, so a transitive change fails too. A Dependabot pull request of either kind stays red until a maintainer pushes the regenerated file to it.
 - The ONNX Runtime pin changes (`pins.env`): set `ORT_NOTICES_WHEEL_URL` and `ORT_NOTICES_WHEEL_SHA256` to a PyPI wheel of the same release (any platform: the two text files are the same), then `go run ./tools/notices onnxruntime`.
 - The tokenizers pin changes (`pins.env`): `git clone --depth 1 --branch v<version> https://github.com/daulet/tokenizers <dir>`, then `go run ./tools/notices rust <dir>` (needs `cargo`, which downloads the crate sources).
 

@@ -50,7 +50,12 @@ func TestGoNoticesAreCurrent(t *testing.T) {
 	}
 }
 
-// ONNX Runtime's files are the pinned release's and unchanged since the tool wrote them.
+// ONNX Runtime's files are the pinned release's and unchanged since the tool wrote them. What it
+// detects: an edit of a file by hand or a partial regeneration (each file against the SHA-256 recorded
+// in SOURCE), and a pin of another ONNX Runtime version than the one the image loads (the wheel URL
+// against ORT_NPM_URL). What it cannot detect: that the files really came from that wheel; the
+// provenance is checked once, at regeneration, where the tool verifies the wheel's SHA-256
+// (ORT_NOTICES_WHEEL_SHA256) before it extracts anything. This test needs no network.
 func TestONNXRuntimeNoticesMatchThePinsAndTheirHashes(t *testing.T) {
 	p, err := readPins(repo)
 	if err != nil {
@@ -132,5 +137,40 @@ func TestLicenceFileNames(t *testing.T) {
 		if licenceFile.MatchString(name) != want {
 			t.Errorf("%s: %v", name, !want)
 		}
+	}
+}
+
+// The web notices record a hash of the lockfile entries they were made from (the web client's and
+// the contracts' importers, and the package and snapshot entries of every package listed): a
+// transitive dependency that moves changes a listed package's snapshot, so the hash changes.
+func TestWebNoticesFollowTheLockfile(t *testing.T) {
+	text := read(t, webNotices)
+	recorded := webInputsRe.FindStringSubmatch(text)
+	if recorded == nil {
+		t.Fatalf("%s records no lockfile hash: run `go run ./tools/notices web`", webNotices)
+	}
+	got, err := webLockHash([]byte(read(t, "pnpm-lock.yaml")), webListed(text))
+	if err != nil {
+		t.Fatalf("%v: run `go run ./tools/notices web`", err)
+	}
+	if got != recorded[1] {
+		t.Errorf("%s was made from another pnpm-lock.yaml (its bundled packages changed): run `pnpm install`, then `go run ./tools/notices web`", webNotices)
+	}
+}
+
+func TestLockHashSeesATransitiveChange(t *testing.T) {
+	lock := "lockfileVersion: '9.0'\n\nimporters:\n\n  apps/web:\n    dependencies:\n      a:\n        version: 1.0.0\n\n  packages/contracts: {}\n\n" +
+		"packages:\n\n  a@1.0.0:\n    resolution: {integrity: x}\n\n  b@2.0.0:\n    resolution: {integrity: y}\n\n" +
+		"snapshots:\n\n  a@1.0.0:\n    dependencies:\n      b: 2.0.0\n\n  b@2.0.0: {}\n"
+	h1, err := webLockHash([]byte(lock), []string{"a@1.0.0", "b@2.0.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	moved := strings.ReplaceAll(lock, "b: 2.0.0", "b: 2.0.1")
+	if h2, _ := webLockHash([]byte(moved), []string{"a@1.0.0", "b@2.0.0"}); h2 == h1 {
+		t.Error("a moved transitive dependency does not change the hash")
+	}
+	if _, err := webLockHash([]byte(lock), []string{"c@3.0.0"}); err == nil {
+		t.Error("a listed package missing from the lockfile is not an error")
 	}
 }
