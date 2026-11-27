@@ -1,18 +1,25 @@
-# CI: verify (lint, types, architecture, knip, unit + integration tests on Testcontainers),
-# smoke (the docker compose box end to end), quickstart (quickstart.compose.yml from stdin) and e2e
-# (Playwright in Chromium against the same built image; all three engines nightly in
-# e2e-browsers.yml), go (the Go rewrite's lint, architecture rules and unit tests) and compat (the Go
-# black-box suite against the reference, the published 1.0.1 pinned by digest, on amd64 and arm64; its
-# self-check runs daily in compat-selfcheck.yml) and
-# e2e-flows (the browser flows of the web UI, e2e/flows, against that same image, orchestrated by Go);
-# compat-go and e2e-flows-go run the milestone pattern of the Go server (not required checks).
+# CI. Web tooling: verify (lint, format, types, architecture rules, knip, the web unit tests and the
+# web build: pnpm verify; pnpm audit; the JSON Schemas the suite derives from the zod contracts).
+# The server (Go): go (make go-verify: lint, architecture rules, the coverage gate, vet, unit and
+# integration tests on Testcontainers), go-onnx (the local embedder behind the build tag onnx, both
+# architectures). The image built from this tree (the Dockerfile's default target, the image a release
+# ships): smoke (the docker compose box end to end), quickstart (quickstart.compose.yml from stdin),
+# e2e (e2e/csp.spec.ts in Chromium against the compose box; all three engines nightly in
+# e2e-browsers.yml), compat (the black-box suite with every decided deviation and the upgrade from
+# the published 1.0.0, both architectures), compat-reference (the same suite with the published
+# 1.0.1 under test, both architectures) and e2e-flows (the browser flows of the web UI, orchestrated
+# by Go). The suite's self-check runs daily in compat-selfcheck.yml.
 #
-# Moving to another CI inside the perimeter: the same two commands on a runner with
-# Node 22, pnpm (version from package.json) and Docker, after `pnpm install --frozen-lockfile`:
+# Moving to another CI inside the perimeter: a runner with Go (version from go.mod), Node 22, pnpm
+# (version from package.json) and Docker, after `pnpm install --frozen-lockfile`:
 #   pnpm audit --audit-level=high && pnpm verify
+#   make go-verify
 #   bash scripts/smoke.sh
 #   bash scripts/quickstart-smoke.sh
 #   pnpm exec playwright install --with-deps chromium && bash scripts/e2e-image.sh
+#   make compat-reference compat-upgrade-from compat-image && make compat
+#   make compat-reference-run
+#   make e2e-flows
 name: ci
 
 on:
@@ -40,7 +47,6 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm audit --audit-level=high
-      # Docker is available on ubuntu runners, so the Testcontainers integration tests run.
       - run: pnpm verify
       # The Go compat suite validates REST responses with JSON Schemas generated from the zod contracts.
       - run: make compat-schemas && git diff --exit-code compat/schemas && test -z "$(git status --porcelain compat/schemas)"
@@ -51,12 +57,6 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
       - run: bash scripts/smoke.sh
 
   quickstart:
@@ -65,12 +65,6 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
       - run: bash scripts/quickstart-smoke.sh
 
   e2e:
@@ -94,9 +88,8 @@ jobs:
           path: node_modules/.cache/playwright/test-results
           retention-days: 7
 
-  # `make go-verify`: golangci-lint, go-arch-lint, go vet (also with the compat tags) and go test.
-  # The version (VERSION) and the model fetch no longer use Node; the Node setup stays installed for
-  # now (no pnpm install is involved) and may go in a later CI cleanup.
+  # `make go-verify`: golangci-lint, go-arch-lint, the coverage gate, go vet (also with the compat
+  # tags), go test and the integration tests (Testcontainers: Docker is available on ubuntu runners).
   go:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -105,9 +98,6 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 22
       - run: make go-verify
 
   # The code behind the build tag onnx (the local embedder: cgo and the pinned ONNX Runtime library)
@@ -133,10 +123,6 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      # Neither the version (VERSION) nor make native-model use Node any more; the setup stays for now.
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 22
       - run: make native-libs
       - run: make go-verify-onnx
 

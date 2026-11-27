@@ -1,6 +1,7 @@
-# Proves that the compat suite can fail: it runs named scenarios against the reference image behind
-# a proxy that applies one distortion at a time (compat/selfcheck) and requires each to fail, with
-# a transparent proxy as the control. Slow, so daily and on demand, not on pull requests.
+# Proves that the compat suite can fail: it runs named scenarios against the reference image (the
+# published 1.0.1, which carries the Node the proxy runs on) behind a proxy that applies one
+# distortion at a time (compat/selfcheck) and requires each to fail, with a transparent proxy as the
+# control. Slow, so daily and on demand, not on pull requests.
 name: compat-selfcheck
 
 on:
@@ -24,9 +25,6 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 22
       # Pulls the reference (the published 1.0.1, pinned by digest), builds the derived image from it,
       # then runs every distortion.
       - run: make compat-selfcheck
