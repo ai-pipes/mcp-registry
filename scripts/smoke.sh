@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # End-to-end smoke test of the docker compose deployment:
 #   build and start (app + Postgres + a fake upstream MCP server, scripts/smoke.compose.yml)
-#   → /healthz = ok → the UI at / with its CSP → container checks
+#   → /healthz = ok → the image's HEALTHCHECK reports healthy → the UI at / with its CSP → container checks
 #   → CLI: create-user (admin), create-token, create-server (shared_secret; the secret on stdin)
 #     and sync → MCP over HTTP with the token: search_tools → describe_tool → call_tool
 #   → the upstream got the secret header on every request, the client and the app logs never
@@ -26,6 +26,7 @@ PROJECT="${SMOKE_PROJECT:-mcp-smoke}"
 PORT="${SMOKE_PORT:-38080}"
 BASE_URL="http://localhost:${PORT}"
 HEALTH_TIMEOUT=120
+CONTAINER_HEALTH_TIMEOUT=90
 SEARCH_TIMEOUT=120
 TOOL_REF="smoke.echo"
 # The CLI command, split into words (no shell in between).
@@ -84,6 +85,27 @@ fail() {
   exit 1
 }
 
+# The image's own HEALTHCHECK must turn the container healthy (bounded). On a timeout the status
+# and the last health log entries are printed (the probes print no secret: the Go one prints one
+# short line, the TypeScript one nothing).
+wait_container_healthy() {
+  local id status deadline=$((SECONDS + CONTAINER_HEALTH_TIMEOUT))
+  id="$(compose ps -q app)"
+  [ -n "$id" ] || fail "no app container"
+  while :; do
+    status="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}no healthcheck{{end}}' "$id" 2>/dev/null || echo unknown)"
+    [ "$status" = "healthy" ] && break
+    if [ "$SECONDS" -ge "$deadline" ] || [ "$status" = "no healthcheck" ]; then
+      echo "container health: ${status}; last checks (exit code, output):" >&2
+      docker inspect -f '{{if .State.Health}}{{range .State.Health.Log}}{{.ExitCode}} {{printf "%q" .Output}}{{println}}{{end}}{{end}}' "$id" 2>/dev/null | tail -n 5 >&2 || true
+      fail "the app container did not report healthy in ${CONTAINER_HEALTH_TIMEOUT}s (HEALTHCHECK of the image)"
+    fi
+    sleep 2
+  done
+  echo "container health: healthy"
+}
+
+
 if [ -n "${SMOKE_IMAGE:-}" ]; then
   step "docker compose up -d (prebuilt image ${SMOKE_IMAGE})"
 else
@@ -101,6 +123,9 @@ until [ "$(curl -fsS "${BASE_URL}/healthz" 2>/dev/null || true)" = "ok" ]; do
   sleep 2
 done
 echo "healthz: ok"
+
+step "the image's HEALTHCHECK reports the container healthy (up to ${CONTAINER_HEALTH_TIMEOUT}s)"
+wait_container_healthy
 
 step "web UI: GET / serves index.html with the CSP header"
 # -D - puts the response headers in front of the body.

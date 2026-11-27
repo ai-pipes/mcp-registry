@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # End-to-end test of quickstart.compose.yml, fed through stdin exactly as the one-liner does:
-#   build the image from this tree → `docker compose -f - up -d` → /healthz → exactly one
+#   build the image from this tree → `docker compose -f - up -d` → /healthz and the image's
+#   HEALTHCHECK reports healthy → exactly one
 #   first-start sign-in link in the app log → sign in with it (cookie) → /api/auth/me is an admin
 #   → create an API token → tools/list on /mcp with it → restart without removing volumes: same
 #   token still works, no new link → replace only the secrets key in the `secrets` volume: the
@@ -33,6 +34,7 @@ fi
 read -r -a CLI <<<"${QUICKSTART_CLI:-node dist/cli.js}"
 [ "${#CLI[@]}" -gt 0 ] || { echo "QUICKSTART_CLI is empty" >&2; exit 2; }
 HEALTH_TIMEOUT=120
+CONTAINER_HEALTH_TIMEOUT=90
 MISMATCH_TIMEOUT=60
 FATAL_TEXT='SECRETS_KEY does not match the data in this database; restore the original key (stored secrets cannot be read with this one)'
 FATAL_HINT='Recovering from a key mismatch'
@@ -72,6 +74,27 @@ fail() {
   exit 1
 }
 
+# The image's own HEALTHCHECK must turn the container healthy (bounded). On a timeout the status
+# and the last health log entries are printed (the probes print no secret: the Go one prints one
+# short line, the TypeScript one nothing).
+wait_container_healthy() {
+  local id status deadline=$((SECONDS + CONTAINER_HEALTH_TIMEOUT))
+  id="$(compose ps -q app)"
+  [ -n "$id" ] || fail "no app container"
+  while :; do
+    status="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}no healthcheck{{end}}' "$id" 2>/dev/null || echo unknown)"
+    [ "$status" = "healthy" ] && break
+    if [ "$SECONDS" -ge "$deadline" ] || [ "$status" = "no healthcheck" ]; then
+      echo "container health: ${status}; last checks (exit code, output):" >&2
+      docker inspect -f '{{if .State.Health}}{{range .State.Health.Log}}{{.ExitCode}} {{printf "%q" .Output}}{{println}}{{end}}{{end}}' "$id" 2>/dev/null | tail -n 5 >&2 || true
+      fail "the app container did not report healthy in ${CONTAINER_HEALTH_TIMEOUT}s (HEALTHCHECK of the image)"
+    fi
+    sleep 2
+  done
+  echo "container health: healthy"
+}
+
+
 app_log() { compose logs --no-color --no-log-prefix app 2>&1; }
 
 # Rendered configuration of the app service for the current environment, captured (not piped into
@@ -85,6 +108,7 @@ wait_healthy() {
     sleep 2
   done
   echo "healthz: ok"
+  wait_container_healthy
 }
 
 # tools/list on /mcp with $1 as the Bearer token; prints nothing, succeeds only with the 4 meta-tools.
