@@ -34,7 +34,7 @@ services:
     image: pgvector/pgvector:pg17
     restart: 'no'
     # Runs as root to write the volume. Files are 0444 (readable by `postgres` and by the app's
-    # `node` user, writable by nobody) in a 0755 directory; existing files are never touched.
+    # user (uid 1000), writable by nobody) in a 0755 directory; existing files are never touched.
     entrypoint: ['/bin/sh', '-ec']
     command:
       - |

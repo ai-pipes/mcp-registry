@@ -116,7 +116,7 @@ CMD ["smoke-upstream"]
 #     ONNX Runtime). ONNX Runtime sits at onnx.DefaultLibraryPath, the model at the default
 #     MODEL_DIR (/app/models, the layout of the TypeScript image: the same `model` stage), the UI at
 #     the default web root /app/web (the `web` stage). Everything under /app and /usr/local is owned
-#     by root and read-only for the server's user (uid and gid 10001), which needs no writable
+#     by root and read-only for the server's user (uid and gid 1000, as the 1.0.x image), which needs no writable
 #     directory and no home. ----------------------------------------------------------------------
 FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc AS go
 # glibc keeps freed native memory per thread arena: repeated failed model loads inflated the resident
@@ -127,8 +127,8 @@ ENV MALLOC_ARENA_MAX=2
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates libstdc++6 tzdata \
     && rm -rf /var/lib/apt/lists/* \
-    && groupadd --system --gid 10001 mcp \
-    && useradd --system --uid 10001 --gid 10001 --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin mcp \
+    && groupadd --system --gid 1000 mcp \
+    && useradd --system --uid 1000 --gid 1000 --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin mcp \
     && find / -xdev -perm /6000 -type f -exec chmod a-s {} +
 COPY --from=go-build /out/mcp-registry /usr/local/bin/mcp-registry
 COPY --from=go-native --chmod=0755 /native/libonnxruntime.so.1 /usr/local/lib/libonnxruntime.so.1
@@ -146,7 +146,7 @@ LABEL org.opencontainers.image.title="mcp-registry" \
       org.opencontainers.image.description="Self-hosted MCP gateway: one MCP endpoint in front of your upstream MCP servers" \
       org.opencontainers.image.source="https://github.com/ai-pipes/mcp-registry" \
       org.opencontainers.image.licenses="MIT"
-USER 10001:10001
+USER 1000:1000
 EXPOSE 3000
 STOPSIGNAL SIGTERM
 # The probe is the binary itself (no curl, no Node in the image); it needs no configuration and reads
