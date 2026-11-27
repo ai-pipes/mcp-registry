@@ -490,3 +490,23 @@ func TestLoadIssueOrderIsDeclarationOrder(t *testing.T) {
 		t.Fatalf("got %v want %v", names, want)
 	}
 }
+
+// Port is the one variable `mcp-registry healthcheck` reads: the rule of Load (default 3000, an
+// integer from 1 to 65535, JavaScript Number syntax), whatever else the environment holds.
+func TestPortReadsOnlyPORTWithTheRuleOfLoad(t *testing.T) {
+	for _, e := range []map[string]string{nil, {}, {"PORT": ""}, {"DATABASE_URL": "", "SECRETS_KEY": "short"}} {
+		if p, err := config.Port(e); err != nil || p != 3000 {
+			t.Errorf("Port(%v) = %d, %v; want 3000", e, p, err)
+		}
+	}
+	for _, v := range []string{"8080", "0x10", "3e3", "+3000", "\u00a03000\ufeff", "0", "65536", "ZZ99", "3000.5", "  ", "-1"} {
+		c, loadErr := config.Load(baseEnv(t).with("PORT", v), noFiles)
+		p, err := config.Port(map[string]string{"PORT": v, "SECRETS_KEY": "not a key"})
+		if (loadErr == nil) != (err == nil) || (err == nil && p != c.Port) {
+			t.Errorf("PORT=%q: Load %d %v, Port %d %v", v, c.Port, loadErr, p, err)
+		}
+		if err != nil && (!strings.Contains(err.Error(), "  PORT: ") || strings.Contains(err.Error(), "SECRETS_KEY")) {
+			t.Errorf("PORT=%q: the error names more or less than PORT: %v", v, err)
+		}
+	}
+}

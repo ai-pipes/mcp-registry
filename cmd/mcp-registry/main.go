@@ -32,6 +32,10 @@ func run(ctx context.Context, args []string, env map[string]string, stdin io.Rea
 		_, _ = fmt.Fprintln(stdout, version)
 		return 0
 	}
+	// The image's HEALTHCHECK: before the configuration, reads only PORT (see healthcheck).
+	if len(args) > 0 && args[0] == "healthcheck" {
+		return healthcheck(ctx, args[1:], env, stderr)
+	}
 	// Like the TypeScript CLI, the configuration is read before the command is looked at.
 	cfg, err := config.Load(env, readTextFile)
 	if err != nil {

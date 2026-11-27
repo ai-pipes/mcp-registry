@@ -34,7 +34,8 @@ func usageFor(cmds map[string]CLICommand) string {
 			"  Without a command the server starts. Operator commands arrive in a later release.\n"
 	}
 	var b strings.Builder
-	b.WriteString("Usage: mcp-registry <command>\n       mcp-registry --version\n       mcp-registry (the server starts)\n\n")
+	b.WriteString("Usage: mcp-registry <command>\n       mcp-registry --version\n       mcp-registry (the server starts)\n" +
+		"       mcp-registry healthcheck (no configuration needed: exit 0 when GET /healthz on 127.0.0.1:$PORT answers 200)\n\n")
 	for _, n := range usageOrder {
 		if c, ok := cmds[n]; ok {
 			b.WriteString(c.Usage)
