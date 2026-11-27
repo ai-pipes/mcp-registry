@@ -20,22 +20,33 @@ const healthcheckTimeout = 4 * time.Second
 // server's rule): a container whose configuration is broken has no server answering, so it is
 // reported unhealthy by the probe, never by the probe refusing to run. No key guard, no database.
 // Exit 0 only when GET http://127.0.0.1:<PORT>/healthz answers 200; silent on success, one short
-// line on stderr otherwise (never the response body).
+// line on stderr otherwise (never the response body). Every failure is exit 1, a bad invocation
+// too: Docker reserves exit code 2 of a health check.
 func healthcheck(ctx context.Context, args []string, env map[string]string, stderr io.Writer) int {
+	return runHealthcheck(ctx, args, env, stderr, healthcheckTimeout, newProbeTransport())
+}
+
+// newProbeTransport is the probe's own transport: no proxy, no connection reuse.
+func newProbeTransport() http.RoundTripper {
+	return &http.Transport{Proxy: nil, DisableKeepAlives: true}
+}
+
+// runHealthcheck is healthcheck with the limit and the transport given (tests inject them).
+func runHealthcheck(ctx context.Context, args []string, env map[string]string, stderr io.Writer, timeout time.Duration, rt http.RoundTripper) int {
 	if len(args) > 0 {
 		_, _ = fmt.Fprintln(stderr, "healthcheck: takes no arguments")
-		return 2
+		return 1
 	}
 	port, err := config.Port(env)
 	if err != nil {
 		_, _ = fmt.Fprintln(stderr, "healthcheck: PORT must be an integer from 1 to 65535")
 		return 1
 	}
-	return probe(ctx, port, healthcheckTimeout, stderr)
+	return probe(ctx, port, timeout, rt, stderr)
 }
 
 // probe GETs /healthz on the loopback address with the given limit: no proxy, no redirects.
-func probe(ctx context.Context, port int, timeout time.Duration, stderr io.Writer) int {
+func probe(ctx context.Context, port int, timeout time.Duration, rt http.RoundTripper, stderr io.Writer) int {
 	url := "http://127.0.0.1:" + strconv.Itoa(port) + "/healthz"
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -45,7 +56,7 @@ func probe(ctx context.Context, port int, timeout time.Duration, stderr io.Write
 		return 1
 	}
 	client := &http.Client{
-		Transport: &http.Transport{Proxy: nil, DisableKeepAlives: true},
+		Transport: rt,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
 		},

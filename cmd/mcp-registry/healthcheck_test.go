@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -70,17 +71,39 @@ func TestHealthcheckNeedsNoConfiguration(t *testing.T) {
 	if code, out, errOut := healthcheckRun(t, broken); code != 0 || out != "" || errOut != "" {
 		t.Fatalf("broken configuration: code=%d stdout=%q stderr=%q", code, out, errOut)
 	}
-	// Nothing at all: PORT defaults to 3000. Whatever listens there on this machine, the command
-	// probes it and never reports the configuration.
-	code, out, errOut := healthcheckRun(t, nil)
-	if out != "" || strings.Contains(errOut, "configuration") {
-		t.Fatalf("empty environment: code=%d stdout=%q stderr=%q", code, out, errOut)
+}
+
+// recordingTransport answers every request with status (or err) and records the URLs it was asked.
+type recordingTransport struct {
+	status int
+	err    error
+	urls   []string
+}
+
+func (r *recordingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	r.urls = append(r.urls, req.URL.String())
+	if r.err != nil {
+		return nil, r.err
 	}
-	if code != 0 {
-		oneLine(t, errOut)
-		if !strings.Contains(errOut, "127.0.0.1:3000") && !strings.Contains(errOut, "answered") {
-			t.Errorf("empty environment did not probe port 3000: %q", errOut)
-		}
+	return &http.Response{StatusCode: r.status, Body: http.NoBody, Header: http.Header{}, Request: req}, nil
+}
+
+// Nothing at all: PORT defaults to 3000 and the probe asks exactly http://127.0.0.1:3000/healthz.
+// The transport is injected, so no real port of the test machine is touched.
+func TestHealthcheckWithAnEmptyEnvironmentProbesPort3000(t *testing.T) {
+	ok := &recordingTransport{status: http.StatusOK}
+	var errOut bytes.Buffer
+	if code := runHealthcheck(context.Background(), nil, nil, &errOut, time.Second, ok); code != 0 || errOut.Len() != 0 {
+		t.Fatalf("code=%d stderr=%q", code, errOut.String())
+	}
+	if len(ok.urls) != 1 || ok.urls[0] != "http://127.0.0.1:3000/healthz" {
+		t.Fatalf("asked %v", ok.urls)
+	}
+	down := &recordingTransport{err: errors.New("connection refused")}
+	errOut.Reset()
+	if code := runHealthcheck(context.Background(), nil, nil, &errOut, time.Second, down); code != 1 ||
+		errOut.String() != "healthcheck: no answer from http://127.0.0.1:3000/healthz\n" {
+		t.Fatalf("code=%d stderr=%q", code, errOut.String())
 	}
 }
 
@@ -112,7 +135,7 @@ func TestHealthcheckHangingServerTimesOut(t *testing.T) {
 	}
 	var errOut bytes.Buffer
 	start := time.Now()
-	code := probe(context.Background(), port, 200*time.Millisecond, &errOut)
+	code := probe(context.Background(), port, 200*time.Millisecond, newProbeTransport(), &errOut)
 	if code != 1 || time.Since(start) > 2*time.Second {
 		t.Fatalf("code=%d after %s stderr=%q", code, time.Since(start), errOut.String())
 	}
@@ -160,8 +183,9 @@ func TestHealthcheckInvalidPortIsExitOneWithoutTheValue(t *testing.T) {
 }
 
 func TestHealthcheckTakesNoArguments(t *testing.T) {
+	// Exit 1, not 2: Docker reserves exit code 2 of a health check.
 	code, out, errOut := healthcheckRun(t, map[string]string{"PORT": "1"}, "extra")
-	if code != 2 || out != "" || errOut != "healthcheck: takes no arguments\n" {
+	if code != 1 || out != "" || errOut != "healthcheck: takes no arguments\n" {
 		t.Fatalf("code=%d stdout=%q stderr=%q", code, out, errOut)
 	}
 }
