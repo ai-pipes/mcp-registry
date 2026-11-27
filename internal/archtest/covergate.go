@@ -19,6 +19,10 @@ const CoverageThreshold = 90.0
 // explicit so that a module that loses a layer, or is renamed, fails the gate instead of dropping out.
 var GatedModules = []string{"identity", "catalog", "connections", "search", "gateway"}
 
+// GateExemptions are "<module>/<layer>" packages that are deliberately not gated, each with the
+// reason. Empty today: every module has both layers. An entry needs a non-empty reason.
+var GateExemptions = map[string]string{}
+
 // GatedLayers are the packages of a module under the gate.
 var GatedLayers = []string{"domain", "app"}
 
@@ -36,17 +40,55 @@ func (c PackageCoverage) Percent() float64 {
 	return 100 * float64(c.Covered) / float64(c.Statements)
 }
 
-// ExpectedPackages lists "<module>/<layer>" for every gated package and fails when a directory
-// is missing under root/internal/modules.
+// ModuleGateProblems compares the directories under modulesDir with the gated list: a directory
+// that is not in gated is a module the gate would silently skip, and a gated module without a
+// domain or app directory is a layer that dropped out, unless exempt names "<module>/<layer>"
+// with a reason. One line per problem, sorted.
+func ModuleGateProblems(modulesDir string, gated []string, exempt map[string]string) []string {
+	var out []string
+	entries, err := os.ReadDir(modulesDir)
+	if err != nil {
+		return []string{fmt.Sprintf("cannot read the modules directory %s: %v", modulesDir, err)}
+	}
+	listed := map[string]bool{}
+	for _, m := range gated {
+		listed[m] = true
+	}
+	for _, e := range entries {
+		if e.IsDir() && !listed[e.Name()] {
+			out = append(out, fmt.Sprintf("module %s is not in GatedModules: its domain and app would not be covered", e.Name()))
+		}
+	}
+	for _, m := range gated {
+		for _, l := range GatedLayers {
+			key := m + "/" + l
+			if why, ok := exempt[key]; ok {
+				if strings.TrimSpace(why) == "" {
+					out = append(out, fmt.Sprintf("exemption of %s has no reason", key))
+				}
+				continue
+			}
+			if st, err := os.Stat(filepath.Join(modulesDir, m, l)); err != nil || !st.IsDir() {
+				out = append(out, fmt.Sprintf("gated package directory %s is missing (add it, or exempt %s with a reason)", filepath.Join(modulesDir, m, l), key))
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// ExpectedPackages lists "<module>/<layer>" for every gated package (minus the exempted ones) and
+// fails when root/internal/modules holds a module that is not gated or lacks a gated directory.
 func ExpectedPackages(root string) ([]string, error) {
+	if p := ModuleGateProblems(filepath.Join(root, "internal", "modules"), GatedModules, GateExemptions); len(p) > 0 {
+		return nil, fmt.Errorf("%s", strings.Join(p, "; "))
+	}
 	var out []string
 	for _, m := range GatedModules {
 		for _, l := range GatedLayers {
-			dir := filepath.Join(root, "internal", "modules", m, l)
-			if st, err := os.Stat(dir); err != nil || !st.IsDir() {
-				return nil, fmt.Errorf("gated package directory %s is missing", dir)
+			if _, ok := GateExemptions[m+"/"+l]; !ok {
+				out = append(out, m+"/"+l)
 			}
-			out = append(out, m+"/"+l)
 		}
 	}
 	return out, nil

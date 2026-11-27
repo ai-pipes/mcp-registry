@@ -1,6 +1,8 @@
 package archtest
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -100,5 +102,76 @@ func TestExpectedPackagesExistInTheRepository(t *testing.T) {
 func TestExpectedPackagesFailsOnAMissingDirectory(t *testing.T) {
 	if _, err := ExpectedPackages(t.TempDir()); err == nil {
 		t.Fatal("an empty root must fail")
+	}
+}
+
+// TestCoverageThresholdIsNinety pins the floor. The gate is never lowered (CLAUDE.md), and a
+// constant that can be edited without any test noticing is not a rule. Lowering it must mean
+// editing this test too, which a reviewer sees; raising it is a deliberate edit of the same kind.
+func TestCoverageThresholdIsNinety(t *testing.T) {
+	if CoverageThreshold != 90.0 {
+		t.Fatalf("CoverageThreshold = %v, want exactly 90: the gate is never lowered", CoverageThreshold)
+	}
+}
+
+func TestModuleGateProblemsOfTheRealTreeAreNone(t *testing.T) {
+	if p := ModuleGateProblems("../modules", GatedModules, GateExemptions); len(p) != 0 {
+		t.Fatalf("problems: %v", p)
+	}
+}
+
+func TestEveryGateExemptionHasAReason(t *testing.T) {
+	for k, why := range GateExemptions {
+		if strings.TrimSpace(why) == "" {
+			t.Errorf("exemption %s has no reason", k)
+		}
+	}
+}
+
+func TestModuleGateProblemsNamesWhatIsWrong(t *testing.T) {
+	gated := []string{"alpha", "beta"}
+	for _, tc := range []struct {
+		name, dir string
+		exempt    map[string]string
+		want      string // substring of the one problem, "" = none
+	}{
+		{"an unlisted module", "testdata/gate-module-unlisted/modules", map[string]string{"beta/app": "no use cases yet"}, "rogue"},
+		{"a missing layer", "testdata/gate-module-ok/modules", nil, "beta/app"},
+		{"an exemption without a reason", "testdata/gate-module-ok/modules", map[string]string{"beta/app": " "}, "beta/app"},
+		{"an exempted layer", "testdata/gate-module-ok/modules", map[string]string{"beta/app": "no use cases yet"}, ""},
+		{"a listed module that does not exist", "testdata/gate-module-ok/modules", map[string]string{"beta/app": "x", "gamma/domain": "x"}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g := gated
+			if tc.name == "a listed module that does not exist" {
+				g = []string{"alpha", "beta", "gamma"}
+				tc.want = "gamma"
+			}
+			p := ModuleGateProblems(tc.dir, g, tc.exempt)
+			if tc.want == "" {
+				if len(p) != 0 {
+					t.Fatalf("problems: %v", p)
+				}
+				return
+			}
+			if len(p) == 0 || !strings.Contains(strings.Join(p, "\n"), tc.want) {
+				t.Fatalf("problems = %v, want one naming %q", p, tc.want)
+			}
+		})
+	}
+}
+
+func TestExpectedPackagesFailsForAnUnlistedModule(t *testing.T) {
+	root := t.TempDir()
+	for _, m := range append(append([]string(nil), GatedModules...), "sixth") {
+		for _, l := range GatedLayers {
+			if err := os.MkdirAll(filepath.Join(root, "internal", "modules", m, l), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	_, err := ExpectedPackages(root)
+	if err == nil || !strings.Contains(err.Error(), "sixth") {
+		t.Fatalf("err = %v, want one naming the unlisted module", err)
 	}
 }
