@@ -32,6 +32,14 @@ type Error struct {
 	Code   string
 }
 
+// CodeGrant shapes the answers of authorization_code exchanges, for a provider that issues no
+// refresh token, no expires_in, or an expires_in beyond what a time can hold. The zero value is the
+// default answer: a refresh token and expires_in 3600.
+type CodeGrant struct {
+	NoRefreshToken bool
+	ExpiresIn      int // as in Ok: 0 = 3600, negative = left out
+}
+
 // Hang never answers; the wait ends when the caller gives up or the test ends.
 type Hang struct{}
 
@@ -73,7 +81,8 @@ func (r TokenRequest) BasicAuth() (id, secret string, ok bool) {
 }
 
 // IssuedTokens are the tokens an authorization_code exchange handed out, in the order of the
-// exchanges, so a test knows which token belongs to which connect.
+// exchanges, so a test knows which token belongs to which connect. RefreshToken is empty when the
+// exchange issued none (SetCodeGrant).
 type IssuedTokens struct {
 	AccessToken  string
 	RefreshToken string
@@ -101,6 +110,7 @@ type OAuthProvider struct {
 	issued     []IssuedTokens
 	handed     []string
 	refreshLag time.Duration
+	codeShape  CodeGrant
 	consent    bool
 	grants     map[string]oauthGrant
 	refreshes  map[string]bool
@@ -168,6 +178,14 @@ func (p *OAuthProvider) Script(steps ...TokenStep) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.script = append(p.script, steps...)
+}
+
+// SetCodeGrant shapes every later authorization_code exchange; the zero value restores the
+// default answer.
+func (p *OAuthProvider) SetCodeGrant(g CodeGrant) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.codeShape = g
 }
 
 // Requests returns every request the token endpoint received, in order.
@@ -294,7 +312,7 @@ func invalidGrant(w http.ResponseWriter) {
 	writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_grant"})
 }
 
-// codeGrant exchanges a code once; the script never applies to it.
+// codeGrant exchanges a code once; the script never applies to it, SetCodeGrant shapes it.
 func (p *OAuthProvider) codeGrant(w http.ResponseWriter, form url.Values) {
 	code := form.Get("code")
 	p.mu.Lock()
@@ -305,13 +323,19 @@ func (p *OAuthProvider) codeGrant(w http.ResponseWriter, form url.Values) {
 		invalidGrant(w)
 		return
 	}
-	refresh, access := randomToken("refresh-"), randomToken("access-")
+	access := randomToken("access-")
 	p.mu.Lock()
-	p.refreshes[refresh] = true
+	shape := p.codeShape
+	refresh := ""
+	p.handed = append(p.handed, access)
+	if !shape.NoRefreshToken {
+		refresh = randomToken("refresh-")
+		p.refreshes[refresh] = true
+		p.handed = append(p.handed, refresh)
+	}
 	p.issued = append(p.issued, IssuedTokens{AccessToken: access, RefreshToken: refresh})
-	p.handed = append(p.handed, access, refresh)
 	p.mu.Unlock()
-	writeJSON(w, http.StatusOK, tokenBody(Ok{AccessToken: access, RefreshToken: refresh}))
+	writeJSON(w, http.StatusOK, tokenBody(Ok{AccessToken: access, RefreshToken: refresh, ExpiresIn: shape.ExpiresIn}))
 }
 
 // refreshGrant checks that the presented refresh token is one this provider issued and that is

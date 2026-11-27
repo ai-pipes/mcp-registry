@@ -361,7 +361,10 @@ func connConnect(t *testing.T, env *connEnv, c *harness.Client) fakes.IssuedToke
 		t.Fatalf("the provider issued %d token sets, want %d", len(issued), before+1)
 	}
 	got := issued[len(issued)-1]
-	connNote(got.AccessToken, got.RefreshToken)
+	connNote(got.AccessToken)
+	if got.RefreshToken != "" { // a provider shaped by SetCodeGrant may issue none
+		connNote(got.RefreshToken)
+	}
 	return got
 }
 

@@ -30,6 +30,10 @@ package compat_test
 //     equal), their rows are untouched, a sync sends the stored tokens, an access token about to
 //     expire is refreshed once with the STORED refresh token, and a disconnect revokes at the
 //     revoke URL stored at issue time.
+//   - read the UNUSUAL connection rows the reference image left (handover_edges_test.go): an expired
+//     row that still holds a refresh token, a member's expiring token, a connect started and not
+//     finished (and one whose window ran out), a token without a refresh token on a server that had
+//     no revoke URL at issue time, tokens without an expiry.
 // When the image under test IS the reference image (the default) this is a restart test.
 //
 // TestPlatformReverseHandOver is the other direction: the database is created by the image under
@@ -39,7 +43,9 @@ package compat_test
 // token that the image under test created are accepted the same way as in the forward direction.
 // This is the rollback an operator makes after trying the new image. The catalog server created
 // by the image under test (its sealed secret, its tools) is read and synchronised by 1.0.x the
-// same way.
+// same way, and so are the unusual connection rows (among them the Go server's NULL expires_at of a
+// token whose expires_in lies beyond 100 years). Last, the reference image's CLI rotates the key
+// the image under test sealed with, and 1.0.x runs on the new key alone with every credential.
 //
 // The token's use on /mcp is not checked here: the Go server has no /mcp before milestone 6 (the
 // scenarios that use a token on /mcp are skipped for it until then), so the hand-over proves the
@@ -396,9 +402,12 @@ func TestPlatformStartsOnReferenceDatabase(t *testing.T) {
 	people := createHandOverPeople(t, s)
 	server := createHandOverServer(t, people)
 	conns := createHandOverConnections(t, s, people)
+	edges := createHandOverEdges(t, s, people.admin)
+	swapped := false
 
 	t.Run("the same key: healthy, nothing applied, the check untouched, the shell served, the reference image's people accepted", func(t *testing.T) {
 		s.SwapImage(t, image, cli)
+		swapped = true
 		if got := migrationNames(t, s); !slices.Equal(got, migrations) {
 			t.Fatalf("migrations before %v, after %v", migrations, got)
 		}
@@ -426,6 +435,13 @@ func TestPlatformStartsOnReferenceDatabase(t *testing.T) {
 		checkHandOverPeople(t, s, people)
 		checkHandOverServer(t, people, server)
 		checkHandOverConnections(t, s, people, conns)
+	})
+
+	t.Run("the unusual rows the reference image left: expired, pending, without a refresh token, revoke URL or expiry", func(t *testing.T) {
+		if !swapped {
+			t.Fatal("the image under test was not started on the reference image's database: run the scenario as a whole")
+		}
+		checkHandOverEdges(t, s, edges)
 	})
 
 	t.Run("another key: exit 1, one fatal record, no key in the log, the check unchanged", func(t *testing.T) {
@@ -493,6 +509,8 @@ func TestPlatformReverseHandOver(t *testing.T) {
 	people := createHandOverPeople(t, s)
 	server := createHandOverServer(t, people)
 	conns := createHandOverConnections(t, s, people)
+	edges := createHandOverEdges(t, s, people.admin)
+	rotation := createHandOverRotation(t, s, people.admin)
 
 	s.SwapImage(t, harness.ReferenceImage(), harness.ReferenceCLI())
 
@@ -520,4 +538,9 @@ func TestPlatformReverseHandOver(t *testing.T) {
 	checkHandOverPeople(t, s, people)
 	checkHandOverServer(t, people, server)
 	checkHandOverConnections(t, s, people, conns)
+	t.Run("the unusual rows the image under test left", func(t *testing.T) { checkHandOverEdges(t, s, edges) })
+	// Last: the stack's own key stays the old one, so nothing may swap images after this subtest.
+	t.Run("the reference image's CLI rotates the key the image under test sealed with; the reference then runs on the new key alone", func(t *testing.T) {
+		checkHandOverRotation(t, s, rotation, harness.ReferenceImage(), harness.ReferenceCLI(), key)
+	})
 }
