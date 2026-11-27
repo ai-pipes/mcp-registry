@@ -8,22 +8,12 @@
         "e2e/**/*.spec.ts",
         "e2e/**/playwright.config.ts"
       ],
-      "project": ["scripts/**", "*.{ts,cjs,mjs}", "e2e/**/*.ts"]
-    },
-    "apps/server": {
-      "entry": [
-        "src/shared-kernel/index.ts",
-        "src/modules/*/index.ts",
-        "src/**/*.test.ts",
-        "test/**/*.test.ts",
-        "src/platform/{main,cli}.ts",
-        "test/smoke/*.ts"
-      ],
-      "project": ["src/**/*.ts", "test/**/*.ts", "!test/architecture/fixtures/**"]
+      "project": ["scripts/**", "*.{ts,cjs,mjs}", "e2e/**/*.ts"],
+      "ignoreDependencies": ["@swc/core"]
     },
     "apps/web": {
       "entry": ["src/components/ui/*.tsx", "src/lib/utils.ts", "src/**/*.test.{ts,tsx}"],
-      "project": ["src/**/*.{ts,tsx,css}", "test/**/*.{ts,tsx}"],
+      "project": ["src/**/*.{ts,tsx,css}", "test/**/*.{ts,tsx}", "!test/architecture/fixtures/**"],
       "ignoreIssues": {
         "src/components/ui/**": ["exports", "types"]
       }

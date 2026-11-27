@@ -13,7 +13,7 @@ describe('LoginPage', () => {
     expect(hint.textContent).toBe(
       'Single sign-on is not configured. Sign in with a one-time link created on the server:',
     );
-    const command = screen.getByText('node dist/cli.js login-link <sub>');
+    const command = screen.getByText('mcp-registry login-link <sub>');
     expect(command.tagName).toBe('CODE');
     expect(screen.queryByRole('link', { name: 'Sign in with SSO' })).toBeNull();
   });
@@ -22,7 +22,7 @@ describe('LoginPage', () => {
     renderWithApp(<LoginPage returnTo="/tokens" />);
     const link = await screen.findByRole('link', { name: 'Sign in with SSO' });
     expect(link.getAttribute('href')).toBe('/api/auth/login?returnTo=%2Ftokens');
-    expect(screen.queryByText('node dist/cli.js login-link <sub>')).toBeNull();
+    expect(screen.queryByText('mcp-registry login-link <sub>')).toBeNull();
   });
 
   it('shows the SSO button when the methods request fails', async () => {

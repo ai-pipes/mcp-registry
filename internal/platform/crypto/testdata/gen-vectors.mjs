@@ -4,9 +4,9 @@
 //
 //   node internal/platform/crypto/testdata/gen-vectors.mjs
 //
-// Provenance: the reference 1.0.1. secret-box.ts is taken from apps/server of this checkout, or,
-// once this tree has no apps/server, from the unpacked source of the tag named by
-// MCP_REFERENCE_ROOT (no install needed: secret-box.ts imports only node:crypto):
+// Provenance: the reference 1.0.1. secret-box.ts is taken from the unpacked source of the tag
+// v1.0.1 named by MCP_REFERENCE_ROOT (required; this tree no longer has the TypeScript server; no
+// install needed: secret-box.ts imports only node:crypto):
 //
 //   REF=$(mktemp -d); git archive v1.0.1 | tar -x -C "$REF"
 //   MCP_REFERENCE_ROOT="$REF" node internal/platform/crypto/testdata/gen-vectors.mjs <section>
@@ -20,9 +20,10 @@ import { randomBytes } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
-const root = process.env.MCP_REFERENCE_ROOT
-  ? pathToFileURL(process.env.MCP_REFERENCE_ROOT.replace(/\/?$/, '/'))
-  : new URL('../../../../', import.meta.url);
+if (!process.env.MCP_REFERENCE_ROOT) {
+  throw new Error('set MCP_REFERENCE_ROOT to an unpacked `git archive v1.0.1` (see the header)');
+}
+const root = pathToFileURL(process.env.MCP_REFERENCE_ROOT.replace(/\/?$/, '/'));
 const { AesGcmSecretBox } = await import(
   new URL('apps/server/src/platform/crypto/secret-box.ts', root).href
 );

@@ -3,8 +3,8 @@
 // Command smoke-client is the MCP part of scripts/smoke.sh, as an agent would use the gateway:
 // connect with a Bearer token, then search_tools -> describe_tool -> call_tool. It checks that the
 // gateway exposes exactly the four meta-tools, that the call reached the upstream tool, and that no
-// answer the client got contains the upstream secret. The Go replacement of
-// apps/server/test/smoke/mcp-client.ts, with the same output lines.
+// answer the client got contains the upstream secret. It replaced the 1.x TypeScript smoke client
+// and prints the same output lines.
 //
 // Usage: SMOKE_TOKEN=sk_... SMOKE_UPSTREAM_SECRET=... smoke-client <base-url> <tool-ref>
 // Exit codes: 0 as expected, 1 not as expected (yet: the index may still be building), 2 usage.

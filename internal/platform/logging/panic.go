@@ -38,7 +38,7 @@ func PanicFrames() []string {
 // shortPath drops the build directory.
 func shortPath(file string) string {
 	file = filepath.ToSlash(file)
-	for _, marker := range []string{"/internal/", "/apps/", "/cmd/"} {
+	for _, marker := range []string{"/internal/", "/cmd/"} {
 		if i := strings.LastIndex(file, marker); i >= 0 {
 			return file[i+1:]
 		}

@@ -5,7 +5,7 @@
 // 0.0.0.0:8080/mcp (Streamable HTTP, the official Go SDK) and answers 401 to any request without
 // `X-Smoke-Key: Key <SMOKE_UPSTREAM_SECRET>`. It writes one line per request to stdout,
 // `request <JSON-RPC method or -> authorized=<true|false>`, never the key itself; smoke.sh reads
-// those lines. The Go replacement of apps/server/test/smoke/upstream.ts, with the same lines.
+// those lines. It replaced the 1.x TypeScript smoke upstream and prints the same lines.
 package main
 
 import (

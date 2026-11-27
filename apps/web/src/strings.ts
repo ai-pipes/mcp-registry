@@ -73,7 +73,7 @@ export const strings = {
     linkCancel: 'Cancel',
     switchConfirm: 'Sign in with the link',
     switchCancel: 'Stay signed in',
-    localCommand: 'node dist/cli.js login-link <sub>',
+    localCommand: 'mcp-registry login-link <sub>',
     errorTitle: 'Sign-in failed',
     errors: {
       invalid_state: 'The sign-in attempt expired or was interrupted. Try signing in again.',
