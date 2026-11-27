@@ -28,6 +28,7 @@ package compat_test
 
 import (
 	"bytes"
+	"fmt"
 	"net/url"
 	"strings"
 	"testing"
@@ -43,7 +44,7 @@ import (
 func handOverOAuthServer(t *testing.T, s *harness.Stack, admin *harness.Client, shape fakes.CodeGrant, opts ...fakes.ServerOpt) *connEnv {
 	t.Helper()
 	up := fakes.StartUpstream(t, fakes.UpstreamOptions{Tools: fakes.Tools("echo")})
-	provider := fakes.StartOAuthProvider(t)
+	provider := connWatch(fakes.StartOAuthProvider(t)) // every token it hands out is looked for by connLeakCheck
 	provider.SetCodeGrant(shape)
 	slug := harness.Unique("hand-edge")
 	catalogRegister(t, admin, fakes.ServerInput(up, slug, "oauth_user", append([]fakes.ServerOpt{
@@ -66,6 +67,53 @@ func handOverCall(t *testing.T, s *harness.Stack, p connPerson, ref string) conn
 	t.Helper()
 	res := catalogCallMCP(t, s.MCP(t, p.lazy.token), "call_tool", map[string]any{"tool": ref, "arguments": map[string]any{"text": "hi"}})
 	return connResult{IsError: res.IsError, Text: catalogText(res)}
+}
+
+// handOverStr shows an optional text for a failure message: nil or the value.
+func handOverStr(p *string) string {
+	if p == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("%q", *p)
+}
+
+// handOverKeptLogs collects the app logs of the containers a scenario replaces: a swap removes the
+// container and its log with it, so without this the leak scans at the end of a scenario would see
+// only the last image's log.
+type handOverKeptLogs struct{ logs []string }
+
+// keep saves the log of the app container running now (call it right before a swap).
+func (k *handOverKeptLogs) keep(t *testing.T, s *harness.Stack) {
+	t.Helper()
+	if k != nil {
+		k.logs = append(k.logs, s.Logs(t))
+	}
+}
+
+// add saves a log the scenario already holds (a refused start's, whose container is gone).
+func (k *handOverKeptLogs) add(logs string) { k.logs = append(k.logs, logs) }
+
+// scanAtEnd registers a cleanup that fails when a kept log contains a value secrets returns (read
+// at the end, so values noted later count). Register it after connLeakCheck: cleanups run last
+// first, so it reads the noted values before connLeakCheck consumes them.
+func (k *handOverKeptLogs) scanAtEnd(t *testing.T, secrets func() []string) {
+	t.Helper()
+	t.Cleanup(func() {
+		values := secrets()
+		if len(k.logs) == 0 || len(values) == 0 {
+			t.Errorf("the scan of the replaced containers' logs has %d log(s) and %d secret(s): it proves nothing", len(k.logs), len(values))
+			return
+		}
+		for i, logs := range k.logs {
+			for _, v := range values {
+				for _, form := range []string{v, url.QueryEscape(v)} {
+					if len(v) >= 6 && strings.Contains(logs, form) {
+						t.Errorf("the log of replaced container #%d contains the secret %s", i+1, harness.Redact(v))
+					}
+				}
+			}
+		}
+	})
 }
 
 // handOverPendingLeft is the time left in a started connect's window, by the database's clock.
@@ -142,7 +190,7 @@ func createHandOverEdges(t *testing.T, s *harness.Stack, admin *harness.Client) 
 	for who, id := range map[string]string{"admin": e.adminID, "member": e.noRefresh.id} {
 		if row := connRowOf(t, s, id, e.e2.slug); row.Refresh != nil || row.RevokeURL != nil || row.ExpiresAt == nil {
 			t.Fatalf("the first image stored the %s's token of a provider without refresh tokens and a server without a revoke URL as refresh %v, revoke_url %v, expires_at %v; want no refresh token, no revoke URL, an expiry",
-				who, row.Refresh != nil, row.RevokeURL, row.ExpiresAt)
+				who, row.Refresh != nil, handOverStr(row.RevokeURL), row.ExpiresAt)
 		}
 	}
 	// The revoke URL comes afterwards: the rows keep NULL, the URL in force at issue time. A change
@@ -345,7 +393,7 @@ func createHandOverRotation(t *testing.T, s *harness.Stack, admin *harness.Clien
 // first with SECRETS_KEY = a new key and SECRETS_KEY_OLD = oldKey (the key everything was sealed
 // with), then starts image on the new key alone and uses every credential. The stack's own key is
 // not changed: a later swap without overrides would start on oldKey again, so this comes last.
-func checkHandOverRotation(t *testing.T, s *harness.Stack, r *handOverRotation, image, cli, oldKey string) {
+func checkHandOverRotation(t *testing.T, s *harness.Stack, r *handOverRotation, image, cli, oldKey string, kept *handOverKeptLogs) {
 	t.Helper()
 	next := newKey(t)
 	secrets, conns := cliSecretCounts(t, s)
@@ -355,6 +403,7 @@ func checkHandOverRotation(t *testing.T, s *harness.Stack, r *handOverRotation, 
 	checkBefore, sharedBefore := keyCheckBytes(t, s), cliSealed(t, s, r.shared)
 	rowBefore := connRowOf(t, s, r.person.id, r.oauth.slug)
 
+	kept.keep(t, s)
 	s.SwapImage(t, image, cli, map[string]string{"SECRETS_KEY": next, "SECRETS_KEY_OLD": oldKey})
 	logs := s.Logs(t)
 	recs, _ := logRecords(t, logs)
@@ -379,6 +428,7 @@ func checkHandOverRotation(t *testing.T, s *harness.Stack, r *handOverRotation, 
 		t.Fatal("the key check, the server secret or the connection's tokens were not re-sealed")
 	}
 
+	kept.keep(t, s)
 	s.SwapImage(t, image, cli, map[string]string{"SECRETS_KEY": next})
 	logs = s.Logs(t)
 	recs, _ = logRecords(t, logs)

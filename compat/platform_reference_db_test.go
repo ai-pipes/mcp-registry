@@ -129,6 +129,7 @@ func createHandOverPeople(t *testing.T, s *harness.Stack) *handOverPeople {
 	}
 	p.adminID, p.memberID = whoami(t, p.admin).UserID, whoami(t, p.member).UserID
 	p.tokenValue = p.admin.Token(t, "hand-over")
+	connNote(p.tokenValue)
 	list := handOverTokens(t, p.admin)
 	if len(list) != 1 || list[0].Name != "hand-over" || !strings.HasPrefix(p.tokenValue, list[0].Prefix) {
 		t.Fatalf("the token list after creating the token: %+v", list)
@@ -292,8 +293,9 @@ func createHandOverConnections(t *testing.T, s *harness.Stack, p *handOverPeople
 	t.Helper()
 	h := &handOverConnections{rows: map[string]connRow{}}
 	up := fakes.StartUpstream(t, fakes.UpstreamOptions{Tools: fakes.Tools("echo")})
-	provider := fakes.StartOAuthProvider(t)
+	provider := connWatch(fakes.StartOAuthProvider(t)) // its tokens are looked for by connLeakCheck
 	slug := harness.Unique("hand-oauth")
+	connNote(handOverAdminPAT, handOverMemberPAT, "hand-over-secret")
 	catalogRegister(t, p.admin, fakes.ServerInput(up, slug, "oauth_user",
 		fakes.WithOAuth(provider, "repo"),
 		fakes.WithExtraAuthorizeParams(map[string]string{"access_type": "offline"}),
@@ -404,8 +406,14 @@ func TestPlatformStartsOnReferenceDatabase(t *testing.T) {
 	conns := createHandOverConnections(t, s, people)
 	edges := createHandOverEdges(t, s, people.admin)
 	swapped := false
+	// The tokens, personal tokens and secrets of this stack must appear in no app log (the current
+	// container's and every replaced one's) and no audit record.
+	kept := &handOverKeptLogs{}
+	connLeakCheck(t, s, people.admin)
+	kept.scanAtEnd(t, connNoted)
 
 	t.Run("the same key: healthy, nothing applied, the check untouched, the shell served, the reference image's people accepted", func(t *testing.T) {
+		kept.keep(t, s)
 		s.SwapImage(t, image, cli)
 		swapped = true
 		if got := migrationNames(t, s); !slices.Equal(got, migrations) {
@@ -446,7 +454,9 @@ func TestPlatformStartsOnReferenceDatabase(t *testing.T) {
 
 	t.Run("another key: exit 1, one fatal record, no key in the log, the check unchanged", func(t *testing.T) {
 		wrong := newKey(t)
+		kept.keep(t, s)
 		code, logs := s.SwapImageExpectingExit(t, image, cli, map[string]string{"SECRETS_KEY": wrong})
+		kept.add(logs)
 		if code != 1 {
 			t.Fatalf("exit code %d, logs: %s", code, logs)
 		}
@@ -464,6 +474,7 @@ func TestPlatformStartsOnReferenceDatabase(t *testing.T) {
 	t.Run("a migration the image does not know: exit 1, one fatal record naming it, nothing applied", func(t *testing.T) {
 		execSQL(t, s, `insert into platform.schema_migrations (name) values ($1)`, newerDBMigrName)
 		code, logs := s.SwapImageExpectingExit(t, image, cli, nil)
+		kept.add(logs)
 		if code != 1 {
 			t.Fatalf("exit code %d, logs: %s", code, logs)
 		}
@@ -511,7 +522,13 @@ func TestPlatformReverseHandOver(t *testing.T) {
 	conns := createHandOverConnections(t, s, people)
 	edges := createHandOverEdges(t, s, people.admin)
 	rotation := createHandOverRotation(t, s, people.admin)
+	// The tokens, personal tokens and secrets of this stack must appear in no app log (the current
+	// container's and every replaced one's) and no audit record.
+	kept := &handOverKeptLogs{}
+	connLeakCheck(t, s, people.admin)
+	kept.scanAtEnd(t, connNoted)
 
+	kept.keep(t, s)
 	s.SwapImage(t, harness.ReferenceImage(), harness.ReferenceCLI())
 
 	if got := migrationNames(t, s); !slices.Equal(got, migrations) {
@@ -541,6 +558,6 @@ func TestPlatformReverseHandOver(t *testing.T) {
 	t.Run("the unusual rows the image under test left", func(t *testing.T) { checkHandOverEdges(t, s, edges) })
 	// Last: the stack's own key stays the old one, so nothing may swap images after this subtest.
 	t.Run("the reference image's CLI rotates the key the image under test sealed with; the reference then runs on the new key alone", func(t *testing.T) {
-		checkHandOverRotation(t, s, rotation, harness.ReferenceImage(), harness.ReferenceCLI(), key)
+		checkHandOverRotation(t, s, rotation, harness.ReferenceImage(), harness.ReferenceCLI(), key, kept)
 	})
 }

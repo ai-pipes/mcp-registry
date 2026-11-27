@@ -32,6 +32,11 @@ package compat_test
 //     on working (the compatibility requirements would allow them to be lost; the images keep them,
 //     which is pinned); schema_migrations and the key check are unchanged;
 //   - the other direction: a person, a token and a server created by the new image work;
+//   - the unusual connection rows the old image leaves (handover_edges_test.go, also judged by the
+//     hand-over scenarios between the reference and the image under test): an expired row that
+//     keeps its refresh token, a member's refresh, a connect started before the swap and completed
+//     after it (one past its window refused), a token without a refresh token from a server that had
+//     no revoke URL at issue time, tokens without an expiry;
 //   - last, a key rotation after the upgrade: the new image starts with a new SECRETS_KEY and the
 //     old one as SECRETS_KEY_OLD, its CLI re-seals everything the old image sealed, it starts on the
 //     new key alone, and the credentials of a shared_secret, a pat_user and an oauth_user server
@@ -228,11 +233,25 @@ func TestUpgradeKeepsEverything(t *testing.T) {
 	linkCode := identityLinkFor(t, s, linkSub)
 	led.note(linkCode)
 
-	// What the key rotation after the swap must keep usable (the last subtest).
+	// The unusual connection rows the old image leaves (checked after the swap) and what the key
+	// rotation after the swap must keep usable (the last subtest).
+	edges := createHandOverEdges(t, s, admin)
 	rotation := createHandOverRotation(t, s, admin)
-	for _, slug := range []string{rotation.shared, rotation.pat, rotation.oauth.slug} {
+	led.note(rotation.secret, rotation.patTok, rotation.issued.AccessToken, rotation.issued.RefreshToken)
+	for _, slug := range []string{edges.e1.slug, edges.e2.slug, edges.e3.slug, rotation.shared, rotation.pat, rotation.oauth.slug} {
 		catalogWaitDocs(t, s, slug, 1)
 	}
+	// Beyond the ledger's scan (MCP answers and the last app log): every token, personal token and
+	// secret noted through the connection helpers in no app log of any container of this scenario
+	// and no audit record. Cleanups run last first: the replaced containers' logs are scanned with
+	// the ledger's and the connection helpers' values before connLeakCheck consumes the latter.
+	kept := &handOverKeptLogs{}
+	connLeakCheck(t, s, admin)
+	kept.scanAtEnd(t, func() []string {
+		led.mu.Lock()
+		defer led.mu.Unlock()
+		return append(connNoted(), led.secrets...)
+	})
 
 	before := upgradeTake(t, s, member.token)
 	if len(before.calls) < 4 || before.quota == "" || before.auditMax == 0 {
@@ -245,6 +264,7 @@ func TestUpgradeKeepsEverything(t *testing.T) {
 	quotaBefore := gwQuotaCount(t, s, member.id, shared.slug)
 
 	// ---- the swap ----
+	kept.keep(t, s)
 	s.SwapImage(t, platformImage(), newCLI)
 
 	if n := logCountFrom(t, s, "error"); n != 0 {
@@ -414,8 +434,12 @@ func TestUpgradeKeepsEverything(t *testing.T) {
 		}
 	})
 
+	t.Run("the unusual connection rows the old image left: expired, pending, without a refresh token, revoke URL or expiry", func(t *testing.T) {
+		checkHandOverEdges(t, s, edges)
+	})
+
 	// Last: the stack's own key stays the old one, so nothing may swap images after this subtest.
 	t.Run("the new image's CLI rotates the key the old image sealed with; the new image then runs on the new key alone", func(t *testing.T) {
-		checkHandOverRotation(t, s, rotation, platformImage(), newCLI, key)
+		checkHandOverRotation(t, s, rotation, platformImage(), newCLI, key, kept)
 	})
 }
