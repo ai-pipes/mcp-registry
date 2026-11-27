@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # --- base: Node 22 + the pnpm version from package.json, for the web UI build only ---------------
-FROM node:22-slim@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee AS base
+FROM node:22-slim@sha256:be979e5523c76fa4d5ca4ebd3099078f220aa47ec39c48ad5b5df9314debd6eb AS base
 RUN npm install --global --no-fund --no-audit pnpm@11.16.0
 WORKDIR /app
 
