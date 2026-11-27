@@ -67,7 +67,7 @@ RUN go mod download
 COPY compat/cmd compat/cmd
 RUN CGO_ENABLED=0 go build -tags compat -trimpath -ldflags "-s -w" -o /out/ ./compat/cmd/smoke-upstream ./compat/cmd/smoke-client
 
-FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc AS smoke-go
+FROM debian:bookworm-slim@sha256:e67eeead736ff7bbe258ef088bff683635c561b1fcfefad0806c1df4ab49ce0e AS smoke-go
 COPY --from=smoke-go-build /out/smoke-upstream /out/smoke-client /usr/local/bin/
 USER 65534:65534
 EXPOSE 8080
@@ -84,7 +84,7 @@ CMD ["smoke-upstream"]
 #     the default web root /app/web (the `web` stage). Everything under /app and /usr/local is owned
 #     by root and read-only for the server's user (uid and gid 1000, as the 1.0.x image), which needs no writable
 #     directory and no home. ----------------------------------------------------------------------
-FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc AS runtime
+FROM debian:bookworm-slim@sha256:e67eeead736ff7bbe258ef088bff683635c561b1fcfefad0806c1df4ab49ce0e AS runtime
 # glibc keeps freed native memory per thread arena: repeated failed model loads inflated the resident
 # memory to gigabytes; with two arenas it plateaus (about 660 MB measured).
 ENV MALLOC_ARENA_MAX=2
