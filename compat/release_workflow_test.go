@@ -14,10 +14,15 @@ import (
 
 // The release workflow is the only place in the repository with packages: write. These pins keep
 // its shape (Docker-free, run by make go-verify):
-//   - the workflow grants contents: read and nothing else, and `push` means a v* tag push only;
+//   - the workflow grants contents: read and nothing else; its triggers are exactly push (only
+//     tags: ['v*']), workflow_dispatch and pull_request (no pull_request_target, workflow_call,
+//     workflow_run, schedule or anything else that could run it with other privileges or inputs);
 //   - only the publishing jobs (push-digest, publish) have a write permission, and that one is
-//     packages: write; each of them runs only on a tag push and needs the test job;
-//   - only the publishing jobs mention a secret or the workflow token, or push an image;
+//     packages: write; each of them runs only if the event is a push of a tag and needs the test
+//     job; every other job has no permissions key or contents: read (scopes set to none allowed);
+//   - nothing outside the publishing jobs (workflow-level env, defaults and the rest, every other
+//     job with its env, defaults and steps) mentions a secret or the workflow token, or pushes an
+//     image;
 //   - no emulation: no QEMU or binfmt, no --platform in a command, and every image build names its
 //     platform through the matrix of a job that pairs linux/amd64 with ubuntu-latest and linux/arm64
 //     with ubuntu-24.04-arm (each architecture built and run on its own runner).
@@ -30,7 +35,15 @@ var publishingJobs = []string{"push-digest", "publish"}
 // nativeRunners pairs each platform with the GitHub-hosted runner of that architecture.
 var nativeRunners = map[string]string{"linux/amd64": "ubuntu-latest", "linux/arm64": "ubuntu-24.04-arm"}
 
-const tagPushCondition = "github.event_name == 'push'"
+// tagPushCondition is the exact `if:` of every job that holds packages: write: a push event that
+// is a tag (the push trigger lists only v* tags; the second half keeps it so if a branch is added).
+const tagPushCondition = "github.event_name == 'push' && github.ref_type == 'tag'"
+
+// allowedTriggers are the workflow's triggers: a tag push releases, the other two rehearse.
+var allowedTriggers = []string{"pull_request", "push", "workflow_dispatch"}
+
+// secretMentions are the texts that read a secret or the workflow token.
+var secretMentions = []string{"secrets.", "github.token", "GITHUB_TOKEN"}
 
 func releaseWorkflowProblems(raw []byte) []string {
 	var problems []string
@@ -51,10 +64,36 @@ func releaseWorkflowProblems(raw []byte) []string {
 		add("the workflow permissions are %v, want exactly contents: read", wf["permissions"])
 	}
 	on, _ := wf["on"].(map[string]any)
+	if len(on) == 0 {
+		add("on is %v, want the triggers %v as a map", wf["on"], allowedTriggers)
+	}
+	for _, trigger := range sortedKeys(on) {
+		if !slices.Contains(allowedTriggers, trigger) {
+			add("trigger %s is not allowed: the triggers are exactly %v (another trigger could run the workflow with other privileges, secrets or inputs)", trigger, allowedTriggers)
+		}
+	}
+	for _, trigger := range allowedTriggers {
+		if _, ok := on[trigger]; !ok {
+			add("trigger %s is missing: the triggers are exactly %v", trigger, allowedTriggers)
+		}
+	}
 	push, _ := on["push"].(map[string]any)
 	tags, _ := push["tags"].([]any)
 	if len(push) != 1 || len(tags) != 1 || tags[0] != "v*" {
 		add("on.push is %v, want only tags: ['v*'] (a push event must mean a release tag)", on["push"])
+	}
+
+	// Everything at the workflow level (env, defaults, concurrency, run-name...) reaches every job.
+	for _, key := range sortedKeys(wf) {
+		if key == "jobs" {
+			continue
+		}
+		section, _ := yaml.Marshal(wf[key])
+		for _, token := range secretMentions {
+			if strings.Contains(string(section), token) {
+				add("the workflow's %s mentions %s: it reaches every job, and only %v may read a secret or the workflow token", key, token, publishingJobs)
+			}
+		}
 	}
 
 	jobs, _ := wf["jobs"].(map[string]any)
@@ -71,10 +110,12 @@ func releaseWorkflowProblems(raw []byte) []string {
 		case map[string]any:
 			for _, scope := range sortedKeys(perms) {
 				value := perms[scope]
-				if value == "read" || value == "none" {
-					continue
-				}
-				if !publishing || scope != "packages" || value != "write" {
+				switch {
+				case value == "none", scope == "contents" && value == "read":
+				case !publishing:
+					add("job %s has permission %s: %v; a job other than %v gets at most contents: read", name, scope, value, publishingJobs)
+				case value == "read":
+				case scope != "packages" || value != "write":
 					add("job %s has permission %s: %v; only %v may hold a write permission, and only packages: write", name, scope, value, publishingJobs)
 				}
 			}
@@ -84,13 +125,13 @@ func releaseWorkflowProblems(raw []byte) []string {
 
 		if publishing {
 			if job["if"] != tagPushCondition {
-				add("job %s runs if %q, want exactly %q (a tag push)", name, job["if"], tagPushCondition)
+				add("job %s runs if %q, want exactly %q (a push of a tag)", name, job["if"], tagPushCondition)
 			}
 			if !slices.Contains(stringList(job["needs"]), "test") {
 				add("job %s needs %v, want the test job among them", name, job["needs"])
 			}
 		} else {
-			for _, token := range []string{"secrets.", "github.token", "GITHUB_TOKEN"} {
+			for _, token := range secretMentions {
 				if strings.Contains(string(jobText), token) {
 					add("job %s mentions %s: only %v may read a secret or the workflow token", name, token, publishingJobs)
 				}
@@ -230,13 +271,19 @@ func TestReleaseWorkflowGuardRefusesBrokenCopies(t *testing.T) {
 		},
 		{
 			name:   "publish loses its tag-push condition",
-			old:    "  publish:\n    needs: [test, push-digest]\n    if: github.event_name == 'push'\n",
+			old:    "  publish:\n    needs: [test, push-digest]\n    if: github.event_name == 'push' && github.ref_type == 'tag'\n",
 			new:    "  publish:\n    needs: [test, push-digest]\n",
 			reason: "job publish runs if",
 		},
 		{
+			name:   "publish runs on any push, not only a tag",
+			old:    "  publish:\n    needs: [test, push-digest]\n    if: github.event_name == 'push' && github.ref_type == 'tag'\n",
+			new:    "  publish:\n    needs: [test, push-digest]\n    if: github.event_name == 'push'\n",
+			reason: "job publish runs if \"github.event_name == 'push'\"",
+		},
+		{
 			name:   "push-digest runs on every event",
-			old:    "  push-digest:\n    needs: test\n    if: github.event_name == 'push'\n",
+			old:    "  push-digest:\n    needs: test\n    if: github.event_name == 'push' && github.ref_type == 'tag'\n",
 			new:    "  push-digest:\n    needs: test\n    if: always()\n",
 			reason: "job push-digest runs if \"always()\"",
 		},
@@ -287,6 +334,66 @@ func TestReleaseWorkflowGuardRefusesBrokenCopies(t *testing.T) {
 			old:    "          load: true\n          push: false\n",
 			new:    "          load: true\n          push: true\n",
 			reason: "may push (push: true",
+		},
+		{
+			name:   "a pull_request_target trigger is added",
+			old:    "  workflow_dispatch:\n",
+			new:    "  workflow_dispatch:\n  pull_request_target:\n",
+			reason: "trigger pull_request_target",
+		},
+		{
+			name:   "a workflow_call trigger is added",
+			old:    "  workflow_dispatch:\n",
+			new:    "  workflow_dispatch:\n  workflow_call:\n",
+			reason: "trigger workflow_call",
+		},
+		{
+			name:   "a workflow_run trigger is added",
+			old:    "  workflow_dispatch:\n",
+			new:    "  workflow_dispatch:\n  workflow_run:\n    workflows: [ci]\n    types: [completed]\n",
+			reason: "trigger workflow_run",
+		},
+		{
+			name:   "a schedule trigger is added",
+			old:    "  workflow_dispatch:\n",
+			new:    "  workflow_dispatch:\n  schedule:\n    - cron: '0 3 * * *'\n",
+			reason: "trigger schedule",
+		},
+		{
+			name:   "the workflow env reads a secret",
+			old:    "env:\n  IMAGE: ",
+			new:    "env:\n  T: ${{ secrets.X }}\n  IMAGE: ",
+			reason: "the workflow's env mentions secrets.",
+		},
+		{
+			name:   "the workflow defaults read the workflow token",
+			old:    "defaults:\n  run:\n    shell: bash\n",
+			new:    "defaults:\n  run:\n    shell: bash\n    working-directory: ${{ github.token }}\n",
+			reason: "the workflow's defaults mentions github.token",
+		},
+		{
+			name:   "the rehearsal's assembly hands a step the workflow token",
+			old:    "      - name: Dry assembly of a manifest list from the reference image\n",
+			new:    "      - name: Dry assembly of a manifest list from the reference image\n        env:\n          GH: ${{ secrets.GITHUB_TOKEN }}\n",
+			reason: "job assemble mentions secrets.",
+		},
+		{
+			name:   "the rehearsal's assembly gets write-all",
+			old:    "  assemble:\n    needs: test\n",
+			new:    "  assemble:\n    needs: test\n    permissions: write-all\n",
+			reason: "job assemble sets permissions to write-all",
+		},
+		{
+			name:   "the test job gets read-all",
+			old:    "  test:\n    name: test (${{ matrix.arch }})\n",
+			new:    "  test:\n    name: test (${{ matrix.arch }})\n    permissions: read-all\n",
+			reason: "job test sets permissions to read-all",
+		},
+		{
+			name:   "the test job may read actions",
+			old:    "  test:\n    name: test (${{ matrix.arch }})\n",
+			new:    "  test:\n    name: test (${{ matrix.arch }})\n    permissions:\n      contents: read\n      actions: read\n",
+			reason: "job test has permission actions: read",
 		},
 		{
 			name:   "the rehearsal's assembly pushes",

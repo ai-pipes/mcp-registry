@@ -181,7 +181,7 @@ jobs:
   # release instead of publishing an untested image: re-run all jobs then.
   push-digest:
     needs: test
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && github.ref_type == 'tag'
     name: push-digest (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
@@ -268,7 +268,7 @@ jobs:
   # list of exactly the two images push-digest pushed and checked.
   publish:
     needs: [test, push-digest]
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && github.ref_type == 'tag'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
