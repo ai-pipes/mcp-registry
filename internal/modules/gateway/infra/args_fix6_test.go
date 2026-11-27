@@ -96,7 +96,7 @@ func TestAStructuredConstOrEnumEntryWeighsItsValues(t *testing.T) {
 
 // Every recorded tool schema is enforced and leaves room for at least 500 argument values.
 func TestEveryRecordedToolSchemaIsEnforcedWithRoomForArguments(t *testing.T) {
-	fixtures := os.DirFS(filepath.Join("..", "..", "..", "..", "apps", "server", "test", "fixtures", "tools"))
+	fixtures := os.DirFS(filepath.Join("..", "..", "..", "..", "compat", "fixtures", "tools"))
 	for _, name := range []string{"gitea", "youtrack"} {
 		raw, err := fs.ReadFile(fixtures, name+".json")
 		if err != nil {

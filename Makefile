@@ -1,9 +1,15 @@
 GOLANGCI_LINT := github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0
 GO_ARCH_LINT := github.com/fe3dback/go-arch-lint@v1.19.2
 GOFUMPT := mvdan.cc/gofumpt@v0.12.0
-VERSION := $(shell node -p "require('./apps/server/package.json').version")
+# The version of the gateway: the root VERSION file, the only source (no Node needed).
+VERSION := $(strip $(shell cat VERSION 2>/dev/null))
 
-.PHONY: native-libs native-model go-test-onnx go-test-onnx-parity go-vet-onnx go-lint-onnx go-verify-onnx compat compat-selfcheck compat-schemas compat-image-ts compat-image-go compat-go e2e-flows e2e-flows-go go-lint go-lint-new go-fmt-check go-arch-lint go-verify go-test-int go-build print-go-arch-lint print-golangci-lint
+# One guard for every target that stamps the version into a binary or an image.
+.PHONY: check-version
+check-version:
+	@echo '$(VERSION)' | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$$' || { echo "check-version: VERSION must hold MAJOR.MINOR.PATCH, got '$(VERSION)'"; exit 1; }
+
+.PHONY: native-libs native-model go-test-onnx go-test-onnx-parity go-vet-onnx go-lint-onnx go-verify-onnx compat compat-selfcheck compat-schemas compat-reference print-reference-image compat-upgrade-from print-upgrade-from-image compat-image-ts compat-image-go compat-go load-compare e2e-flows e2e-flows-go go-lint go-lint-new go-fmt-check go-arch-lint go-cover go-verify go-test-int go-build print-go-arch-lint print-golangci-lint
 
 go-lint:
 	go run $(GOLANGCI_LINT) run
@@ -32,17 +38,30 @@ print-golangci-lint:
 # Integration tests (build tag integration) start a real Postgres through testcontainers and need
 # Docker, like `pnpm test:int`. They are vetted and linted with the tag (.golangci.yml build-tags)
 # and run by go-test-int, which go-verify includes.
-go-verify: go-lint go-arch-lint
+# The coverage gate: domain and app of every module cover at least 90 % of their statements, per
+# package, measured by the unit tests alone (no build tags, no Docker; integration tests do not
+# count). internal/archtest/cmd/covergate lists the expected packages itself and fails for a
+# missing or empty one. The unit tests run with coverage here, which go test ./... cannot reuse
+# (different flags, different cache entry): about 7 s.
+go-cover:
+	@profile="$$(mktemp)"; trap 'rm -f "$$profile"' EXIT; \
+	go test -count=1 -coverprofile="$$profile" ./internal/modules/*/domain ./internal/modules/*/app >/dev/null || { echo "go-cover: unit tests failed (run go test ./internal/modules/...)"; exit 1; }; \
+	go run ./internal/archtest/cmd/covergate -profile "$$profile" -root .
+
+go-verify: go-lint go-arch-lint go-cover
 	go vet ./...
 	go vet -tags integration ./...
 	go vet -tags compat ./...
 	go vet -tags "compat selfcheck" ./compat/selfcheck/
+	go vet -tags "compat load" ./compat/
 	go vet -tags "compat e2e" ./compat/e2e/
 	go test -tags "compat e2e" -count=1 -run '^(TestControl(Refuses|Echo)|TestPlaywrightArgs)' ./compat/e2e/
 	# Docker-free tests of the suite itself (none boots a stack; they pass with the Docker socket
 	# unreachable). A test that needs no Docker is added here by name.
-	go test -tags compat -count=1 -run '^(TestAppArgsPublishTheContainerPortAndKeepFileContentOffTheCommandLine|TestAppEnvReadsTheEnvironment|TestCheckUpdate|TestCheckUpdateAllowedReadsTheEnvironment|TestCLIResultStringMasksTokensAndLinkCodes|TestDefaultImageAndCLIFollowTheEnvironment|TestDoChunkedExpectingEarlyRefusalSendsNoContentLength|TestDoExpectingEarlyRefusalReturnsTheAnswerWhateverHappenedToTheWrite|TestErrorNamesSchemaAndPath|TestEveryContractHasASchema|TestEveryDeviationHasADescriptionAndIsUsedByAScenario|TestFinishSavesTheLogOnlyForAFailedTest|TestFixedFollowsTheEnvironment|TestListSuffixAndUnknownName|TestLogFileName|TestLoopbackHostResolution|TestOneOffCLIContainerNeverPutsAValueOnTheCommandLine|TestOtherFormatsAreAsserted|TestParseAppEnv|TestParseFixed|TestPortTakenRecognisesDockersMessages|TestPublicHostAndExtraHostsReachTheContainerArguments|TestRedactTruncates|TestResponseDecode|TestSaveLogDoesNothingWithoutADirectory|TestSchemaRejectsExtraAndMissingFields|TestScrubRemovesCredentialShapes|TestScrubRemovesTheContentOfSecretFiles|TestSecretValuesListTheBareDatabasePasswordToo|TestServerViewWithSecretFieldIsRejected|TestUpdateRefusesNonReferenceImage|TestURLFormatsAreAsserted|TestWriteLogScrubsAndCreatesTheDirectory)$$' ./compat/harness/
-	go test -tags compat -count=1 -run '^(TestAuditPagingProblem|TestCreateServerSyncFailureProblem|TestMCPReaderIsLenient|TestRetryAfterProblem|TestSearchReadyProblem)$$' ./compat/
+	go test -tags compat -count=1 -run '^(TestAppArgsPublishTheContainerPortAndKeepFileContentOffTheCommandLine|TestAppEnvReadsTheEnvironment|TestCheckUpdate|TestCheckUpdateAllowedReadsTheEnvironment|TestCLIResultStringMasksTokensAndLinkCodes|TestDefaultImageAndCLIFollowTheEnvironment|TestDoChunkedExpectingEarlyRefusalSendsNoContentLength|TestDoExpectingEarlyRefusalReturnsTheAnswerWhateverHappenedToTheWrite|TestErrorNamesSchemaAndPath|TestEveryContractHasASchema|TestEveryDeviationHasADescriptionAndIsUsedByAScenario|TestFinishSavesTheLogOnlyForAFailedTest|TestFixedFollowsTheEnvironment|TestListSuffixAndUnknownName|TestLogFileName|TestLoopbackHostResolution|TestOneOffCLIContainerNeverPutsAValueOnTheCommandLine|TestOtherFormatsAreAsserted|TestParseAppEnv|TestParseFixed|TestPortTakenRecognisesDockersMessages|TestPublicHostAndExtraHostsReachTheContainerArguments|TestRedactTruncates|TestReferenceImageFollowsItsVariable|TestResponseDecode|TestSaveLogDoesNothingWithoutADirectory|TestSchemaRejectsExtraAndMissingFields|TestScrubRemovesCredentialShapes|TestScrubRemovesTheContentOfSecretFiles|TestSecretValuesListTheBareDatabasePasswordToo|TestServerViewWithSecretFieldIsRejected|TestTheReferenceIsPinnedByDigestTheSameEverywhere|TestUpdateRefusesNonReferenceImage|TestURLFormatsAreAsserted|TestWriteLogScrubsAndCreatesTheDirectory)$$' ./compat/harness/
+	# The smoke tools of scripts/smoke.sh (compat/cmd): every test there is Docker-free.
+	go test -tags compat -count=1 ./compat/cmd/...
+	go test -tags compat -count=1 -run '^(TestAuditPagingProblem|TestCreateServerSyncFailureProblem|TestMCPReaderIsLenient|TestRetryAfterProblem|TestSearchReadyProblem|TestToolFixtureCopiesEqualTheOriginals|TestUpgradeSourceIsThePublished100PinnedByDigest|TestVersionFileEqualsTheServerPackage)$$' ./compat/
 	go test ./...
 	$(MAKE) go-test-int
 
@@ -58,22 +77,60 @@ go-test-int:
 compat-schemas:
 	node --experimental-strip-types packages/contracts/scripts/export-json-schema.mjs compat/schemas
 
+# The reference implementation the suite compares with (vectors, rankings, the database hand-over,
+# the goldens, the embedder parity run, the self-check base): the published TypeScript image 1.0.1,
+# pinned by the digest of its multi-arch index (linux/amd64, linux/arm64). The harness's
+# defaultReferenceImage (compat/harness/stack.go) and compat/selfcheck/Dockerfile hold the same
+# value; a Docker-free test keeps the three equal. compat-reference pulls it anonymously and checks
+# that the local image carries that digest. The suite with the reference as the image under test:
+#   make compat COMPAT_IMAGE="$$(make -s print-reference-image)"
+REFERENCE_IMAGE := ghcr.io/ai-pipes/mcp-registry:1.0.1@sha256:42726e227e5c2522b35c28c41e1feb6ceb8471ba3447ec5399a6c0559a72baf9
+REFERENCE_REPO := $(firstword $(subst :, ,$(REFERENCE_IMAGE)))
+REFERENCE_DIGEST := $(lastword $(subst @, ,$(REFERENCE_IMAGE)))
+
+compat-reference:
+	docker pull -q $(REFERENCE_IMAGE)
+	@docker image inspect -f '{{range .RepoDigests}}{{println .}}{{end}}' $(REFERENCE_IMAGE) | grep -qx '$(REFERENCE_REPO)@$(REFERENCE_DIGEST)' || \
+		{ echo "compat-reference: the local image does not carry $(REFERENCE_REPO)@$(REFERENCE_DIGEST)"; exit 1; }
+
+print-reference-image:
+	@echo $(REFERENCE_IMAGE)
+
+# The image the upgrade scenario (TestUpgradeKeepsEverything) starts from in compat-go and in CI's
+# reference leg: the published TypeScript 1.0.0 (the release operators run), pinned by the digest of
+# its multi-arch index (linux/amd64 and linux/arm64; resolved with `docker buildx imagetools inspect
+# ghcr.io/ai-pipes/mcp-registry:1.0.0`). compat-upgrade-from pulls it anonymously and checks that the
+# local image carries that digest. Dependabot does not watch this line.
+UPGRADE_FROM_IMAGE := ghcr.io/ai-pipes/mcp-registry:1.0.0@sha256:9966fa11e597b45fe27ad916b4121a312c624232a1855d922c1f1946f7c09d72
+UPGRADE_FROM_REPO := $(firstword $(subst :, ,$(UPGRADE_FROM_IMAGE)))
+UPGRADE_FROM_DIGEST := $(lastword $(subst @, ,$(UPGRADE_FROM_IMAGE)))
+UPGRADE_FROM_CLI := node dist/cli.js
+
+compat-upgrade-from:
+	docker pull -q $(UPGRADE_FROM_IMAGE)
+	@docker image inspect -f '{{range .RepoDigests}}{{println .}}{{end}}' $(UPGRADE_FROM_IMAGE) | grep -qx '$(UPGRADE_FROM_REPO)@$(UPGRADE_FROM_DIGEST)' || \
+		{ echo "compat-upgrade-from: the local image does not carry $(UPGRADE_FROM_REPO)@$(UPGRADE_FROM_DIGEST)"; exit 1; }
+
+print-upgrade-from-image:
+	@echo $(UPGRADE_FROM_IMAGE)
+
+# The TypeScript image built from this tree (the default image under test until the switchover).
 compat-image-ts:
 	docker build -t mcp-registry:compat-ts .
 
 # The Go image (Dockerfile target go), tagged mcp-registry:compat-go: cgo, build tag onnx, ONNX
 # Runtime and the model inside. It is built natively for the host architecture; PLATFORM builds
 # another one (emulated where needed): make compat-image-go PLATFORM=linux/amd64, tagged
-# mcp-registry:compat-go-linux-amd64 so that the host image is not overwritten. The version comes
-# from the same place as for go-build. The default target (runtime, the TypeScript image) is
-# untouched.
+# mcp-registry:compat-go-linux-amd64 so that the host image is not overwritten. The Dockerfile
+# reads the version from the VERSION file itself (no build argument), as go-build does. The image
+# carries its HEALTHCHECK (`mcp-registry healthcheck`). The default target (runtime, the TypeScript
+# image) is untouched.
 PLATFORM :=
 GO_IMAGE := mcp-registry:compat-go$(if $(PLATFORM),-$(subst /,-,$(PLATFORM)))
-compat-image-go:
-	@test -n "$(VERSION)" || { echo "compat-image-go: the version read from apps/server/package.json is empty (is node on PATH?)"; exit 1; }
-	docker build $(if $(PLATFORM),--platform $(PLATFORM)) --target go --build-arg VERSION=$(VERSION) -t $(GO_IMAGE) .
+compat-image-go: check-version
+	docker build $(if $(PLATFORM),--platform $(PLATFORM)) --target go -t $(GO_IMAGE) .
 	@got="$$(docker run --rm $(if $(PLATFORM),--platform $(PLATFORM)) $(GO_IMAGE) mcp-registry --version)"; \
-	if [ "$$got" != "$(VERSION)" ]; then echo "compat-image-go: the image reports version '$$got', the package says '$(VERSION)'"; exit 1; fi
+	if [ "$$got" != "$(VERSION)" ]; then echo "compat-image-go: the image reports version '$$got', VERSION says '$(VERSION)'"; exit 1; fi
 
 # The scenarios the Go server passes so far (the milestone list); it grows with every milestone.
 # Both variables are set with := here, so an environment variable of the same name does NOT
@@ -101,8 +158,8 @@ compat-image-go:
 # TestConnectionsUpstreamRejectsTheToken); TestSearchReadyBeforeServing (the decided ready-before-serving
 # branch: a search made at once after a restart equals the settled one); TestConfigNetworkAndRetention
 # and TestConfigSecretsFromFiles (their cleanup demands that the scenario's MCP ledger saw an answer);
-# and TestUpgradeKeepsEverything (the Go image on both sides is a restart test; its TypeScript-to-Go leg
-# runs when COMPAT_UPGRADE_FROM names the old image).
+# and TestUpgradeKeepsEverything (since milestone 8 compat-go runs it as the real upgrade: the published
+# 1.0.0 creates the state, the Go image takes over, see COMPAT_GO_UPGRADE_FROM).
 # Milestone 7 (the operator CLI) added TestCLIKeys (rotate-secrets-key and reset-key-check) and the
 # key-rotation subtest of TestPlatformMigrationsAndKeyCheck: nothing is left out for the Go image.
 COMPAT_GO_TESTS := TestConfigRefused TestPlatformStartsOnReferenceDatabase TestPlatformReverseHandOver \
@@ -148,18 +205,27 @@ COMPAT_GO_RUN := ^($(subst $(space),|,$(strip $(COMPAT_GO_TESTS))))$$
 # after a start). All twelve.
 COMPAT_GO_FIXED := config-errors,audit-login-via,create-user-keeps-role,oidc-binding-kept,create-server-sync-exit,reindex-wording,vector-kept-on-failed-reembedding,stale-removal-rechecks-catalog,oauth-state-kept,request-id-on-refusals,token-429-retry-after,ready-before-serving
 
-# The suite against the Go image. The reference image (mcp-registry:compat-ts) must exist as well:
-# some scenarios compare with it on the same machine, and the new-database scenario starts from it.
+# The image TestUpgradeKeepsEverything starts from under compat-go: the published 1.0.0 (UPGRADE_FROM_IMAGE,
+# make compat-upgrade-from), so the Go image takes over a database the TypeScript release created, and
+# rotates its key. Give it on the make command line to start from another image; empty
+# (make compat-go COMPAT_GO_UPGRADE_FROM=) makes the scenario a restart test of the Go image.
+COMPAT_GO_UPGRADE_FROM := $(UPGRADE_FROM_IMAGE)
+
+# The suite against the Go image. The reference image (REFERENCE_IMAGE, make compat-reference) must
+# exist as well: some scenarios compare with it on the same machine, and the new-database scenario
+# starts from it; so must the upgrade source (COMPAT_GO_UPGRADE_FROM, make compat-upgrade-from).
 # Before it runs, the pattern is
 # listed (nothing is started): it must match exactly the scenarios named in COMPAT_GO_TESTS, so a
 # renamed or mistyped scenario fails here instead of passing by running nothing.
 compat-go:
-	@docker image inspect mcp-registry:compat-ts >/dev/null 2>&1 || { echo "compat-go: the reference image mcp-registry:compat-ts is missing: run make compat-image-ts"; exit 1; }
+	@docker image inspect $(REFERENCE_IMAGE) >/dev/null 2>&1 || { echo "compat-go: the reference image $(REFERENCE_IMAGE) is missing: run make compat-reference"; exit 1; }
 	@docker image inspect mcp-registry:compat-go >/dev/null 2>&1 || { echo "compat-go: the image mcp-registry:compat-go is missing: run make compat-image-go"; exit 1; }
+	@$(if $(COMPAT_GO_UPGRADE_FROM),docker image inspect $(COMPAT_GO_UPGRADE_FROM) >/dev/null 2>&1 || { echo "compat-go: the upgrade source $(COMPAT_GO_UPGRADE_FROM) is missing: run make compat-upgrade-from"; exit 1; },true)
 	@listed="$$(go test -tags compat -count=1 -list '$(COMPAT_GO_RUN)' ./compat/ | grep -c '^Test')"; \
 	if [ "$$listed" != "$(words $(COMPAT_GO_TESTS))" ]; then \
 		echo "compat-go: the pattern '$(COMPAT_GO_RUN)' matches $$listed scenario(s), COMPAT_GO_TESTS names $(words $(COMPAT_GO_TESTS)): $(COMPAT_GO_TESTS)"; exit 1; fi
 	COMPAT_IMAGE=mcp-registry:compat-go COMPAT_CLI=mcp-registry COMPAT_FIXED=$(COMPAT_GO_FIXED) \
+		$(if $(COMPAT_GO_UPGRADE_FROM),COMPAT_UPGRADE_FROM='$(COMPAT_GO_UPGRADE_FROM)' COMPAT_UPGRADE_FROM_CLI='$(UPGRADE_FROM_CLI)') \
 		go test -tags compat -count=1 -p 1 -timeout 45m -run '$(COMPAT_GO_RUN)' $(if $(COMPAT_GO_SKIP),-skip '$(COMPAT_GO_SKIP)') $(COMPAT_ARGS) ./compat/
 
 # COMPAT_ARGS adds go test arguments, e.g. make compat COMPAT_ARGS='-run ^TestPlatform' (the -run
@@ -184,8 +250,7 @@ compat:
 e2e-flows:
 	go test -tags "compat e2e" -count=1 -timeout 30m -v -run '^(TestBrowserFlows|TestControl)' ./compat/e2e/
 
-# All twelve browser flows against the Go image (build it with compat-image-go; the reference image
-# must exist too, as for compat-go): identity, the catalog, connections, and since milestone 6 the
+# All twelve browser flows against the Go image (build it with compat-image-go): identity, the catalog, connections, and since milestone 6 the
 # token on /mcp (03-tokens) and a call through /mcp with the call log (09-permissions).
 # TestControlOperationsAgainstARealStack is not run: the control API's tests are image independent and
 # run in e2e-flows. Same guard, same specs: the arguments go through E2E_PLAYWRIGHT_ARGS, which refuses
@@ -201,12 +266,38 @@ e2e-flows-go:
 		E2E_PLAYWRIGHT_ARGS='$(E2E_GO_SPECS)' \
 		go test -tags "compat e2e" -count=1 -timeout 30m -v -run '^TestBrowserFlows$$' ./compat/e2e/
 
-# Proves the suite can fail: runs named scenarios against the reference image behind a distorting
-# proxy (compat/selfcheck). Slow; CI runs it daily (compat-selfcheck.yml), not on pull requests.
-compat-selfcheck: compat-image-ts
+# The load comparison (compat/load_test.go, build tags compat and load, so neither make compat nor
+# go-verify runs it): the same fixtures and traffic against two images, one stack at a time, a
+# Markdown table on stdout and in LOAD_OUT (default a file under the system temp dir). It reports
+# and asserts nothing. A is the published 1.0.0 (UPGRADE_FROM_IMAGE, make compat-upgrade-from), B the
+# Go image (make compat-image-go); every variable can be given on the make command line:
+#   make load-compare LOAD_IMAGE_B=mcp-registry:other LOAD_OUT=/tmp/load.md
+# LOAD_FIXED_B is the COMPAT_FIXED the harness boots B with (it only selects the branch a scenario
+# asserts; the load test asserts none). About 3 minutes.
+LOAD_IMAGE_A := $(UPGRADE_FROM_IMAGE)
+LOAD_CLI_A := $(UPGRADE_FROM_CLI)
+LOAD_IMAGE_B := mcp-registry:compat-go
+LOAD_CLI_B := mcp-registry
+LOAD_FIXED_A :=
+LOAD_FIXED_B := $(COMPAT_GO_FIXED)
+LOAD_OUT :=
+load-compare:
+	@docker image inspect '$(LOAD_IMAGE_A)' >/dev/null 2>&1 || { echo "load-compare: the image A '$(LOAD_IMAGE_A)' is missing: run make compat-upgrade-from (or give LOAD_IMAGE_A)"; exit 1; }
+	@docker image inspect '$(LOAD_IMAGE_B)' >/dev/null 2>&1 || { echo "load-compare: the image B '$(LOAD_IMAGE_B)' is missing: run make compat-image-go (or give LOAD_IMAGE_B)"; exit 1; }
+	LOAD_IMAGE_A='$(LOAD_IMAGE_A)' LOAD_CLI_A='$(LOAD_CLI_A)' LOAD_FIXED_A='$(LOAD_FIXED_A)' \
+		LOAD_IMAGE_B='$(LOAD_IMAGE_B)' LOAD_CLI_B='$(LOAD_CLI_B)' LOAD_FIXED_B='$(LOAD_FIXED_B)' \
+		$(if $(LOAD_OUT),LOAD_OUT='$(LOAD_OUT)') \
+		go test -tags "compat load" -count=1 -timeout 30m -run '^TestLoadCompare$$' -v ./compat/
+
+# Proves the suite can fail: runs named scenarios against the reference image (the published 1.0.1,
+# REFERENCE_IMAGE) behind a distorting proxy (compat/selfcheck). The base is SELFCHECK_BASE when the
+# caller sets it (environment or make command line), else harness.ReferenceImage (COMPAT_REFERENCE_IMAGE,
+# else the published reference); the published reference is pulled either way. Slow; CI runs it
+# daily (compat-selfcheck.yml), not on pull requests.
+compat-selfcheck: compat-reference
 	go test -tags "compat selfcheck" -count=1 -timeout 90m -v ./compat/selfcheck/
 
-go-build:
+go-build: check-version
 	go build -ldflags "-X main.version=$(VERSION)" -o bin/mcp-registry ./cmd/mcp-registry
 
 # --- The local embedder (build tag onnx) ---------------------------------------------------------
@@ -235,10 +326,11 @@ native-libs:
 	@test -n "$(ORT_FILE_$(NATIVE_KEY))" || { echo "native-libs: no pinned libraries for $(NATIVE_PLATFORM)"; exit 1; }
 	sh internal/modules/search/infra/onnx/native/fetch.sh $(NATIVE_PLATFORM) $(NATIVE_DIR)
 
-# The model and tokenizer the TypeScript server uses (revision and SHA-256 pinned in the script),
-# in the layout <root>/Xenova/multilingual-e5-small/. Needs node, like VERSION above.
+# The model and tokenizer both servers use (revision and SHA-256 pinned in pins.env), in the layout
+# <root>/<MODEL_NAME>/, fetched by fetch-model.sh (curl and sha256sum, no Node; nothing downloaded
+# is executed). The Dockerfile stage model runs the same script.
 native-model:
-	node scripts/download-model.mjs $(NATIVE_ROOT)/models
+	sh internal/modules/search/infra/onnx/native/fetch-model.sh $(NATIVE_ROOT)/models
 
 go-vet-onnx: native-libs
 	$(ONNX_TEST_ENV) go vet -tags onnx $(ONNX_PKG)
@@ -251,8 +343,8 @@ go-test-onnx: native-libs native-model
 
 go-verify-onnx: go-vet-onnx go-lint-onnx go-test-onnx
 
-# Vector parity with the reference, linux containers only: the reference image (mcp-registry:compat-ts)
-# makes the vectors of the committed texts with Node (--network none), then the tagged test runs in a
+# Vector parity with the reference, linux containers only: the reference image (REFERENCE_IMAGE,
+# make compat-reference) makes the vectors of the committed texts with Node (--network none), then the tagged test runs in a
 # golang container of the same architecture with the linux native libraries, so both sides run the
 # same ONNX Runtime build on the same machine. Vectors depend on the CPU, so they are never committed.
 PARITY_DIR := $(abspath $(NATIVE_ROOT))/parity
@@ -269,12 +361,12 @@ ONNX_GEN := /repo/internal/modules/search/infra/onnx/testdata
 PARITY_GO_IMAGE := golang:1.27-bookworm@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea
 
 go-test-onnx-parity:
-	@docker image inspect mcp-registry:compat-ts >/dev/null 2>&1 || { echo "go-test-onnx-parity: the reference image mcp-registry:compat-ts is missing; build it with: make compat-image-ts"; exit 1; }
+	@docker image inspect $(REFERENCE_IMAGE) >/dev/null 2>&1 || { echo "go-test-onnx-parity: the reference image $(REFERENCE_IMAGE) is missing; pull it with: make compat-reference"; exit 1; }
 	$(MAKE) native-libs NATIVE_PLATFORM=$(PARITY_LINUX)
 	$(MAKE) native-model
 	mkdir -p $(PARITY_DIR)
 	rm -f $(PARITY_DIR)/node-vectors.json $(PARITY_DIR)/go-test.log
-	docker run --rm --network none --user "$$(id -u):$$(id -g)" -e HOME=/tmp -v "$(CURDIR)":/repo:ro -v "$(PARITY_DIR)":/out mcp-registry:compat-ts \
+	docker run --rm --network none --user "$$(id -u):$$(id -g)" -e HOME=/tmp -v "$(CURDIR)":/repo:ro -v "$(PARITY_DIR)":/out $(REFERENCE_IMAGE) \
 		node $(ONNX_GEN)/gen/vectors.mjs /app/apps/server/node_modules/@huggingface/transformers/dist/transformers.node.mjs \
 		/app/models $(ONNX_GEN)/reference.json /out/node-vectors.json
 	docker run --rm --network none -v "$(CURDIR)":/src:ro -v "$$(go env GOMODCACHE)":/gomod:ro -v "$(PARITY_DIR)":/out:ro \

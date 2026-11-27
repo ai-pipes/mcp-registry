@@ -4,3 +4,12 @@
 - `node gen/answers.mjs` writes `../answers.json` by running `createMcpHandler` of `@modelcontextprotocol/server` (the version in `pnpm-lock.yaml`, 2.4.0) in-process, with the four meta-tools under their real names, descriptions and schemas. It needs the repository's `pnpm install`; `MCP_REFERENCE_ROOT=<checkout>` takes the packages of another checkout.
 
 Both outputs are deterministic and indented by two spaces, so a run leaves `git diff --exit-code .` clean.
+
+**Provenance: v1.0.1.** The committed `answers.json` was last regenerated from the reference 1.0.1 (`apps/server` of this tree, unchanged since the tag `v1.0.1`, and again from an unpacked `git archive v1.0.1`); both runs reproduced the committed file byte for byte. Once this tree has no `apps/server`, regenerate from the source of the tag:
+
+```sh
+REF=$(mktemp -d)
+git archive v1.0.1 | tar -x -C "$REF"
+(cd "$REF" && pnpm install --frozen-lockfile --ignore-scripts)
+MCP_REFERENCE_ROOT="$REF" node internal/modules/gateway/http/testdata/reference/gen/answers.mjs
+```

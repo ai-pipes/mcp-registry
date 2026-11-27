@@ -21,8 +21,8 @@ const (
 	KeyCheckAbsent        = "absent"
 )
 
-// keyCheckPlain is the text sealed into platform.key_check; the same literal as PLAIN in
-// apps/server/src/platform/crypto/key-check.ts (pinned by a test that reads that file).
+// keyCheckPlain is the text sealed into platform.key_check; the same literal as PLAIN in the
+// reference (v1.0.1:apps/server/src/platform/crypto/key-check.ts), pinned by keycheck_test.go.
 const keyCheckPlain = "mcp-registry key check v1"
 
 // Keys are the configured secrets keys: SECRETS_KEY and, while rotating, SECRETS_KEY_OLD. Each key

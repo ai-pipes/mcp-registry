@@ -10,8 +10,9 @@ package compat_test
 // COMPAT_UPGRADE_FROM defaults to COMPAT_IMAGE, and COMPAT_UPGRADE_FROM_CLI (the invocation prefix
 // of the old image's CLI) to the CLI of the image under test (COMPAT_CLI, see harness.DefaultCLI).
 // With the default (the same image on both sides) this is a RESTART test: the app is
-// stopped and started again on its database. It becomes the real upgrade test in milestone 8, when
-// COMPAT_UPGRADE_FROM names the TypeScript 1.x image and COMPAT_IMAGE the Go one.
+// stopped and started again on its database. It is the real upgrade test when COMPAT_UPGRADE_FROM
+// names the TypeScript 1.x image: make compat-go sets the published 1.0.0 (UPGRADE_FROM_IMAGE in the
+// Makefile) with the Go image under test, and CI's reference leg the same 1.0.0 with the reference.
 //
 // What the old image creates: a shared_secret server with a secret, a pat_user server with a
 // member's personal token, an oauth_user server with the member's connection (so a sealed access
@@ -27,9 +28,19 @@ package compat_test
 //     same (a digest of every row, the embedding included): nothing was reindexed;
 //   - the call log, the quota counters and the audit rows of before are unchanged (a digest of every
 //     row), the quota counter goes on counting;
-//   - the pending link still signs in, a NEW sign-in works (the old web session is not asserted: sessions
-//     may be lost); schema_migrations and the key check are unchanged;
-//   - the other direction: a person, a token and a server created by the new image work.
+//   - the pending link still signs in, a NEW sign-in works, and the web sessions of before the swap go
+//     on working (the compatibility requirements would allow them to be lost; the images keep them,
+//     which is pinned); schema_migrations and the key check are unchanged;
+//   - the other direction: a person, a token and a server created by the new image work;
+//   - the unusual connection rows the old image leaves (handover_edges_test.go, also judged by the
+//     hand-over scenarios between the reference and the image under test): an expired row that
+//     keeps its refresh token, a member's refresh, a connect started before the swap and completed
+//     after it (one past its window refused), a token without a refresh token from a server that had
+//     no revoke URL at issue time, tokens without an expiry;
+//   - last, a key rotation after the upgrade: the new image starts with a new SECRETS_KEY and the
+//     old one as SECRETS_KEY_OLD, its CLI re-seals everything the old image sealed, it starts on the
+//     new key alone, and the credentials of a shared_secret, a pat_user and an oauth_user server
+//     still reach their upstreams, a refresh included (handover_edges_test.go).
 // The app re-synchronises every server at start; the scenario waits for that to finish (and for the
 // outbox to drain) before it compares the index, so a sync that rewrote documents would be seen.
 
@@ -166,7 +177,8 @@ func upgradeExpectSame(t *testing.T, before, after upgradeSnapshot) {
 }
 
 func TestUpgradeKeepsEverything(t *testing.T) {
-	opts := harness.Options{}
+	key := newKey(t)
+	opts := harness.Options{Env: map[string]string{"SECRETS_KEY": key}}
 	if from := os.Getenv("COMPAT_UPGRADE_FROM"); from != "" {
 		opts.Image, opts.CLI = from, harness.DefaultCLI()
 		if cli := os.Getenv("COMPAT_UPGRADE_FROM_CLI"); cli != "" {
@@ -221,6 +233,26 @@ func TestUpgradeKeepsEverything(t *testing.T) {
 	linkCode := identityLinkFor(t, s, linkSub)
 	led.note(linkCode)
 
+	// The unusual connection rows the old image leaves (checked after the swap) and what the key
+	// rotation after the swap must keep usable (the last subtest).
+	edges := createHandOverEdges(t, s, admin)
+	rotation := createHandOverRotation(t, s, admin)
+	led.note(rotation.secret, rotation.patTok, rotation.issued.AccessToken, rotation.issued.RefreshToken)
+	for _, slug := range []string{edges.e1.slug, edges.e2.slug, edges.e3.slug, rotation.shared, rotation.pat, rotation.oauth.slug} {
+		catalogWaitDocs(t, s, slug, 1)
+	}
+	// Beyond the ledger's scan (MCP answers and the last app log): every token, personal token and
+	// secret noted through the connection helpers in no app log of any container of this scenario
+	// and no audit record. Cleanups run last first: the replaced containers' logs are scanned with
+	// the ledger's and the connection helpers' values before connLeakCheck consumes the latter.
+	kept := &handOverKeptLogs{}
+	connLeakCheck(t, s, admin)
+	kept.scanAtEnd(t, func() []string {
+		led.mu.Lock()
+		defer led.mu.Unlock()
+		return append(connNoted(), led.secrets...)
+	})
+
 	before := upgradeTake(t, s, member.token)
 	if len(before.calls) < 4 || before.quota == "" || before.auditMax == 0 {
 		t.Fatalf("the state to preserve is too small: %d calls, quota %q, audit max %d", len(before.calls), before.quota, before.auditMax)
@@ -232,6 +264,7 @@ func TestUpgradeKeepsEverything(t *testing.T) {
 	quotaBefore := gwQuotaCount(t, s, member.id, shared.slug)
 
 	// ---- the swap ----
+	kept.keep(t, s)
 	s.SwapImage(t, platformImage(), newCLI)
 
 	if n := logCountFrom(t, s, "error"); n != 0 {
@@ -268,8 +301,8 @@ func TestUpgradeKeepsEverything(t *testing.T) {
 				t.Errorf("list_servers: %s is %+v, want connection %s", slug, listed, want)
 			}
 		}
-		// A web session of before the swap may or may not survive (the compatibility requirements
-		// allow it to be lost, so it is not asserted); what must work is a NEW sign-in of the same person.
+		// What must work is a NEW sign-in of the same person (the web sessions of before the swap
+		// are the next subtest).
 		var sub string
 		if err := s.DB.QueryRow(t.Context(), `select oidc_sub from identity.users where id = $1::uuid`, member.id).Scan(&sub); err != nil {
 			t.Fatal(err)
@@ -286,6 +319,24 @@ func TestUpgradeKeepsEverything(t *testing.T) {
 		// Control: a token that never existed is refused.
 		if r := identityMCPInitialize(t, s.Anonymous(), "sk_"+strings.Repeat("A", 43)); r.Status != 401 {
 			t.Errorf("an unknown token: %d", r.Status)
+		}
+	})
+
+	t.Run("the web sessions of before the swap go on working", func(t *testing.T) {
+		// The compatibility requirements would allow them to be lost (the person signs in again);
+		// what the images do is keep them, as the hand-over scenarios pin in both directions. Pinned
+		// here for the upgrade: the same person, with the same role.
+		if me := whoami(t, admin); me.Role != "admin" || me.Name != "Owner" {
+			t.Fatalf("the administrator's session of before the swap: %+v", me)
+		}
+		if r := admin.Do(t, "GET", "/api/users", nil); r.Status != 200 {
+			t.Fatalf("the administrator's session on /api/users: %d %s", r.Status, r.Body)
+		}
+		if me := whoami(t, member.c); me.UserID != member.id || me.Role != "member" {
+			t.Fatalf("the member's session of before the swap: %+v, want %s as member", me, member.id)
+		}
+		if r := member.c.Do(t, "GET", "/api/users", nil); r.Status != 403 {
+			t.Fatalf("the member's session on /api/users: %d, want 403", r.Status)
 		}
 	})
 
@@ -381,5 +432,14 @@ func TestUpgradeKeepsEverything(t *testing.T) {
 		if n := countSQL(t, s, `select count(*) from platform.audit_log where id <= $1`, before.auditMax); n != len(before.audit) {
 			t.Errorf("audit rows up to the old maximum: %d, was %d", n, len(before.audit))
 		}
+	})
+
+	t.Run("the unusual connection rows the old image left: expired, pending, without a refresh token, revoke URL or expiry", func(t *testing.T) {
+		checkHandOverEdges(t, s, edges)
+	})
+
+	// Last: the stack's own key stays the old one, so nothing may swap images after this subtest.
+	t.Run("the new image's CLI rotates the key the old image sealed with; the new image then runs on the new key alone", func(t *testing.T) {
+		checkHandOverRotation(t, s, rotation, platformImage(), newCLI, key, kept)
 	})
 }

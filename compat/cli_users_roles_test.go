@@ -3,7 +3,7 @@
 package compat_test
 
 // create-user's role flags, judged through the CLI and the database only (no catalog, no /mcp).
-// Source: apps/server/test/cli.int.test.ts ("create-user is idempotent by sub") and the usage text of
+// Source: v1.0.1:apps/server/test/cli.int.test.ts ("create-user is idempotent by sub") and the usage text of
 // `create-user`. TestCLICreateUser holds the same steps behind a request to /api/servers; this
 // scenario needs identity alone, so it runs against the Go server before the catalog exists.
 // The decided deviation create-user-keeps-role (compat/harness/deviations.go) splits the end of it.

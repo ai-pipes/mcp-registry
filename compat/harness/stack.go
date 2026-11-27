@@ -35,6 +35,19 @@ import (
 // inspect pgvector/pgvector:pg17`). Dependabot does not watch a Go constant: bump it by hand.
 const dbImage = "pgvector/pgvector:pg17@sha256:b513c48566e4777cd3370451400000c78eda6a08131d68f4c31d4a76f27bd8fd"
 
+// defaultReferenceImage is the reference implementation: the published TypeScript image 1.0.1,
+// pinned by the digest of its multi-arch index (linux/amd64 and linux/arm64; resolved with
+// `docker buildx imagetools inspect ghcr.io/ai-pipes/mcp-registry:1.0.1`). The harness never pulls
+// it: `make compat-reference` does (and checks the digest), CI runs that target. The Makefile
+// (REFERENCE_IMAGE) and compat/selfcheck/Dockerfile repeat the value; a test keeps them equal.
+// Dependabot does not watch a Go constant (nor that Makefile line): a new reference is pinned by hand,
+// in all three places, only by the rules for a release of the reference (CONTRIBUTING.md).
+// referenceCLI is how its CLI is invoked.
+const (
+	defaultReferenceImage = "ghcr.io/ai-pipes/mcp-registry:1.0.1@sha256:42726e227e5c2522b35c28c41e1feb6ceb8471ba3447ec5399a6c0559a72baf9"
+	referenceCLI          = "node dist/cli.js"
+)
+
 const (
 	defaultImage = "mcp-registry:compat-ts"
 	defaultCLI   = "node dist/cli.js"

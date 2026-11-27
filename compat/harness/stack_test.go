@@ -42,6 +42,10 @@ func TestUpdateRefusesNonReferenceImage(t *testing.T) {
 		t.Fatalf("no update requested: %v", err)
 	}
 	t.Setenv("COMPAT_REFERENCE", "1")
+	if err := harness.CheckUpdateAllowed(true); err == nil {
+		t.Fatal("update must be refused for the default image under test: it is not the reference")
+	}
+	t.Setenv("COMPAT_IMAGE", harness.ReferenceImage())
 	if err := harness.CheckUpdateAllowed(true); err != nil {
 		t.Fatalf("reference image: %v", err)
 	}

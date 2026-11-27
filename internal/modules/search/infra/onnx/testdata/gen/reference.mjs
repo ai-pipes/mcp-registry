@@ -6,11 +6,12 @@
 //                   the special tokens). Both are CPU independent.
 //   pooling.json    fixed hidden states with the vector transformers.js makes of them (mean
 //                   pooling, then Tensor.normalize): the arithmetic only, no model, no CPU kernels.
-// Run it in the reference image (it holds transformers and the model; the repository is mounted):
-//   docker run --rm --network none -v "$PWD":/repo:ro -v "$OUT":/out mcp-registry:compat-ts \
+// Run it in the reference image, the published 1.0.1 (make compat-reference; it holds transformers
+// and the model; the repository is mounted):
+//   docker run --rm --network none -v "$PWD":/repo:ro -v "$OUT":/out "$(make -s print-reference-image)" \
 //     node /repo/internal/modules/search/infra/onnx/testdata/gen/reference.mjs \
 //     /app/apps/server/node_modules/@huggingface/transformers/dist/transformers.node.mjs \
-//     /app/models /repo/apps/server/test/fixtures/tools /out
+//     /app/models /repo/compat/fixtures/tools /out
 import { writeFileSync } from 'node:fs';
 import { curated, extra, fuzz } from './texts.mjs';
 

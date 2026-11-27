@@ -82,7 +82,7 @@ func Load(env map[string]string, readFile func(string) (string, error)) (Config,
 	var c issues
 	var cfg Config
 
-	cfg.Port = intVar(set, "PORT", 3000, 1, 65535, &c)
+	cfg.Port = portVar(set, &c)
 	cfg.DatabaseURL = NewSecret(requiredVar(set, "DATABASE_URL", &c))
 	if pw, ok := fromFile(set, "PGPASSWORD", readFile, &c); ok {
 		cfg.DatabasePassword = NewSecret(pw)
@@ -124,6 +124,26 @@ func Load(env map[string]string, readFile func(string) (string, error)) (Config,
 		return Config{}, &Error{Issues: c.list}
 	}
 	return cfg, nil
+}
+
+// Port is PORT alone, by the rule Load applies (default 3000; an empty value counts as unset), for
+// `mcp-registry healthcheck`, which reads no other variable: a container whose other settings are
+// broken is reported by the probe failing to connect, not by the probe refusing to run.
+func Port(env map[string]string) (int, error) {
+	set := map[string]string{}
+	if v := env["PORT"]; v != "" {
+		set["PORT"] = v
+	}
+	var c issues
+	p := portVar(set, &c)
+	if len(c.list) > 0 {
+		return 0, &Error{Issues: c.list}
+	}
+	return p, nil
+}
+
+func portVar(set map[string]string, c *issues) int {
+	return intVar(set, "PORT", 3000, 1, 65535, c)
 }
 
 // loadKeys handles SECRETS_KEY (or SECRETS_KEY_FILE) and SECRETS_KEY_OLD.

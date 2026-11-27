@@ -13,14 +13,10 @@ const serverDeps =
   serverPkg.dependencies !== null
     ? Object.keys(serverPkg.dependencies).filter((name) => name !== '@mcp/contracts')
     : [];
-const serverVersion: string =
-  typeof serverPkg === 'object' &&
-  serverPkg !== null &&
-  'version' in serverPkg &&
-  typeof serverPkg.version === 'string'
-    ? serverPkg.version
-    : '';
-if (serverVersion === '') throw new Error('apps/server/package.json has no non-empty "version"');
+// The version is the root VERSION file (the only source; apps/server/package.json must say the same,
+// a test keeps them equal while both exist).
+const serverVersion: string = readFileSync(new URL('VERSION', import.meta.url), 'utf8').trim();
+if (serverVersion === '') throw new Error('VERSION has no non-empty version');
 const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const DOMAIN_APPLICATION = 'apps/server/src/modules/*/{domain,application}/**';

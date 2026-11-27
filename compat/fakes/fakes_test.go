@@ -702,6 +702,53 @@ func TestOAuthProviderCodeFlowAndRevoke(t *testing.T) {
 	}
 }
 
+func TestOAuthProviderCodeGrantShapesLaterExchanges(t *testing.T) {
+	p := fakes.StartOAuthProvider(t)
+	exchange := func() map[string]any {
+		t.Helper()
+		status, body := tokenCall(t, p, url.Values{
+			"grant_type": {"authorization_code"}, "code": {oauthAuthorize(t, p, oauthVerifier)},
+			"redirect_uri": {oauthRedirect}, "code_verifier": {oauthVerifier},
+		})
+		var out map[string]any
+		if err := json.Unmarshal([]byte(body), &out); status != 200 || err != nil {
+			t.Fatalf("code exchange: %d %s", status, body)
+		}
+		return out
+	}
+
+	p.SetCodeGrant(fakes.CodeGrant{NoRefreshToken: true, ExpiresIn: -1})
+	got := exchange()
+	if _, has := got["refresh_token"]; has {
+		t.Fatalf("a refresh token without one: %v", got)
+	}
+	if _, has := got["expires_in"]; has {
+		t.Fatalf("expires_in although it is left out: %v", got)
+	}
+	issued := p.Issued()
+	if len(issued) != 1 || issued[0].RefreshToken != "" || issued[0].AccessToken != got["access_token"] {
+		t.Fatalf("issued: %+v", issued)
+	}
+	if handed := p.HandedOut(); len(handed) != 1 || handed[0] != got["access_token"] {
+		t.Fatalf("handed out %d token(s), want only the access token", len(handed))
+	}
+
+	p.SetCodeGrant(fakes.CodeGrant{ExpiresIn: 5_000_000_000})
+	got = exchange()
+	if got["expires_in"] != float64(5_000_000_000) || got["refresh_token"] == nil {
+		t.Fatalf("a long-lived token with a refresh token: %v", got)
+	}
+	// The refresh token of a shaped exchange is one this provider accepts.
+	if status, _ := refresh(t, p, got["refresh_token"].(string)); status != 200 {
+		t.Fatalf("refresh with the shaped exchange's refresh token: %d", status)
+	}
+
+	p.SetCodeGrant(fakes.CodeGrant{})
+	if got = exchange(); got["expires_in"] != float64(3600) || got["refresh_token"] == nil {
+		t.Fatalf("the zero value restores the default answer: %v", got)
+	}
+}
+
 func TestOAuthProviderRecordsRevokeAttemptsWithBadCredentials(t *testing.T) {
 	p := fakes.StartOAuthProvider(t)
 	bad := "Basic " + base64.StdEncoding.EncodeToString([]byte("a:b"))

@@ -2,8 +2,8 @@
 # smoke (the docker compose box end to end), quickstart (quickstart.compose.yml from stdin) and e2e
 # (Playwright in Chromium against the same built image; all three engines nightly in
 # e2e-browsers.yml), go (the Go rewrite's lint, architecture rules and unit tests) and compat (the Go
-# black-box suite against the image built from this tree, on amd64 and arm64; its self-check runs
-# daily in compat-selfcheck.yml) and
+# black-box suite against the reference, the published 1.0.1 pinned by digest, on amd64 and arm64; its
+# self-check runs daily in compat-selfcheck.yml) and
 # e2e-flows (the browser flows of the web UI, e2e/flows, against that same image, orchestrated by Go);
 # compat-go and e2e-flows-go run the milestone pattern of the Go server (not required checks).
 #
@@ -95,8 +95,8 @@ jobs:
           retention-days: 7
 
   # `make go-verify`: golangci-lint, go-arch-lint, go vet (also with the compat tags) and go test.
-  # Node is needed only because the Makefile reads the version from apps/server/package.json; no
-  # pnpm install is involved.
+  # The version (VERSION) and the model fetch no longer use Node; the Node setup stays installed for
+  # now (no pnpm install is involved) and may go in a later CI cleanup.
   go:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -133,16 +133,18 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      # make native-model and the version read use node.
+      # Neither the version (VERSION) nor make native-model use Node any more; the setup stays for now.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
       - run: make native-libs
       - run: make go-verify-onnx
 
-  # The Go compatibility suite (compat/, tag compat) against the image built from this tree, on both
-  # architectures. Vectors and rankings are compared with the reference image (the image built by
-  # make compat-image-ts) on the same runner, so both entries run the same steps.
+  # The Go compatibility suite (compat/, tag compat) with the reference as the image under test: the
+  # published 1.0.1 pinned by digest (REFERENCE_IMAGE in the Makefile, pulled and checked by
+  # make compat-reference), on both architectures. Every reference branch of the decided deviations
+  # runs here (COMPAT_FIXED unset); vectors and rankings are compared with the same image on the same
+  # runner (a determinism check), so both entries run the same steps.
   compat:
     needs: [go]
     name: compat (${{ matrix.arch }})
@@ -164,13 +166,13 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
-      - run: make compat-image-ts
-      # The upgrade scenario starts from the published 1.0.0 image: a real in-place upgrade, not a restart.
-      - run: docker pull ghcr.io/ai-pipes/mcp-registry:1.0.0
-      - run: make compat
+      - run: make compat-reference
+      # The upgrade scenario starts from the published 1.0.0 image (UPGRADE_FROM_IMAGE in the Makefile,
+      # pinned by digest): a real in-place upgrade, not a restart.
+      - run: make compat-upgrade-from
+      - run: make compat COMPAT_IMAGE="$(make -s print-reference-image)" COMPAT_UPGRADE_FROM="$(make -s print-upgrade-from-image)"
         env:
           COMPAT_LOG_DIR: ${{ runner.temp }}/compat-logs
-          COMPAT_UPGRADE_FROM: ghcr.io/ai-pipes/mcp-registry:1.0.0
       # The harness writes the app container's log of every failed stack (secrets removed) there.
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -182,9 +184,11 @@ jobs:
 
   # The Go server (Dockerfile target go) under the compat suite: the scenarios of the milestone pattern
   # (COMPAT_GO_TESTS in the Makefile: since milestone 7 the whole suite, nothing is skipped
-  # (COMPAT_GO_SKIP is empty); the upgrade scenario is a restart test here, its TypeScript-to-Go
-  # leg is milestone 8). The reference image is built too: the scenarios start from it or
-  # compare with it. On both architectures, each building both images natively on its own runner:
+  # (COMPAT_GO_SKIP is empty)). The reference image (the published 1.0.1, make compat-reference) is pulled
+  # too: the scenarios start from it or compare with it. So is the published 1.0.0 (make
+  # compat-upgrade-from): the upgrade scenario starts from it and hands its database to the Go image,
+  # which then rotates the key (compat-go sets COMPAT_UPGRADE_FROM, see COMPAT_GO_UPGRADE_FROM). On both architectures, each building the Go image
+  # natively on its own runner and pulling the reference for that architecture:
   # TestSearchStoredVectors compares the stored vectors with the reference's on the same machine, and
   # they must be equal on arm64 and on amd64. Not a required check.
   compat-go:
@@ -205,11 +209,12 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      # make reads the version from apps/server/package.json with node.
+      # The version comes from VERSION, no longer from node; the Node setup stays for now.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
-      - run: make compat-image-ts
+      - run: make compat-reference
+      - run: make compat-upgrade-from
       - run: make compat-image-go
       # The embedder's vectors against the reference image's, in containers of this runner's architecture
       # (the Go dependencies are fetched first: the container has no network).
@@ -280,7 +285,8 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec playwright install --with-deps chromium
-      - run: make compat-image-ts
+      # Only the Go image: every stack of TestBrowserFlows boots COMPAT_IMAGE, and nothing in
+      # compat/e2e compares with the reference or starts from another image.
       - run: make compat-image-go
       - run: make e2e-flows-go
         env:

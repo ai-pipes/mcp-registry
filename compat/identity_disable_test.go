@@ -6,7 +6,7 @@ package compat_test
 // TestIdentityNoOIDC ("disabling a person ends their sessions, tokens and links at once"), which
 // also asks /mcp and is skipped against the Go server until the /mcp route exists; this scenario
 // carries over every assertion that does not need it, and the check that the token is revoked is
-// the stored row. Source: apps/server/test/identity.int.test.ts ("disabling a person ...").
+// the stored row. Source: v1.0.1:apps/server/test/identity.int.test.ts ("disabling a person ...").
 
 import (
 	"testing"

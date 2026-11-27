@@ -7,8 +7,9 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 const here = (name) => fileURLToPath(new URL(name, import.meta.url));
-// The packages of apps/server (pnpm install), or of the checkout named by MCP_REFERENCE_ROOT.
-const root = process.env.MCP_REFERENCE_ROOT ?? here('../../../../../../../../');
+// The packages of apps/server of this checkout (pnpm install), or of the checkout of the reference
+// (v1.0.1) named by MCP_REFERENCE_ROOT once this tree no longer has apps/server (README.md).
+const root = process.env.MCP_REFERENCE_ROOT ?? here('../../../../../../../');
 const require = createRequire(root.replace(/\/?$/, '/') + 'apps/server/package.json');
 const { createMcpHandler, McpServer } = await import(
   pathToFileURL(require.resolve('@modelcontextprotocol/server')).href

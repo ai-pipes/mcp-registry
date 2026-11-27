@@ -3,7 +3,7 @@ package httpx
 import "net/http"
 
 // The values are pinned by compat/platform_test.go (securityHeaders) and mirror the reference
-// server's securityHeaders() (apps/server/src/platform/http/security.ts). The CSP has no inline
+// server's securityHeaders() (v1.0.1:apps/server/src/platform/http/security.ts). The CSP has no inline
 // scripts or styles and no hashes; Server and X-Powered-By are never set.
 const csp = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; frame-ancestors 'none'"
 

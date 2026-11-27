@@ -27,7 +27,8 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
-      # Builds mcp-registry:compat-ts, then the derived image, then runs every distortion.
+      # Pulls the reference (the published 1.0.1, pinned by digest), builds the derived image from it,
+      # then runs every distortion.
       - run: make compat-selfcheck
         env:
           COMPAT_LOG_DIR: ${{ runner.temp }}/compat-logs

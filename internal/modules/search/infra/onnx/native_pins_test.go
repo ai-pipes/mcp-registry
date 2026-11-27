@@ -4,6 +4,7 @@ import (
 	"io/fs"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -67,11 +68,45 @@ func TestEveryPlatformHasEveryPin(t *testing.T) {
 	}
 }
 
+// The embedding model is pinned in the same file: a revision and, for each of its files, a name and
+// a SHA-256 (MODEL_FILE_<n>, MODEL_SHA256_<n>). fetch-model.sh reads them; the Dockerfile stage
+// `model` and `make native-model` run that script, so no Node is needed to fetch the model.
+func TestEveryModelFileHasAPin(t *testing.T) {
+	pins := readPins(t)
+	hex64 := regexp.MustCompile(`^[0-9a-f]{64}$`)
+	if pins["MODEL_NAME"] != "Xenova/multilingual-e5-small" {
+		t.Errorf("MODEL_NAME is %q", pins["MODEL_NAME"])
+	}
+	if !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(pins["MODEL_REVISION"]) {
+		t.Errorf("MODEL_REVISION is not a commit: %q", pins["MODEL_REVISION"])
+	}
+	want := []string{
+		"config.json", "special_tokens_map.json", "tokenizer_config.json", "tokenizer.json",
+		"onnx/model_quantized.onnx",
+	}
+	for i, file := range want {
+		n := strconv.Itoa(i + 1)
+		if pins["MODEL_FILE_"+n] != file {
+			t.Errorf("MODEL_FILE_%s is %q, want %q", n, pins["MODEL_FILE_"+n], file)
+		}
+		if !hex64.MatchString(pins["MODEL_SHA256_"+n]) {
+			t.Errorf("MODEL_SHA256_%s is not a SHA-256: %q", n, pins["MODEL_SHA256_"+n])
+		}
+	}
+	if pins["MODEL_FILE_"+strconv.Itoa(len(want)+1)] != "" {
+		t.Error("pins.env lists more model files than the test knows: update the test with the layout the embedder reads")
+	}
+}
+
 func TestNoPinIsRepeatedOutsidePinsEnv(t *testing.T) {
 	pins := readPins(t)
 	// Every file that could carry a second copy: a value set later in fetch.sh would override the
 	// pin unnoticed.
-	files := []string{"Dockerfile", "Makefile", "internal/modules/search/infra/onnx/native/fetch.sh"}
+	files := []string{
+		"Dockerfile", "Makefile",
+		"internal/modules/search/infra/onnx/native/fetch.sh",
+		"internal/modules/search/infra/onnx/native/fetch-model.sh",
+	}
 	workflows, err := fs.Glob(os.DirFS("../../../../.."), ".github/workflows/*.yml")
 	if err != nil {
 		t.Fatal(err)
@@ -80,7 +115,7 @@ func TestNoPinIsRepeatedOutsidePinsEnv(t *testing.T) {
 	for _, name := range files {
 		text := repoFile(t, name)
 		for k, v := range pins {
-			if strings.Contains(v, "/") || len(v) == 64 { // URLs, members and hashes
+			if strings.Contains(v, "/") || len(v) == 64 || len(v) == 40 { // URLs, members, hashes and the model revision
 				if strings.Contains(text, v) {
 					t.Errorf("%s repeats the pin %s (%s): it belongs in pins.env only", name, k, v)
 				}
@@ -92,6 +127,12 @@ func TestNoPinIsRepeatedOutsidePinsEnv(t *testing.T) {
 	}
 	if !strings.Contains(repoFile(t, "Dockerfile"), "native/fetch.sh") {
 		t.Error("the Dockerfile does not use fetch.sh")
+	}
+	if !strings.Contains(repoFile(t, "Dockerfile"), "native/fetch-model.sh") {
+		t.Error("the Dockerfile does not fetch the model with fetch-model.sh")
+	}
+	if !strings.Contains(repoFile(t, "Makefile"), "native/fetch-model.sh") {
+		t.Error("the Makefile does not fetch the model with fetch-model.sh")
 	}
 }
 

@@ -16,7 +16,8 @@
 //
 // It is not part of `make compat`: run it with `make compat-selfcheck` (tag selfcheck).
 //
-// SELFCHECK_BASE is the image the derived one is built from (default mcp-registry:compat-ts).
+// SELFCHECK_BASE is the image the derived one is built from (default: the reference image,
+// harness.ReferenceImage, i.e. the published 1.0.1 pinned by digest; make compat-selfcheck pulls it).
 package selfcheck
 
 import (
@@ -31,11 +32,12 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ai-pipes/mcp-registry/compat/harness"
 )
 
 const (
 	brokenImage = "mcp-registry:compat-broken"
-	baseDefault = "mcp-registry:compat-ts"
 
 	// canary is a cheap scenario no distortion can affect; it runs next to the expected ones and
 	// must pass in the same run, so a proxy that broke something else cannot pass for a catch.
@@ -118,7 +120,7 @@ func buildBrokenImage(t *testing.T, root string) {
 	t.Helper()
 	base := os.Getenv("SELFCHECK_BASE")
 	if base == "" {
-		base = baseDefault
+		base = harness.ReferenceImage()
 	}
 	cmd := exec.CommandContext(t.Context(), "docker", "build", "-q", "--build-arg", "BASE="+base, //nolint:gosec // G702: SELFCHECK_BASE is the operator's own image name
 		"-t", brokenImage, "-f", "compat/selfcheck/Dockerfile", "compat/selfcheck")

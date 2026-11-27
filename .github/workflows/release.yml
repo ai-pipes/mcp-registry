@@ -32,9 +32,10 @@ on:
       - scripts/smoke.compose.yml
       - scripts/smoke.prebuilt.compose.yml
       - scripts/check-release-version.mjs
+      - VERSION
       - apps/server/package.json
       - CHANGELOG.md
-      - scripts/download-model.mjs
+      - internal/modules/search/infra/onnx/native/**
 
 permissions:
   contents: read
@@ -99,9 +100,9 @@ jobs:
           tags: mcp-registry:rc
           cache-from: type=gha,scope=rc-amd64
           cache-to: type=gha,mode=max,scope=rc-amd64,ignore-error=true
-      - name: The image prints the version from apps/server/package.json
+      - name: The image prints the version from the VERSION file
         run: |
-          expected="$(node -p "require('./apps/server/package.json').version")"
+          expected="$(tr -d '[:space:]' < VERSION)"
           actual="$(docker run --rm mcp-registry:rc node dist/cli.js --version)"
           echo "expected=$expected actual=$actual"
           [ -n "$expected" ] && [ "$actual" = "$expected" ]
@@ -128,7 +129,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=rc-arm64,ignore-error=true
       - name: The arm64 image prints the same version
         run: |
-          expected="$(node -p "require('./apps/server/package.json').version")"
+          expected="$(tr -d '[:space:]' < VERSION)"
           actual="$(docker run --rm --platform linux/arm64 mcp-registry:rc-arm64 node dist/cli.js --version)"
           echo "expected=$expected actual=$actual"
           [ -n "$expected" ] && [ "$actual" = "$expected" ]

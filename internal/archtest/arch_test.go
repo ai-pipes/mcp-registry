@@ -345,6 +345,9 @@ var goRuleFixtures = []struct {
 		v, err := ForeignSchemaRefs("testdata/" + f)
 		return len(v), err
 	}},
+	{"coverage gate covers every module", "gate-module-unlisted", "gate-module-ok", func(f string) (int, error) {
+		return len(ModuleGateProblems("testdata/"+f+"/modules", []string{"alpha", "beta"}, map[string]string{"beta/app": "fixture: no use cases yet"})), nil
+	}},
 	{"plain secret fields", "plain-secret-field", "plain-secret-field-allowed", func(f string) (int, error) {
 		v, err := PlainSecretFields("testdata/"+f, map[string]string{"modules/demo/app.Problem.Code": "an error code"})
 		return len(v), err

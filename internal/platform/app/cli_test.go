@@ -36,7 +36,7 @@ func TestUsageListsTheRegisteredCommandsInAFixedOrder(t *testing.T) {
 	if strings.Contains(got, "arrive in a later release") {
 		t.Errorf("the placeholder stays with commands present:\n%s", got)
 	}
-	if !strings.HasPrefix(got, "Usage: mcp-registry") || !strings.Contains(got, "--version") {
+	if !strings.HasPrefix(got, "Usage: mcp-registry") || !strings.Contains(got, "--version") || !strings.Contains(got, "\n       mcp-registry healthcheck ") {
 		t.Errorf("header:\n%s", got)
 	}
 }

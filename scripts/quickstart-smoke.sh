@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
 # End-to-end test of quickstart.compose.yml, fed through stdin exactly as the one-liner does:
-#   build the image from this tree → `docker compose -f - up -d` → /healthz → exactly one
+#   build the image from this tree → `docker compose -f - up -d` → /healthz and the image's
+#   HEALTHCHECK reports healthy → exactly one
 #   first-start sign-in link in the app log → sign in with it (cookie) → /api/auth/me is an admin
 #   → create an API token → tools/list on /mcp with it → restart without removing volumes: same
 #   token still works, no new link → replace only the secrets key in the `secrets` volume: the
 #   app must refuse to start with the fatal text and leak neither key → stack and volumes removed.
 # Own compose project and port, so it never touches another deployment. With
 # QUICKSTART_IMAGE=<image> the stack runs that prebuilt image (nothing is built, the image is
-# never removed). Needs docker, curl, openssl. The link code, cookie, token and keys are never printed.
+# never removed). QUICKSTART_CLI is how the operator CLI is invoked inside the app container
+# (default `node dist/cli.js`, the TypeScript image; `mcp-registry` for the Go image):
+#   QUICKSTART_IMAGE=mcp-registry:compat-go QUICKSTART_CLI=mcp-registry bash scripts/quickstart-smoke.sh
+# Needs docker, curl, openssl. The link code, cookie, token and keys are never printed.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -26,7 +30,11 @@ else
   IMAGE="mcp-registry:quickstart-smoke"
   BUILD_IMAGE=1
 fi
+# The CLI command, split into words (no shell in between).
+read -r -a CLI <<<"${QUICKSTART_CLI:-node dist/cli.js}"
+[ "${#CLI[@]}" -gt 0 ] || { echo "QUICKSTART_CLI is empty" >&2; exit 2; }
 HEALTH_TIMEOUT=120
+CONTAINER_HEALTH_TIMEOUT=90
 MISMATCH_TIMEOUT=60
 FATAL_TEXT='SECRETS_KEY does not match the data in this database; restore the original key (stored secrets cannot be read with this one)'
 FATAL_HINT='Recovering from a key mismatch'
@@ -66,6 +74,27 @@ fail() {
   exit 1
 }
 
+# The image's own HEALTHCHECK must turn the container healthy (bounded). On a timeout the status
+# and the last health log entries are printed (the probes print no secret: the Go one prints one
+# short line, the TypeScript one nothing).
+wait_container_healthy() {
+  local id status deadline=$((SECONDS + CONTAINER_HEALTH_TIMEOUT))
+  id="$(compose ps -q app)"
+  [ -n "$id" ] || fail "no app container"
+  while :; do
+    status="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}no healthcheck{{end}}' "$id" 2>/dev/null || echo unknown)"
+    [ "$status" = "healthy" ] && break
+    if [ "$SECONDS" -ge "$deadline" ] || [ "$status" = "no healthcheck" ]; then
+      echo "container health: ${status}; last checks (exit code, output):" >&2
+      docker inspect -f '{{if .State.Health}}{{range .State.Health.Log}}{{.ExitCode}} {{printf "%q" .Output}}{{println}}{{end}}{{end}}' "$id" 2>/dev/null | tail -n 5 >&2 || true
+      fail "the app container did not report healthy in ${CONTAINER_HEALTH_TIMEOUT}s (HEALTHCHECK of the image)"
+    fi
+    sleep 2
+  done
+  echo "container health: healthy"
+}
+
+
 app_log() { compose logs --no-color --no-log-prefix app 2>&1; }
 
 # Rendered configuration of the app service for the current environment, captured (not piped into
@@ -79,6 +108,7 @@ wait_healthy() {
     sleep 2
   done
   echo "healthz: ok"
+  wait_container_healthy
 }
 
 # tools/list on /mcp with $1 as the Bearer token; prints nothing, succeeds only with the 4 meta-tools.
@@ -127,7 +157,7 @@ wait_healthy
 step "the first log record is 'starting' with the version"
 first_record="$(app_log | grep -m1 '"msg"' || true)"
 grep -q '"msg":"starting"' <<<"$first_record" || fail "the first app log record is not 'starting'"
-version="$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' apps/server/package.json | head -n 1)"
+version="$(tr -d '[:space:]' < VERSION)"
 grep -qF "\"version\":\"${version}\"" <<<"$first_record" || fail "the 'starting' record has no version ${version}"
 echo "starting: version ${version}"
 
@@ -159,7 +189,7 @@ echo "me: admin"
 
 step "documented file-less commands: login-link through -p, logs through -p"
 # Exactly what the compose header and the README tell people to type (no -f, no env file).
-link_out="$(pcompose exec -T app node dist/cli.js login-link local-admin 2>"$WORK/login-link.err")" ||
+link_out="$(pcompose exec -T app "${CLI[@]}" login-link local-admin 2>"$WORK/login-link.err")" ||
   fail "login-link local-admin exited non-zero"
 grep -qE "^${BASE_URL}/login#link=ll_[A-Za-z0-9_-]+$" <<<"$link_out" ||
   fail "login-link did not print a link of the expected shape"

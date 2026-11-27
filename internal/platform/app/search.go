@@ -14,7 +14,7 @@ import (
 	"github.com/ai-pipes/mcp-registry/internal/platform/outbox"
 )
 
-// The sweep that fills the vectors an embedder outage left empty: apps/server/src/platform/main.ts
+// The sweep that fills the vectors an embedder outage left empty: v1.0.1:apps/server/src/platform/main.ts
 // (EMBED_SWEEP_INTERVAL_MS, EMBED_SWEEP_LIMIT). It runs from the outbox worker's loop.
 const (
 	embedSweepEvery = 5 * time.Minute

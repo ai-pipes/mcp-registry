@@ -4,6 +4,8 @@ updates:
     directory: /
     schedule:
       interval: weekly
+  # A bump that changes what the web UI bundles (a dependency of apps/web, direct or transitive)
+  # stays red until a maintainer pushes `go run ./tools/notices web` to the PR (after pnpm install).
   - package-ecosystem: npm
     directory: /
     schedule:
@@ -18,12 +20,24 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # The Dockerfile's FROMs: node (the TypeScript image and the web build), golang (the Go build
+    # stages, one digest everywhere) and debian (the Go image and the smoke tools). The Makefile names
+    # the same golang digest for the parity run (PARITY_GO_IMAGE; a Go test keeps the two equal), so a
+    # golang digest update must change both. debian is pinned by codename (bookworm-slim): Dependabot
+    # proposes only new digests of that tag, never the next release.
     ignore:
       # The runtime stays on Node 22 (the tag in the Dockerfile); take only digest and 22.x updates.
       # Bump the major together with `@types/node` and CI.
       - dependency-name: node
         update-types: ['version-update:semver-major']
+      # The Go toolchain of the image follows the `go` line of go.mod: take digest and patch
+      # updates (1.27.x), move to the next Go release (1.28) by hand together with go.mod and CI.
+      - dependency-name: golang
+        update-types: ['version-update:semver-major', 'version-update:semver-minor']
   # The Go rewrite: the root module (compat suite, fakes, harness, the server to come).
+  # A bump of a module the server links stays red (tools/notices tests in make go-verify) until a
+  # maintainer pushes regenerated notices to the PR: `go run ./tools/notices go` (CONTRIBUTING.md,
+  # "Third-party notices"). Dependabot cannot run it.
   - package-ecosystem: gomod
     directory: /
     schedule:

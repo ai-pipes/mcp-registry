@@ -1,17 +1,60 @@
-Third-party notices of the mcp-registry Go image (Dockerfile target `go`)
-=======================================================================
+Third-party notices of the mcp-registry Go image
+================================================
 
-This file names the third-party components that the Go image redistributes and gives the licence
-texts that must accompany them, as far as they could be taken from the pinned sources. It is NOT
-yet a complete notice set: before the Go image is published, a complete one (ONNX Runtime's own
-third-party components and a generated report of every Go module compiled into the binary) is
-produced at build time. mcp-registry itself is MIT licensed (LICENSE).
+mcp-registry itself is MIT licensed (LICENSE). This file names every third-party component the Go
+image redistributes and where its licence texts are. In the image this file is
+/usr/share/licenses/mcp-registry/THIRD_PARTY_NOTICES; the project licence (LICENSE) and the
+third_party/ directory named below are next to it, at /usr/share/licenses/mcp-registry/. In the
+repository the same files are at the root and under third_party/. The generated files are made by
+`go run ./tools/notices ...` (CONTRIBUTING.md, "Third-party notices"); tests in tools/notices fail
+when a Go module linked into the binary is missing, or when a file no longer matches its pin.
 
-In the image this file is /usr/share/licenses/mcp-registry/THIRD_PARTY_NOTICES, the project
-licence is next to it, and the Apache License 2.0 text is the Debian copy at
-/usr/share/common-licenses/Apache-2.0 (also https://www.apache.org/licenses/LICENSE-2.0).
+1. Go modules compiled into /usr/local/bin/mcp-registry
+   Every module the binary links (build tag onnx, linux/amd64 and linux/arm64) with the licence
+   files of its module, and the licence of the Go standard library and runtime:
+   third_party/go/NOTICES
 
-The MIT licence used below (each entry names its own copyright line; the wording is the same):
+2. ONNX Runtime 1.30.0 (CPU) - MIT, Copyright (c) Microsoft Corporation
+   File: /usr/local/lib/libonnxruntime.so.1, taken unchanged from the npm package
+   onnxruntime-node@1.30.0 (SHA-256 pinned in internal/modules/search/infra/onnx/native/pins.env).
+   Source: https://github.com/microsoft/onnxruntime
+   Its licence and its own third-party notices (Eigen, protobuf, re2 and the other components it
+   bundles), taken unchanged from the same release:
+   third_party/onnxruntime/LICENSE
+   third_party/onnxruntime/ThirdPartyNotices.txt
+   (third_party/onnxruntime/SOURCE says where they come from and holds their SHA-256.)
+
+3. libtokenizers.a, statically linked into the binary: github.com/daulet/tokenizers v1.27.0
+   (release asset, SHA-256 pinned in pins.env; its Go module and MIT licence are in
+   third_party/go/NOTICES). The Rust crates compiled into the archive, among them Hugging Face
+   tokenizers 0.22.0 (Apache-2.0) and onig_sys 69.9.1 with the bundled Oniguruma (BSD-2-Clause),
+   each with the licence its manifest declares and the licence files it ships:
+   third_party/tokenizers/NOTICES
+   Notices the generated file cannot take from licence files:
+   a. esaxx-rs 0.1.10 (Apache-2.0) compiles C++ sources that carry their own MIT notices:
+      sais-lite, Copyright (c) 2008-2009 Yuta Mori; esaxx, Copyright (c) 2010 Daisuke Okanohara.
+   b. number_prefix 0.4.0 - MIT, Copyright (c) Benjamin Sago (the author named in its manifest;
+      the crate ships no licence file).
+   The MIT licence text for both follows at the end of this file.
+
+4. Model Xenova/multilingual-e5-small (ONNX, q8), a conversion of intfloat/multilingual-e5-small
+   - MIT, as both model cards declare (no copyright line is published with the model). Files under
+   /app/models, downloaded at build time at a pinned revision and checked by SHA-256
+   (internal/modules/search/infra/onnx/native/fetch-model.sh, pins.env).
+   Source: https://huggingface.co/Xenova/multilingual-e5-small
+   The MIT licence text follows at the end of this file.
+
+5. The web UI (/app/web): the npm packages its bundle is built from (React, Base UI, TanStack
+   Query, React Router, zod, lucide-react, the Inter font under the SIL Open Font License 1.1, and
+   the others), each with the licence its package declares and the licence files it ships:
+   third_party/web/NOTICES
+
+6. Debian packages of the base image (debian:bookworm-slim, pinned by digest) and those the image
+   installs (ca-certificates, libstdc++6, tzdata): each package's copyright and licence are in the
+   image at /usr/share/doc/<package>/copyright, the common licence texts at
+   /usr/share/common-licenses/.
+
+The MIT licence (sections 3 and 4; each entry above names its own copyright line):
 
    MIT License
 
@@ -31,105 +74,3 @@ The MIT licence used below (each entry names its own copyright line; the wording
    NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
    DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-1. ONNX Runtime 1.30.0 (CPU) - MIT, Copyright (c) Microsoft Corporation
-   File: /usr/local/lib/libonnxruntime.so.1, taken unchanged from the npm package
-   onnxruntime-node@1.30.0 (SHA-256 pinned in internal/modules/search/infra/onnx/native/pins.env).
-   Source: https://github.com/microsoft/onnxruntime
-   ONNX Runtime 1.30.0 bundles third-party components, among them Eigen (MPL-2.0), protobuf and
-   re2 (BSD-3-Clause); their notices ship in the upstream source distribution of that version.
-
-2. Native code statically linked through libtokenizers.a (github.com/daulet/tokenizers v1.27.0,
-   release asset, SHA-256 pinned in pins.env). Versions are those of its Cargo.lock.
-   a. Hugging Face tokenizers 0.22.0 - Apache-2.0. https://github.com/huggingface/tokenizers
-   b. onig / onig_sys 69.9.1 (Rust bindings) - MIT, Copyright (c) 2015 Will Speak, Ivan Ivashchenko
-      and contributors. https://github.com/rust-onig/rust-onig
-      It bundles Oniguruma - BSD-2-Clause, text as shipped in onig_sys 69.9.1 (oniguruma/COPYING):
-
-      Oniguruma LICENSE
-      -----------------
-
-      Copyright (c) 2002-2021  K.Kosako  <kkosako0@gmail.com>
-      All rights reserved.
-
-      Redistribution and use in source and binary forms, with or without
-      modification, are permitted provided that the following conditions
-      are met:
-      1. Redistributions of source code must retain the above copyright
-         notice, this list of conditions and the following disclaimer.
-      2. Redistributions in binary form must reproduce the above copyright
-         notice, this list of conditions and the following disclaimer in the
-         documentation and/or other materials provided with the distribution.
-
-      THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
-      ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-      IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
-      ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
-      FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-      DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
-      OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
-      HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
-      LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
-      OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
-      SUCH DAMAGE.
-
-   c. esaxx-rs 0.1.10 - Apache-2.0, Nicolas Patry. Its C++ sources carry MIT notices:
-      sais-lite, Copyright (c) 2008-2009 Yuta Mori; esaxx, Copyright (c) 2010 Daisuke Okanohara.
-   d. tiktoken-rs 0.8.0 (git revision 572bd9ef147695d40fa04d535f2b37c5d5b5c1ef of
-      github.com/zurawiki/tiktoken-rs) - MIT, Copyright (c) 2023 Roger Zurawicki.
-   The other Rust crates of Cargo.lock are not individually listed here; each declares its licence
-   in its own manifest (see the first paragraph).
-
-3. Go modules compiled into /usr/local/bin/mcp-registry (from `go list -deps -tags onnx`, licences
-   read from each module's LICENSE file in the module cache). The licence texts are in those
-   files; the BSD-3-Clause text of the Go project, which the golang.org/x modules and the Go
-   standard library use, follows.
-   - github.com/coreos/go-oidc/v3 v3.21.0 - Apache-2.0
-   - github.com/go-jose/go-jose/v4 v4.1.4 - Apache-2.0
-   - github.com/modelcontextprotocol/go-sdk v1.8.0 - Apache-2.0, with MIT for contributions not yet
-     relicensed (its LICENSE says so)
-   - github.com/daulet/tokenizers v1.27.0 - MIT, Copyright (c) 2023 Daulet Zhanguzin
-   - github.com/yalue/onnxruntime_go v1.37.0 - MIT, Copyright (c) 2023 Nathan Otterness
-   - github.com/google/jsonschema-go v0.4.3 - MIT, Copyright (c) 2025 JSON Schema Go Project Authors
-   - github.com/jackc/pgx/v5 v5.13.0 - MIT, Copyright (c) 2013-2021 Jack Christensen
-   - github.com/jackc/pgpassfile v1.0.0 - MIT, Copyright (c) 2019 Jack Christensen
-   - github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 - MIT, Copyright (c) 2020 Jack Christensen
-   - github.com/jackc/puddle/v2 v2.2.3 - MIT, Copyright (c) 2018 Jack Christensen
-   - github.com/segmentio/asm v1.1.3 - MIT, Copyright (c) 2021 Segment
-   - github.com/segmentio/encoding v0.5.4 - MIT, Copyright (c) 2019 Segment.io, Inc.
-   - github.com/yosida95/uritemplate/v3 v3.0.2 - BSD-3-Clause, Copyright (C) 2016, Kohei YOSHIDA
-   - golang.org/x/net v0.60.0, x/oauth2 v0.36.0, x/sync v0.24.0, x/sys v0.49.0, x/term v0.47.0,
-     x/text v0.43.0, x/time v0.15.0, and the Go standard library - BSD-3-Clause,
-     Copyright 2009 The Go Authors:
-
-   Copyright 2009 The Go Authors.
-
-   Redistribution and use in source and binary forms, with or without
-   modification, are permitted provided that the following conditions are
-   met:
-
-      * Redistributions of source code must retain the above copyright
-   notice, this list of conditions and the following disclaimer.
-      * Redistributions in binary form must reproduce the above
-   copyright notice, this list of conditions and the following disclaimer
-   in the documentation and/or other materials provided with the
-   distribution.
-      * Neither the name of Google LLC nor the names of its
-   contributors may be used to endorse or promote products derived from
-   this software without specific prior written permission.
-
-   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-   "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-   LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-   A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
-   OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
-   SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-   LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
-   DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
-   THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-   (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
-4. Model Xenova/multilingual-e5-small (ONNX, q8), a conversion of intfloat/multilingual-e5-small
-   - MIT. Files under /app/models, downloaded at build time at a pinned revision and checked by
-   SHA-256 (scripts/download-model.mjs). Source: https://huggingface.co/Xenova/multilingual-e5-small

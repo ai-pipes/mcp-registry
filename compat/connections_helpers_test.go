@@ -73,21 +73,33 @@ func connNote(values ...string) {
 	connSecrets = append(connSecrets, values...)
 }
 
+// connNoted returns, without consuming them, the values connLeakCheck will look for.
+func connNoted() []string {
+	connSecretsMu.Lock()
+	defer connSecretsMu.Unlock()
+	return connNotedLocked()
+}
+
+func connNotedLocked() []string {
+	secrets := slices.Clone(connSecrets)
+	for _, p := range connProviders {
+		// Every token the fake ever put into a response, refreshes included, and the client
+		// credentials in every form they can travel in.
+		secrets = append(secrets, p.HandedOut()...)
+		secrets = append(secrets, p.ClientSecret,
+			base64.StdEncoding.EncodeToString([]byte(p.ClientID+":"+p.ClientSecret)),
+			strings.TrimPrefix(connBasic(p), "Basic "))
+	}
+	return secrets
+}
+
 // connLeakCheck makes the test end by scanning the app log and the whole audit trail for every
 // token the test noted (issued, scripted, personal access tokens, the client secret).
 func connLeakCheck(t *testing.T, s *harness.Stack, admin *harness.Client) {
 	t.Helper()
 	t.Cleanup(func() {
 		connSecretsMu.Lock()
-		secrets := slices.Clone(connSecrets)
-		for _, p := range connProviders {
-			// Every token the fake ever put into a response, refreshes included, and the client
-			// credentials in every form they can travel in.
-			secrets = append(secrets, p.HandedOut()...)
-			secrets = append(secrets, p.ClientSecret,
-				base64.StdEncoding.EncodeToString([]byte(p.ClientID+":"+p.ClientSecret)),
-				strings.TrimPrefix(connBasic(p), "Basic "))
-		}
+		secrets := connNotedLocked()
 		connSecrets, connProviders = nil, nil
 		connSecretsMu.Unlock()
 		if len(secrets) == 0 {
@@ -361,7 +373,10 @@ func connConnect(t *testing.T, env *connEnv, c *harness.Client) fakes.IssuedToke
 		t.Fatalf("the provider issued %d token sets, want %d", len(issued), before+1)
 	}
 	got := issued[len(issued)-1]
-	connNote(got.AccessToken, got.RefreshToken)
+	connNote(got.AccessToken)
+	if got.RefreshToken != "" { // a provider shaped by SetCodeGrant may issue none
+		connNote(got.RefreshToken)
+	}
 	return got
 }
 
