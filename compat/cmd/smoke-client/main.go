@@ -12,6 +12,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -20,6 +21,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -34,16 +36,59 @@ func main() {
 	os.Exit(code)
 }
 
-// bearer adds the Authorization header to every request of the client.
+// bearer adds the Authorization header to every request of the client and keeps a copy of every
+// raw response (headers and body bytes as received), so that what the SDK drops while parsing is
+// searched for the upstream key too.
 type bearer struct {
 	header string // "Bearer <token>"; never printed (the type has no String and is not formatted)
 	next   http.RoundTripper
+	raw    *rawLog
 }
 
 func (b *bearer) RoundTrip(r *http.Request) (*http.Response, error) {
 	r = r.Clone(r.Context())
 	r.Header.Set("Authorization", b.header)
-	return b.next.RoundTrip(r)
+	resp, err := b.next.RoundTrip(r)
+	if err != nil {
+		return nil, err
+	}
+	var h strings.Builder
+	_ = resp.Header.Write(&h)
+	b.raw.add([]byte(h.String()))
+	resp.Body = &teeBody{ReadCloser: resp.Body, raw: b.raw}
+	return resp, nil
+}
+
+// rawLog collects the raw responses; bodies are read on the SDK's goroutines.
+type rawLog struct {
+	mu sync.Mutex
+	b  []byte
+}
+
+func (l *rawLog) add(p []byte) {
+	l.mu.Lock()
+	l.b = append(l.b, p...)
+	l.mu.Unlock()
+}
+
+func (l *rawLog) contains(s string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return bytes.Contains(l.b, []byte(s))
+}
+
+// teeBody copies what is read from a response body into the raw log.
+type teeBody struct {
+	io.ReadCloser
+	raw *rawLog
+}
+
+func (t *teeBody) Read(p []byte) (int, error) {
+	n, err := t.ReadCloser.Read(p)
+	if n > 0 {
+		t.raw.add(p[:n])
+	}
+	return n, err
 }
 
 // failure is a check that did not hold: exit 1 with its message.
@@ -56,10 +101,11 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		return 2
 	}
 	baseURL, ref := strings.TrimSuffix(args[0], "/"), args[1]
+	raw := &rawLog{}
 	client := mcp.NewClient(&mcp.Implementation{Name: "smoke", Version: "1.0.0"}, nil)
 	session, err := client.Connect(ctx, &mcp.StreamableClientTransport{
 		Endpoint:             baseURL + "/mcp",
-		HTTPClient:           &http.Client{Transport: &bearer{header: "Bearer " + token, next: http.DefaultTransport}},
+		HTTPClient:           &http.Client{Transport: &bearer{header: "Bearer " + token, next: http.DefaultTransport, raw: raw}},
 		DisableStandaloneSSE: true,
 		MaxRetries:           -1,
 	}, nil)
@@ -75,6 +121,11 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	}
 	if f := walk(ctx, session, ref, clean, stdout); f != "" {
 		_, _ = fmt.Fprintln(stderr, string(f))
+		return 1
+	}
+	_ = session.Close() // the session's last responses are read before the raw scan
+	if raw.contains(upstreamKey) {
+		_, _ = fmt.Fprintln(stderr, string(leaked))
 		return 1
 	}
 	_, _ = fmt.Fprintln(stdout, "client never saw the upstream secret")

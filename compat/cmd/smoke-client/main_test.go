@@ -24,9 +24,13 @@ const (
 // upstream key into the call_tool answer; firstHit is the tool search_tools ranks first ("" for no
 // results).
 type gateway struct {
-	leak     bool
-	firstHit string
-	tools    []string
+	leak bool
+	// leakHeader puts the key into a response header, leakComment into an SSE comment line: both
+	// are dropped by the SDK, so only a scan of the raw responses sees them.
+	leakHeader  bool
+	leakComment bool
+	firstHit    string
+	tools       []string
 }
 
 func (g gateway) start(t *testing.T) string {
@@ -73,10 +77,40 @@ func (g gateway) start(t *testing.T) string {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
+		if g.leakHeader {
+			w.Header().Set("X-Debug", testKey)
+		}
+		if g.leakComment {
+			w = &commentWriter{ResponseWriter: w}
+		}
 		sdk.ServeHTTP(w, r)
 	}))
 	t.Cleanup(srv.Close)
 	return srv.URL
+}
+
+// commentWriter puts an SSE comment carrying the key in front of an event stream.
+type commentWriter struct {
+	http.ResponseWriter
+	done bool
+}
+
+func (c *commentWriter) Write(p []byte) (int, error) {
+	if !c.done {
+		c.done = true
+		if strings.HasPrefix(c.Header().Get("Content-Type"), "text/event-stream") {
+			if _, err := c.ResponseWriter.Write([]byte(": " + testKey + "\n\n")); err != nil {
+				return 0, err
+			}
+		}
+	}
+	return c.ResponseWriter.Write(p)
+}
+
+func (c *commentWriter) Flush() {
+	if f, ok := c.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
 }
 
 func runClient(t *testing.T, env map[string]string, args ...string) (int, string, string) {
@@ -157,6 +191,23 @@ func TestUsage(t *testing.T) {
 	} {
 		if code, _, errOut := runClient(t, tc.env, tc.args...); code != 2 || !strings.HasPrefix(errOut, "Usage: ") {
 			t.Errorf("%v %v: code=%d stderr=%q", tc.env, tc.args, code, errOut)
+		}
+	}
+}
+
+// What the SDK drops (a header, an SSE comment) is still searched: the raw responses are scanned.
+func TestTheKeyInARawResponseFailsEvenWhenTheSDKDropsIt(t *testing.T) {
+	for name, g := range map[string]gateway{
+		"header":      {firstHit: testRef, leakHeader: true},
+		"sse comment": {firstHit: testRef, leakComment: true},
+	} {
+		url := g.start(t)
+		code, out, errOut := runClient(t, goodEnv, url, testRef)
+		if code != 1 || !strings.Contains(errOut, "the client saw the upstream secret") || strings.Contains(out, "client never saw") {
+			t.Errorf("%s: code=%d stdout=%q stderr=%q", name, code, out, errOut)
+		}
+		if strings.Contains(out+errOut, testKey) {
+			t.Errorf("%s: the failure printed the key", name)
 		}
 	}
 }
