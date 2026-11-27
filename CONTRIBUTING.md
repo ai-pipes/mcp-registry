@@ -219,12 +219,12 @@ Nothing is downloaded at image build time. A component that is not covered by a 
 
 ## Releasing
 
-1. Rehearse: `gh workflow run release --ref <branch>` (once the workflow file with the `workflow_dispatch` trigger is on `main`) and wait for a green result. A pull request that touches the release path (workflow, Dockerfile, compose files, smoke scripts, lockfile, the `VERSION` file, `CHANGELOG.md`) rehearses automatically. A rehearsal builds and tests everything (both architectures, both smoke tests) but never publishes and needs no secrets.
+1. Rehearse: `gh workflow run release --ref <branch>` (once the workflow file with the `workflow_dispatch` trigger is on `main`) and wait for a green result. A pull request that touches the release path (workflow, Dockerfile, compose files, smoke and release scripts, lockfiles, the Go sources and `go.mod`, the notices, the `VERSION` file, `CHANGELOG.md`) rehearses automatically. A rehearsal builds and tests everything on both architectures, each on its own native runner (`--version`, both smoke tests), and assembles a manifest list with `--dry-run`, but never publishes and needs no secrets.
 2. Date the changelog entry (`## [<version>] - YYYY-MM-DD`; `Unreleased` blocks the release) and add the compare link at the bottom.
 3. Make sure the `VERSION` file has the version (the only place it is set; `apps/server/package.json` must say the same until it is deleted), and update the two places that pin the release tag: the quick-start command in `README.md` and the usage line in the header of `quickstart.compose.yml`.
 4. Before tagging, confirm the rehearsal on the release-prep pull request is green and shows no warning from the strict check ("a tag ... pushed now would be refused").
 5. Merge to `main`.
-6. Tag `v<version>` on `main` and push the tag. The release workflow checks the tag, the changelog entry and that the commit is on `main`, builds the image, tests it (version printed by the amd64 and arm64 images, quick-start smoke, compose smoke) and only then pushes it to GHCR.
+6. Tag `v<version>` on `main` and push the tag. The release workflow checks the tag, the changelog entry and that the commit is on `main`, builds the image natively on an amd64 and an arm64 runner and tests each (version printed by the image, quick-start smoke, compose smoke), and only then pushes each architecture by digest (refused unless its layers are the tested ones) and merges the two into one manifest list under the tags (`<major>.<minor>.<patch>`, `<major>.<minor>`, `<major>`, `latest`), checked to hold exactly those two images. If the push step reports that the pushed image is not the tested one (the build cache was evicted), re-run all jobs, not only the failed ones.
 7. After the workflow finishes, confirm an anonymous pull works (`docker logout ghcr.io; docker pull ghcr.io/ai-pipes/mcp-registry:<version>`) and that the package is public and linked to the repository.
 
 ## Commits
