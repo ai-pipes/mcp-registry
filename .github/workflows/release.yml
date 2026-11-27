@@ -6,10 +6,11 @@
 # QEMU, no --platform; compat/release_workflow_test.go, run by make go-verify, keeps it so).
 # Jobs:
 #   test (matrix, contents: read, every event): checks, the candidate built and loaded into the local
-#     Docker, its --version, both smokes against it, then its layers (rootfs diff_ids) as a job output.
+#     Docker, its --version, both smokes against it, then its layers (rootfs diff_ids) and its
+#     security-relevant configuration (user, entrypoint, command, environment...) as job outputs.
 #   push-digest (same matrix, tag push only, packages: write): rebuilds the candidate on the same
 #     kind of runner from the cache scope the test leg exported, pushes it by digest (no tag) and
-#     fails unless the pushed image has exactly the tested layers.
+#     fails unless the pushed image has exactly the tested layers and configuration.
 #   publish (tag push only, packages: write): merges the two digests into one manifest list under the
 #     semver tags and fails unless every tag points at a list of exactly those two images.
 #   assemble (every event except a tag push, contents: read): the rehearsal's dry assembly.
@@ -70,10 +71,23 @@ defaults:
     shell: bash
 
 env:
+  # Used raw only through the lowercased copy each publishing job derives (the registry requires
+  # lowercase; metadata-action lowercases its own outputs, an image name in a build output does not).
   IMAGE: ghcr.io/${{ github.repository }}
   # How the operator CLI is invoked inside the image (the `runtime` target of the Dockerfile): the
   # --version step and both smoke tests (SMOKE_CLI, QUICKSTART_CLI) use it, nothing else names it.
   IMAGE_CLI: mcp-registry
+  # The image configuration compared between the tested and the pushed image, in a canonical form
+  # (every field present, keys sorted with jq -S, compact). Input: exactly one JSON object, a
+  # Docker `.Config` (docker image inspect) or the `.config` of an OCI image configuration (the
+  # registry); anything else (empty input, no command) is an error, never an empty value that could
+  # compare equal. Labels, the creation time and the history differ legitimately and are left out.
+  IMAGE_CONFIG_FILTER: >-
+    if length != 1 or (.[0] | type) != "object" then error("not one image configuration") else .[0] end
+    | {User: (.User // ""), Entrypoint: (.Entrypoint // []), Cmd: (.Cmd // []), Env: (.Env // []),
+    WorkingDir: (.WorkingDir // ""), ExposedPorts: (.ExposedPorts // {}), Healthcheck: (.Healthcheck // {}),
+    Volumes: (.Volumes // {}), StopSignal: (.StopSignal // "")}
+    | if (.Cmd | length) == 0 then error("the image configuration has no command") else . end
 
 jobs:
   test:
@@ -94,6 +108,8 @@ jobs:
     outputs:
       layers_amd64: ${{ steps.tested.outputs.layers_amd64 }}
       layers_arm64: ${{ steps.tested.outputs.layers_arm64 }}
+      config_amd64: ${{ steps.tested.outputs.config_amd64 }}
+      config_arm64: ${{ steps.tested.outputs.config_arm64 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -160,8 +176,8 @@ jobs:
       - name: Smoke test, docker compose (prebuilt image)
         run: SMOKE_IMAGE=mcp-registry:rc SMOKE_CLI="$IMAGE_CLI" bash scripts/smoke.sh
       # Last, so only a leg that passed everything records what it tested: the uncompressed layer
-      # digests, which push-digest compares with the image it pushes.
-      - name: Record the tested layers
+      # digests and the canonical configuration, which push-digest compares with the image it pushes.
+      - name: Record the tested layers and configuration
         id: tested
         env:
           ARCH: ${{ matrix.arch }}
@@ -169,16 +185,25 @@ jobs:
           layers="$(docker image inspect --format '{{json .RootFS.Layers}}' mcp-registry:rc | jq -c .)"
           jq -e 'type == "array" and length > 0 and all(.[]; test("^sha256:[0-9a-f]{64}$"))' <<<"$layers" >/dev/null ||
             { echo "::error::no layer digests for mcp-registry:rc"; exit 1; }
+          config="$(docker image inspect --format '{{json .Config}}' mcp-registry:rc | jq -S -c -s "$IMAGE_CONFIG_FILTER")"
+          [ -n "$config" ] || { echo "::error::no configuration for mcp-registry:rc"; exit 1; }
           echo "tested layers ($ARCH): $layers"
-          echo "layers_$ARCH=$layers" >> "$GITHUB_OUTPUT"
+          echo "tested configuration ($ARCH): $config"
+          {
+            echo "layers_$ARCH=$layers"
+            echo "config_$ARCH=$config"
+          } >> "$GITHUB_OUTPUT"
 
   # Only now the registry is touched, and only for a tag push. Each architecture is rebuilt on its
   # own kind of runner from the same commit, Dockerfile and target, with the cache scope its test leg
   # exported, and pushed by digest only (no tag yet). The base images are pinned by digest and the
   # other inputs too (lockfiles, checksums of the model and the native libraries), and the step after
-  # the push refuses an image whose layers are not exactly the tested ones, so a cache miss (an
-  # evicted or failed export, which ignore-error hides) that rebuilds a layer differently stops the
-  # release instead of publishing an untested image: re-run all jobs then.
+  # the push refuses an image whose layers or configuration are not exactly the tested ones, so a
+  # cache miss (an evicted or failed export, which ignore-error hides) that rebuilds a layer
+  # differently stops the release instead of publishing an untested image: re-run all jobs then.
+  # The build runs while the job holds packages: write, but no build step can read the registry
+  # credentials (login-action stores them for the Docker client and buildx's push, not for RUN
+  # steps), and what it produces is published only if it equals the tested image.
   push-digest:
     needs: test
     if: github.event_name == 'push' && github.ref_type == 'tag'
@@ -208,6 +233,9 @@ jobs:
         with:
           persist-credentials: false
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: The image name in lowercase (the registry requires it)
+        id: image
+        run: echo "name=${IMAGE,,}" >> "$GITHUB_OUTPUT"
       - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
@@ -217,7 +245,7 @@ jobs:
       - id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
-          images: ${{ env.IMAGE }}
+          images: ${{ steps.image.outputs.name }}
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
@@ -230,17 +258,20 @@ jobs:
           target: runtime
           platforms: ${{ matrix.platform }}
           labels: ${{ steps.meta.outputs.labels }}
-          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          outputs: type=image,name=${{ steps.image.outputs.name }},push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=rc-${{ matrix.arch }}
-      - name: The pushed image has exactly the tested layers
+      - name: The pushed image has exactly the tested layers and configuration
         id: pushed
         env:
           ARCH: ${{ matrix.arch }}
+          IMAGE: ${{ steps.image.outputs.name }}
           DIGEST: ${{ steps.build.outputs.digest }}
           TESTED: ${{ needs.test.outputs[format('layers_{0}', matrix.arch)] }}
+          TESTED_CONFIG: ${{ needs.test.outputs[format('config_{0}', matrix.arch)] }}
         run: |
           [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::no digest from the push ($DIGEST)"; exit 1; }
           [ -n "$TESTED" ] || { echo "::error::the test job recorded no layers for $ARCH"; exit 1; }
+          [ -n "$TESTED_CONFIG" ] || { echo "::error::the test job recorded no configuration for $ARCH"; exit 1; }
           # The push is an index (the image and its attestation) or the image manifest itself.
           raw="$(docker buildx imagetools inspect --raw "$IMAGE@$DIGEST")"
           manifest="$(jq -r --arg arch "$ARCH" '
@@ -250,15 +281,26 @@ jobs:
               | if length == 1 then .[0].digest else error("\(length) linux/\($arch) images in the push") end
             else empty end' <<<"$raw")"
           [ -n "$manifest" ] || manifest="$DIGEST"
-          config="$(docker buildx imagetools inspect --format '{{json .Image}}' "$IMAGE@$manifest")"
-          pushed="$(jq -c '.rootfs.diff_ids' <<<"$config")"
-          platform="$(jq -r '"\(.os)/\(.architecture)"' <<<"$config")"
+          # The image configuration blob itself, checked against its digest: imagetools' --format
+          # '{{json .Image}}' drops the fields the OCI struct lacks (Healthcheck among them).
+          config_digest="$(docker buildx imagetools inspect --raw "$IMAGE@$manifest" | jq -r '.config.digest')"
+          [[ "$config_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::no config digest in $IMAGE@$manifest"; exit 1; }
+          docker buildx imagetools inspect --raw "$IMAGE@$config_digest" > "$RUNNER_TEMP/config.json"
+          [ "sha256:$(sha256sum < "$RUNNER_TEMP/config.json" | cut -d' ' -f1)" = "$config_digest" ] ||
+            { echo "::error::the configuration read for $IMAGE@$manifest does not match its digest"; exit 1; }
+          pushed="$(jq -c '.rootfs.diff_ids' "$RUNNER_TEMP/config.json")"
+          pushed_config="$(jq -c '.config' "$RUNNER_TEMP/config.json" | jq -S -c -s "$IMAGE_CONFIG_FILTER")"
+          platform="$(jq -r '"\(.os)/\(.architecture)"' "$RUNNER_TEMP/config.json")"
           echo "pushed $IMAGE@$DIGEST (linux/$ARCH manifest $manifest, platform $platform)"
           echo "tested layers: $TESTED"
           echo "pushed layers: $pushed"
+          echo "tested configuration: $TESTED_CONFIG"
+          echo "pushed configuration: $pushed_config"
           [ "$platform" = "linux/$ARCH" ] || { echo "::error::the pushed image is $platform, want linux/$ARCH"; exit 1; }
           [ "$pushed" = "$TESTED" ] ||
             { echo "::error::the pushed linux/$ARCH image is not the tested one (a cache miss rebuilt a layer); re-run all jobs"; exit 1; }
+          [ -n "$pushed_config" ] && [ "$pushed_config" = "$TESTED_CONFIG" ] ||
+            { echo "::error::the pushed linux/$ARCH image has another configuration than the tested one; re-run all jobs"; exit 1; }
           {
             echo "digest_$ARCH=$DIGEST"
             echo "manifest_$ARCH=$manifest"
@@ -279,6 +321,9 @@ jobs:
         with:
           persist-credentials: false
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: The image name in lowercase (the registry requires it)
+        id: image
+        run: echo "name=${IMAGE,,}" >> "$GITHUB_OUTPUT"
       - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
@@ -287,7 +332,7 @@ jobs:
       - id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
-          images: ${{ env.IMAGE }}
+          images: ${{ steps.image.outputs.name }}
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
@@ -295,6 +340,7 @@ jobs:
       - name: Merge the two digests into one manifest list under the tags
         env:
           TAGS: ${{ steps.meta.outputs.tags }}
+          IMAGE: ${{ steps.image.outputs.name }}
           DIGEST_AMD64: ${{ needs.push-digest.outputs.digest_amd64 }}
           DIGEST_ARM64: ${{ needs.push-digest.outputs.digest_arm64 }}
         run: |
@@ -327,7 +373,12 @@ jobs:
   # outputs arrive (what push-digest compares with), and a manifest list is assembled with --dry-run
   # (nothing is written) from the two platform images of the published reference image, pinned by
   # digest in the Makefile (public, read anonymously: no secret, works for forks), then judged by the
-  # same check publish runs on every tag, which must also refuse the two digests swapped.
+  # same check publish runs on every tag, which must also refuse the two digests swapped. The
+  # configuration comparison is rehearsed as far as it goes without a push: both legs recorded a
+  # canonical configuration, and the registry path push-digest reads (the platform image's config by
+  # digest through the same filter) yields one for both platforms of the reference image, and for its
+  # amd64 image it equals what the test job's path (docker image inspect after a pull) reads. What it
+  # cannot rehearse is the comparison with an image this run built and pushed.
   assemble:
     needs: test
     if: github.event_name != 'push'
@@ -338,17 +389,24 @@ jobs:
         with:
           persist-credentials: false
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-      - name: The test job recorded the layers of both architectures
+      - name: The test job recorded the layers and configuration of both architectures
         env:
           LAYERS_AMD64: ${{ needs.test.outputs.layers_amd64 }}
           LAYERS_ARM64: ${{ needs.test.outputs.layers_arm64 }}
+          CONFIG_AMD64: ${{ needs.test.outputs.config_amd64 }}
+          CONFIG_ARM64: ${{ needs.test.outputs.config_arm64 }}
         run: |
           for layers in "$LAYERS_AMD64" "$LAYERS_ARM64"; do
             jq -e 'type == "array" and length > 0' <<<"$layers" >/dev/null ||
               { echo "::error::a test leg recorded no layers ('$layers')"; exit 1; }
           done
-          echo "amd64: $LAYERS_AMD64"
-          echo "arm64: $LAYERS_ARM64"
+          for config in "$CONFIG_AMD64" "$CONFIG_ARM64"; do
+            # Recorded in the canonical form: running it through the filter again changes nothing.
+            [ -n "$config" ] && [ "$(jq -S -c -s "$IMAGE_CONFIG_FILTER" <<<"$config")" = "$config" ] ||
+              { echo "::error::a test leg recorded no canonical configuration ('$config')"; exit 1; }
+          done
+          echo "amd64: $LAYERS_AMD64 $CONFIG_AMD64"
+          echo "arm64: $LAYERS_ARM64 $CONFIG_ARM64"
       - name: Dry assembly of a manifest list from the reference image
         run: |
           ref="$(make -s print-reference-image)"
@@ -360,6 +418,26 @@ jobs:
           arm64="$(pick arm64)"
           docker buildx imagetools create --dry-run -t "$repo:rehearsal" "$repo@$amd64" "$repo@$arm64" > "$RUNNER_TEMP/index.json"
           bash scripts/check-release-manifest.sh "$amd64" "$arm64" < "$RUNNER_TEMP/index.json"
+          # The configuration as push-digest reads it: the config blob by digest, checked, then filtered.
+          for digest in "$amd64" "$arm64"; do
+            config_digest="$(docker buildx imagetools inspect --raw "$repo@$digest" | jq -r '.config.digest')"
+            [[ "$config_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::no config digest in $repo@$digest"; exit 1; }
+            docker buildx imagetools inspect --raw "$repo@$config_digest" > "$RUNNER_TEMP/config.json"
+            [ "sha256:$(sha256sum < "$RUNNER_TEMP/config.json" | cut -d' ' -f1)" = "$config_digest" ] ||
+              { echo "::error::the configuration read for $repo@$digest does not match its digest"; exit 1; }
+            config="$(jq -c '.config' "$RUNNER_TEMP/config.json" | jq -S -c -s "$IMAGE_CONFIG_FILTER")"
+            [ -n "$config" ] || { echo "::error::no configuration read for $repo@$digest"; exit 1; }
+            echo "reference $digest configuration: $config"
+            printf '%s' "$config" > "$RUNNER_TEMP/registry-config-$digest.json"
+          done
+          # The comparison itself on one image read both ways: the amd64 reference pulled into the local
+          # Docker (this runner's own platform) and read as the test job reads its candidate must give
+          # the configuration read from the registry as push-digest reads the pushed image.
+          docker pull -q "$repo@$amd64" >/dev/null
+          local_config="$(docker image inspect --format '{{json .Config}}' "$repo@$amd64" | jq -S -c -s "$IMAGE_CONFIG_FILTER")"
+          [ -n "$local_config" ] && [ "$local_config" = "$(cat "$RUNNER_TEMP/registry-config-$amd64.json")" ] ||
+            { echo "::error::the configuration read from the local Docker ('$local_config') differs from the registry's"; exit 1; }
+          echo "the local and the registry reading of $repo@$amd64 agree"
           if bash scripts/check-release-manifest.sh "$arm64" "$amd64" < "$RUNNER_TEMP/index.json" 2>/dev/null; then
             echo "::error::the manifest check accepted swapped digests"
             exit 1

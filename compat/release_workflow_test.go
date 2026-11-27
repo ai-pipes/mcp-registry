@@ -265,8 +265,8 @@ func TestReleaseWorkflowGuardRefusesBrokenCopies(t *testing.T) {
 		},
 		{
 			name:   "a publishing job gets another write permission",
-			old:    "    timeout-minutes: 30\n    permissions:\n      contents: read\n      packages: write\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1\n      - uses: docker/login",
-			new:    "    timeout-minutes: 30\n    permissions:\n      contents: read\n      packages: write\n      id-token: write\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1\n      - uses: docker/login",
+			old:    "    timeout-minutes: 30\n    permissions:\n      contents: read\n      packages: write\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1\n      - name: The image name in lowercase",
+			new:    "    timeout-minutes: 30\n    permissions:\n      contents: read\n      packages: write\n      id-token: write\n    steps:\n      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n          persist-credentials: false\n      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1\n      - name: The image name in lowercase",
 			reason: "job publish has permission id-token: write",
 		},
 		{
@@ -361,8 +361,8 @@ func TestReleaseWorkflowGuardRefusesBrokenCopies(t *testing.T) {
 		},
 		{
 			name:   "the workflow env reads a secret",
-			old:    "env:\n  IMAGE: ",
-			new:    "env:\n  T: ${{ secrets.X }}\n  IMAGE: ",
+			old:    "\nenv:\n",
+			new:    "\nenv:\n  T: ${{ secrets.X }}\n",
 			reason: "the workflow's env mentions secrets.",
 		},
 		{
