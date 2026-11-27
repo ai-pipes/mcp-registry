@@ -91,8 +91,9 @@ compat-image-ts:
 # Runtime and the model inside. It is built natively for the host architecture; PLATFORM builds
 # another one (emulated where needed): make compat-image-go PLATFORM=linux/amd64, tagged
 # mcp-registry:compat-go-linux-amd64 so that the host image is not overwritten. The Dockerfile
-# reads the version from the VERSION file itself (no build argument), as go-build does. The default target (runtime, the TypeScript image) is
-# untouched.
+# reads the version from the VERSION file itself (no build argument), as go-build does. The image
+# carries its HEALTHCHECK (`mcp-registry healthcheck`). The default target (runtime, the TypeScript
+# image) is untouched.
 PLATFORM :=
 GO_IMAGE := mcp-registry:compat-go$(if $(PLATFORM),-$(subst /,-,$(PLATFORM)))
 compat-image-go: check-version

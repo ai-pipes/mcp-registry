@@ -1,0 +1,7 @@
+ONNX Runtime 1.30.0: its licence and third-party notices, taken unchanged from the PyPI wheel
+pinned in internal/modules/search/infra/onnx/native/pins.env (ORT_NOTICES_WHEEL_URL, SHA-256
+ORT_NOTICES_WHEEL_SHA256) by `go run ./tools/notices onnxruntime`. The image's
+libonnxruntime.so.1 is the same release (ORT_NPM_URL, the npm package carries no licence file).
+
+2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c  LICENSE
+143764b952fdb1a7c69ce653bfba74a7744d6a8a573bfb73e235fba356c83de3  ThirdPartyNotices.txt
