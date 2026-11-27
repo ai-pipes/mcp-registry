@@ -128,8 +128,8 @@ func TestResolveURLMatchesTheURLConstructor(t *testing.T) {
 	}
 }
 
-// The rotation warning names the command as it is invoked in this image (plan decision: not
-// `node dist/cli.js`).
+// The rotation warning names the command as it is invoked in this image (plan decision: not the
+// 1.x invocation).
 func TestKeyRotationWarningNamesTheCommandOfThisImage(t *testing.T) {
 	const want = "SECRETS_KEY_OLD is set: key rotation in progress. Run `mcp-registry rotate-secrets-key`, then remove SECRETS_KEY_OLD and restart"
 	if msgKeyOldSet != want {
