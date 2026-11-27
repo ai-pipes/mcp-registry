@@ -12,7 +12,7 @@ require (
 	github.com/yalue/onnxruntime_go v1.37.0
 	golang.org/x/net v0.60.0
 	golang.org/x/oauth2 v0.36.0
-	golang.org/x/sys v0.49.0
+	golang.org/x/sys v0.50.0
 	golang.org/x/term v0.47.0
 	golang.org/x/text v0.43.0
 	golang.org/x/tools v0.51.0
