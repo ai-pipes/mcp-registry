@@ -9,7 +9,8 @@ import (
 	"testing"
 )
 
-// The upgrade scenario's source under compat-go and in CI's reference leg is the published 1.0.0
+// The upgrade scenario's source under make compat and make compat-reference-run (CI's jobs compat and
+// compat-reference) is the published 1.0.0
 // pinned by the digest of its multi-arch index, named once in the Makefile (UPGRADE_FROM_IMAGE);
 // CI takes it from there (make compat-upgrade-from, make -s print-upgrade-from-image) and never
 // pulls or names the release by its tag alone, which a re-pushed tag could change. Docker-free.
@@ -36,6 +37,6 @@ func TestUpgradeSourceIsThePublished100PinnedByDigest(t *testing.T) {
 		t.Error("ci.yml names the 1.0.0 image itself: take it from the Makefile (make compat-upgrade-from, print-upgrade-from-image)")
 	}
 	if n := strings.Count(string(ci), "make compat-upgrade-from"); n != 2 {
-		t.Errorf("ci.yml runs make compat-upgrade-from %d time(s), want 2 (the reference leg and compat-go)", n)
+		t.Errorf("ci.yml runs make compat-upgrade-from %d time(s), want 2 (the jobs compat and compat-reference)", n)
 	}
 }

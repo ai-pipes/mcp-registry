@@ -294,15 +294,22 @@ func catalogSyncUser(t *testing.T, s *harness.Stack, slug string) string {
 	return *id
 }
 
+// catalogDeliveryLimit bounds catalogWaitDelivered.
+const catalogDeliveryLimit = 60 * time.Second
+
 // catalogWaitDelivered waits until every event of the outbox has been delivered to its
 // subscribers (platform.outbox.processed_at is set). A search assertion that follows a change
 // which does not alter the number of documents (a changed description, a hide that is followed by
 // a sync, an access change) cannot use the row count as its signal: without this wait it could
 // run against the index as it was before the change, and a negative assertion would pass for the
 // wrong reason. The events of the change are already written when its API call returns.
+//
+// The bound is a minute, not Eventually's 15 s: indexing a whole recorded catalog (84 tools, one
+// embedding each) on a loaded host ran out of 15 s on either image and passed on a rerun. It is a
+// wait bound, not an expectation: a stuck outbox is only reported later.
 func catalogWaitDelivered(t *testing.T, s *harness.Stack) {
 	t.Helper()
-	harness.Eventually(t, "every outbox event to be delivered (platform.outbox.processed_at set)", func() bool {
+	harness.EventuallyWithin(t, "every outbox event to be delivered (platform.outbox.processed_at set)", catalogDeliveryLimit, func() bool {
 		var n int
 		err := s.DB.QueryRow(t.Context(), "select count(*) from platform.outbox where processed_at is null").Scan(&n)
 		return err == nil && n == 0

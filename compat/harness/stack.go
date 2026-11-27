@@ -48,9 +48,11 @@ const (
 	referenceCLI          = "node dist/cli.js"
 )
 
+// defaultImage is the image under test unless COMPAT_IMAGE names another: the image built from this
+// tree (`make compat-image`); defaultCLI is how its CLI is invoked.
 const (
-	defaultImage = "mcp-registry:compat-ts"
-	defaultCLI   = "node dist/cli.js"
+	defaultImage = "mcp-registry:compat"
+	defaultCLI   = "mcp-registry"
 	dbUser       = "mcp"
 	dbName       = "mcp"
 

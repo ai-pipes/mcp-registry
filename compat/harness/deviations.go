@@ -12,9 +12,11 @@ import (
 // owner decision). A scenario that touches it has two expectations: the reference behaviour, asserted
 // as before, and the decided behaviour, asserted when the stack reports Fixed(deviation).
 //
-// COMPAT_FIXED selects the decided behaviour: "all", or a comma-separated list of deviation ids.
-// Unset (the reference TypeScript image) means none are fixed. The Go image is expected to pass
-// with COMPAT_FIXED=all at the switchover. Adding a deviation needs the owner's decision.
+// COMPAT_FIXED selects the decided behaviour: "all", or a comma-separated list of deviation ids, or
+// empty for none. Unset means all: the default image under test is the image built from this tree,
+// which has every decided behaviour. The reference (the published 1.0.1) runs with COMPAT_FIXED set
+// and empty (make compat-reference-run), so every reference branch is asserted there. Adding a
+// deviation needs the owner's decision.
 type Deviation string
 
 // The deviations. The description of each is in AllDeviations.
@@ -91,8 +93,15 @@ func ParseFixed(value string) (map[Deviation]bool, error) {
 	return fixed, nil
 }
 
-// fixedFromEnv reads COMPAT_FIXED; boot fails on an invalid value.
-func fixedFromEnv() (map[Deviation]bool, error) { return ParseFixed(os.Getenv(FixedEnv)) }
+// fixedFromEnv reads COMPAT_FIXED; boot fails on an invalid value. Unset is "all" (the default image
+// under test), set and empty is none (the reference).
+func fixedFromEnv() (map[Deviation]bool, error) {
+	value, set := os.LookupEnv(FixedEnv)
+	if !set {
+		value = "all"
+	}
+	return ParseFixed(value)
+}
 
 // Fixed reports whether the image under test is expected to show the decided behaviour of d
 // instead of the reference one (COMPAT_FIXED is "all" or lists d). It is false for the reference image.

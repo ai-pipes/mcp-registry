@@ -9,7 +9,7 @@ VERSION := $(strip $(shell cat VERSION 2>/dev/null))
 check-version:
 	@echo '$(VERSION)' | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$$' || { echo "check-version: VERSION must hold MAJOR.MINOR.PATCH, got '$(VERSION)'"; exit 1; }
 
-.PHONY: native-libs native-model go-test-onnx go-test-onnx-parity go-vet-onnx go-lint-onnx go-verify-onnx compat compat-selfcheck compat-schemas compat-reference print-reference-image compat-upgrade-from print-upgrade-from-image compat-image-ts compat-image-go compat-go load-compare e2e-flows e2e-flows-go go-lint go-lint-new go-fmt-check go-arch-lint go-cover go-verify go-test-int go-build print-go-arch-lint print-golangci-lint
+.PHONY: native-libs native-model go-test-onnx go-test-onnx-parity go-vet-onnx go-lint-onnx go-verify-onnx compat compat-selfcheck compat-schemas compat-reference print-reference-image compat-upgrade-from print-upgrade-from-image compat-image compat-reference-run load-compare e2e-flows go-lint go-lint-new go-fmt-check go-arch-lint go-cover go-verify go-test-int go-build print-go-arch-lint print-golangci-lint
 
 go-lint:
 	go run $(GOLANGCI_LINT) run
@@ -83,7 +83,7 @@ compat-schemas:
 # defaultReferenceImage (compat/harness/stack.go) and compat/selfcheck/Dockerfile hold the same
 # value; a Docker-free test keeps the three equal. compat-reference pulls it anonymously and checks
 # that the local image carries that digest. The suite with the reference as the image under test:
-#   make compat COMPAT_IMAGE="$$(make -s print-reference-image)"
+# make compat-reference-run.
 REFERENCE_IMAGE := ghcr.io/ai-pipes/mcp-registry:1.0.1@sha256:42726e227e5c2522b35c28c41e1feb6ceb8471ba3447ec5399a6c0559a72baf9
 REFERENCE_REPO := $(firstword $(subst :, ,$(REFERENCE_IMAGE)))
 REFERENCE_DIGEST := $(lastword $(subst @, ,$(REFERENCE_IMAGE)))
@@ -96,8 +96,8 @@ compat-reference:
 print-reference-image:
 	@echo $(REFERENCE_IMAGE)
 
-# The image the upgrade scenario (TestUpgradeKeepsEverything) starts from in compat-go and in CI's
-# reference leg: the published TypeScript 1.0.0 (the release operators run), pinned by the digest of
+# The image the upgrade scenario (TestUpgradeKeepsEverything) starts from in make compat and in
+# make compat-reference-run: the published TypeScript 1.0.0 (the release operators run), pinned by the digest of
 # its multi-arch index (linux/amd64 and linux/arm64; resolved with `docker buildx imagetools inspect
 # ghcr.io/ai-pipes/mcp-registry:1.0.0`). compat-upgrade-from pulls it anonymously and checks that the
 # local image carries that digest. Dependabot does not watch this line.
@@ -114,176 +114,94 @@ compat-upgrade-from:
 print-upgrade-from-image:
 	@echo $(UPGRADE_FROM_IMAGE)
 
-# The TypeScript image built from this tree (the default image under test until the switchover).
-compat-image-ts:
-	docker build -t mcp-registry:compat-ts .
-
-# The Go image (Dockerfile target go), tagged mcp-registry:compat-go: cgo, build tag onnx, ONNX
-# Runtime and the model inside. It is built natively for the host architecture; PLATFORM builds
-# another one (emulated where needed): make compat-image-go PLATFORM=linux/amd64, tagged
-# mcp-registry:compat-go-linux-amd64 so that the host image is not overwritten. The Dockerfile
-# reads the version from the VERSION file itself (no build argument), as go-build does. The image
-# carries its HEALTHCHECK (`mcp-registry healthcheck`). The default target (runtime, the TypeScript
-# image) is untouched.
+# The image built from this tree (the Dockerfile's default target, the image a release ships),
+# tagged mcp-registry:compat: the default image under test of the suite and the browser flows
+# (harness defaultImage). It is built natively for the host architecture; PLATFORM builds another one
+# (emulated where needed): make compat-image PLATFORM=linux/amd64, tagged
+# mcp-registry:compat-linux-amd64 so that the host image is not overwritten. The Dockerfile reads the
+# version from the VERSION file itself (no build argument), as go-build does; the image must report it.
 PLATFORM :=
-GO_IMAGE := mcp-registry:compat-go$(if $(PLATFORM),-$(subst /,-,$(PLATFORM)))
-compat-image-go: check-version
-	docker build $(if $(PLATFORM),--platform $(PLATFORM)) --target go -t $(GO_IMAGE) .
-	@got="$$(docker run --rm $(if $(PLATFORM),--platform $(PLATFORM)) $(GO_IMAGE) mcp-registry --version)"; \
-	if [ "$$got" != "$(VERSION)" ]; then echo "compat-image-go: the image reports version '$$got', VERSION says '$(VERSION)'"; exit 1; fi
+IMAGE := mcp-registry:compat$(if $(PLATFORM),-$(subst /,-,$(PLATFORM)))
+compat-image: check-version
+	docker build $(if $(PLATFORM),--platform $(PLATFORM)) --target go -t $(IMAGE) .
+	@got="$$(docker run --rm $(if $(PLATFORM),--platform $(PLATFORM)) $(IMAGE) mcp-registry --version)"; \
+	if [ "$$got" != "$(VERSION)" ]; then echo "compat-image: the image reports version '$$got', VERSION says '$(VERSION)'"; exit 1; fi
 
-# The scenarios the Go server passes so far (the milestone list); it grows with every milestone.
-# Both variables are set with := here, so an environment variable of the same name does NOT
-# override them; override on the make command line instead:
-#   make compat-go COMPAT_GO_TESTS='TestConfigRefused TestPlatformWithoutPeople'
-#   make compat-go COMPAT_GO_SKIP=TestCLIKeys   # nothing is skipped by default
-# In a value given that way (or edited here), `$$` is a literal `$` for make; a value is passed to
-# go test inside single quotes, so it must not contain one.
-#
-# Milestone 2 (identity) added the scenarios that need people, sign-in, sessions and tokens but no
-# /mcp and no catalog. Milestone 3 (catalog) added the scenarios of the catalog REST and of the
-# commands create-server and sync, and TestPlatformBearerNeverOpensTheWebAPI; the three steps of
-# TestCLICreateUser that listed /api/servers run again.
-# Milestone 4 (search) added the scenarios that judge the index, the stored vectors and the reindex
-# command: TestSearchStoredVectors (the milestone's judge: every stored vector equals the reference
-# image's on the same machine), TestCLIReindexEmpty, TestConfigOpenAICompatibleEmbedder,
-# TestConfigModelDirMissing, TestSearchFailedReembedding, TestSearchStaleRemoval and TestCatalogSearch.
-# Milestone 5 (connections) added the connections scenarios, the personal-auth sync step of
-# TestCLIServers and the hand-over of connections between the images (TestPlatformStartsOnReferenceDatabase
-# and TestPlatformReverseHandOver).
-# Milestone 6 (the gateway) added the scenarios that judge /mcp, call_tool and the call log:
-# TestMCPProtocolClassic, TestMCPSDKClient, TestMCPSurface, TestMCPGuards, TestMCPMetaTools,
-# TestGatewayCall, TestGatewayFaults, TestGatewayCallsAPI and TestGatewayAuditAPI; the credentials
-# through call_tool (TestConnectionsRefresh, TestConnectionsRefreshFailures, TestConnectionsSingleFlight,
-# TestConnectionsUpstreamRejectsTheToken); TestSearchReadyBeforeServing (the decided ready-before-serving
-# branch: a search made at once after a restart equals the settled one); TestConfigNetworkAndRetention
-# and TestConfigSecretsFromFiles (their cleanup demands that the scenario's MCP ledger saw an answer);
-# and TestUpgradeKeepsEverything (since milestone 8 compat-go runs it as the real upgrade: the published
-# 1.0.0 creates the state, the Go image takes over, see COMPAT_GO_UPGRADE_FROM).
-# Milestone 7 (the operator CLI) added TestCLIKeys (rotate-secrets-key and reset-key-check) and the
-# key-rotation subtest of TestPlatformMigrationsAndKeyCheck: nothing is left out for the Go image.
-COMPAT_GO_TESTS := TestConfigRefused TestPlatformStartsOnReferenceDatabase TestPlatformReverseHandOver \
-	TestPlatformWithoutPeople TestPlatformMigrationsAndKeyCheck TestPlatformStaticFilesAndSPA \
-	TestIdentityOIDC TestIdentityOIDCFailedCallbackAudit TestIdentityOIDCProviderDownAtStart \
-	TestIdentityNoOIDC TestIdentityDefaultRateLimits TestIdentityDisablingAPerson \
-	TestCLIVersion TestCLICreateUser TestCLICreateUserRoleFlags TestCLICreateToken TestCLILoginLink TestCLILoginLinkWithOIDC \
-	TestFirstStartAnnouncement TestFirstStartAnnouncementNeedsAnEmptyDatabaseAndNoOIDC \
-	TestConfigEmptyMeansUnset TestPlatformMethodsWithoutOIDC TestPlatformCSRF TestPlatformHealthz \
-	TestPlatformAccessLog TestPlatformBodyLimit TestPlatformSecurityHeaders TestIdentityOIDCBindingKept \
-	TestCatalogOptimisticConcurrency TestCatalogValidation TestCatalogServers TestCLIServers \
-	TestPlatformBearerNeverOpensTheWebAPI \
-	TestCatalogSearch TestSearchStoredVectors TestCLIReindexEmpty TestConfigOpenAICompatibleEmbedder \
-	TestConfigModelDirMissing TestSearchFailedReembedding TestSearchStaleRemoval \
-	TestConnectionsConnectFlow TestConnectionsConnectCallbackRefusals TestConnectionsStartRefusals \
-	TestConnectionsPAT TestConnectionsArePersonal TestConnectionsWebAPIRules TestConnectionsConfigChange \
-	TestConnectionsDisconnectIgnoresRevokeFailures TestConnectionsAdminSync \
-	TestConnectionsConfigChangeBySync \
-	TestMCPProtocolClassic TestMCPSDKClient TestMCPSurface TestMCPGuards TestMCPMetaTools \
-	TestGatewayCall TestGatewayFaults TestGatewayCallsAPI TestGatewayAuditAPI \
-	TestConnectionsRefresh TestConnectionsRefreshFailures TestConnectionsSingleFlight \
-	TestConnectionsUpstreamRejectsTheToken TestSearchReadyBeforeServing \
-	TestConfigNetworkAndRetention TestConfigSecretsFromFiles TestUpgradeKeepsEverything \
-	TestCLIKeys
+# The image TestUpgradeKeepsEverything starts from under make compat: the published 1.0.0
+# (UPGRADE_FROM_IMAGE, make compat-upgrade-from), so the image under test takes over a database the
+# release operators run created, and rotates its key. Give it on the make command line to start from
+# another image; empty (make compat COMPAT_UPGRADE_FROM=) makes the scenario a restart test of the
+# image under test.
+COMPAT_UPGRADE_FROM := $(UPGRADE_FROM_IMAGE)
+# The packages compat and compat-reference-run test (the whole suite by default).
+COMPAT_PKGS := ./compat/...
 
-# Subtests of the scenarios above that need a later milestone, as a go test -skip expression: one
-# entry per line below, joined with `|` (slash-separated regular expressions per level; spaces of a
-# subtest name are underscores; an entry names the milestone whose work removes it). Since milestone 7
-# the list is empty: nothing is skipped for the Go image. With no entry, COMPAT_GO_SKIP is empty and
-# -skip is not passed at all (see the compat-go recipe).
-COMPAT_GO_SKIP_ENTRIES :=
-
-space := $(subst ,, )
-COMPAT_GO_SKIP := $(subst $(space),|,$(strip $(COMPAT_GO_SKIP_ENTRIES)))
-COMPAT_GO_RUN := ^($(subst $(space),|,$(strip $(COMPAT_GO_TESTS))))$$
-
-# The deviations (compat/harness/deviations.go) whose decided behaviour the Go server has, for
-# compat-go and e2e-flows-go: config-errors (milestone 1), audit-login-via, create-user-keeps-role
-# and oidc-binding-kept (milestone 2), create-server-sync-exit (milestone 3), reindex-wording
-# and vector-kept-on-failed-reembedding and stale-removal-rechecks-catalog (milestone 4),
-# oauth-state-kept (milestone 5), and request-id-on-refusals, token-429-retry-after and
-# ready-before-serving (milestone 6: the /mcp route, its token check and the search made at once
-# after a start). All twelve.
-COMPAT_GO_FIXED := config-errors,audit-login-via,create-user-keeps-role,oidc-binding-kept,create-server-sync-exit,reindex-wording,vector-kept-on-failed-reembedding,stale-removal-rechecks-catalog,oauth-state-kept,request-id-on-refusals,token-429-retry-after,ready-before-serving
-
-# The image TestUpgradeKeepsEverything starts from under compat-go: the published 1.0.0 (UPGRADE_FROM_IMAGE,
-# make compat-upgrade-from), so the Go image takes over a database the TypeScript release created, and
-# rotates its key. Give it on the make command line to start from another image; empty
-# (make compat-go COMPAT_GO_UPGRADE_FROM=) makes the scenario a restart test of the Go image.
-COMPAT_GO_UPGRADE_FROM := $(UPGRADE_FROM_IMAGE)
-
-# The suite against the Go image. The reference image (REFERENCE_IMAGE, make compat-reference) must
-# exist as well: some scenarios compare with it on the same machine, and the new-database scenario
-# starts from it; so must the upgrade source (COMPAT_GO_UPGRADE_FROM, make compat-upgrade-from).
-# Before it runs, the pattern is
-# listed (nothing is started): it must match exactly the scenarios named in COMPAT_GO_TESTS, so a
-# renamed or mistyped scenario fails here instead of passing by running nothing.
-compat-go:
-	@docker image inspect $(REFERENCE_IMAGE) >/dev/null 2>&1 || { echo "compat-go: the reference image $(REFERENCE_IMAGE) is missing: run make compat-reference"; exit 1; }
-	@docker image inspect mcp-registry:compat-go >/dev/null 2>&1 || { echo "compat-go: the image mcp-registry:compat-go is missing: run make compat-image-go"; exit 1; }
-	@$(if $(COMPAT_GO_UPGRADE_FROM),docker image inspect $(COMPAT_GO_UPGRADE_FROM) >/dev/null 2>&1 || { echo "compat-go: the upgrade source $(COMPAT_GO_UPGRADE_FROM) is missing: run make compat-upgrade-from"; exit 1; },true)
-	@listed="$$(go test -tags compat -count=1 -list '$(COMPAT_GO_RUN)' ./compat/ | grep -c '^Test')"; \
-	if [ "$$listed" != "$(words $(COMPAT_GO_TESTS))" ]; then \
-		echo "compat-go: the pattern '$(COMPAT_GO_RUN)' matches $$listed scenario(s), COMPAT_GO_TESTS names $(words $(COMPAT_GO_TESTS)): $(COMPAT_GO_TESTS)"; exit 1; fi
-	COMPAT_IMAGE=mcp-registry:compat-go COMPAT_CLI=mcp-registry COMPAT_FIXED=$(COMPAT_GO_FIXED) \
-		$(if $(COMPAT_GO_UPGRADE_FROM),COMPAT_UPGRADE_FROM='$(COMPAT_GO_UPGRADE_FROM)' COMPAT_UPGRADE_FROM_CLI='$(UPGRADE_FROM_CLI)') \
-		go test -tags compat -count=1 -p 1 -timeout 45m -run '$(COMPAT_GO_RUN)' $(if $(COMPAT_GO_SKIP),-skip '$(COMPAT_GO_SKIP)') $(COMPAT_ARGS) ./compat/
-
+# The whole suite against the image built from this tree (make compat-image) with every decided
+# deviation (COMPAT_FIXED unset means all) and the real upgrade from the published 1.0.0. The
+# reference (make compat-reference) must exist too: some scenarios compare with it on the same
+# machine, and the database hand-over scenarios start from it; so must the upgrade source.
 # COMPAT_ARGS adds go test arguments, e.g. make compat COMPAT_ARGS='-run ^TestPlatform' (the -run
-# patterns per area are in CONTRIBUTING.md). Nothing here sets COMPAT_REFERENCE: it matters only
-# for -update, which the harness allows only for the reference image. -p 1 runs the test packages
-# (compat, compat/harness, compat/fakes) one after another: concurrent stacks on one machine stall
-# the app's event loop (it loads its embedding model right after it first answers healthy), and a
-# stalled app turns into flaky timeouts.
+# patterns per area are in CONTRIBUTING.md). Nothing here sets COMPAT_REFERENCE: it matters only for
+# -update, which the harness allows only for the reference (see compat-reference-run). -p 1 runs the
+# test packages (compat, compat/harness, compat/fakes, compat/cmd) one after another: concurrent
+# stacks on one machine stall the apps, and a stalled app turns into flaky timeouts.
 compat:
-	go test -tags compat -count=1 -p 1 -timeout 45m $(COMPAT_ARGS) ./compat/...
+	@docker image inspect $(REFERENCE_IMAGE) >/dev/null 2>&1 || { echo "compat: the reference image $(REFERENCE_IMAGE) is missing: run make compat-reference"; exit 1; }
+	@[ -n "$$COMPAT_IMAGE" ] || docker image inspect mcp-registry:compat >/dev/null 2>&1 || { echo "compat: the image mcp-registry:compat is missing: run make compat-image"; exit 1; }
+	@$(if $(COMPAT_UPGRADE_FROM),docker image inspect $(COMPAT_UPGRADE_FROM) >/dev/null 2>&1 || { echo "compat: the upgrade source $(COMPAT_UPGRADE_FROM) is missing: run make compat-upgrade-from"; exit 1; },true)
+	$(if $(COMPAT_UPGRADE_FROM),COMPAT_UPGRADE_FROM='$(COMPAT_UPGRADE_FROM)' COMPAT_UPGRADE_FROM_CLI='$(UPGRADE_FROM_CLI)') \
+		go test -tags compat -count=1 -p 1 -timeout 45m $(COMPAT_ARGS) $(COMPAT_PKGS)
+
+# The reference leg: the same suite with the published 1.0.1 (REFERENCE_IMAGE) as the image under
+# test, so every reference branch of the decided deviations stays asserted and the vector and
+# ranking comparisons become determinism checks. Everything the harness would otherwise default to
+# the image built from this tree is set explicitly: the reference's CLI, no decided deviation
+# (COMPAT_FIXED set and empty) and the upgrade source with its CLI. Goldens are rewritten only here
+# (the harness refuses -update for any other image, and with a decided deviation selected):
+#   make compat-reference-run COMPAT_REFERENCE=1 COMPAT_PKGS=./compat/ COMPAT_ARGS='-run ^TestCLIVersion$$ -update'
+# (one package and the one scenario that owns the golden: -update is global, and only the packages
+# that import the harness know the flag).
+REFERENCE_CLI := node dist/cli.js
+compat-reference-run:
+	@docker image inspect $(REFERENCE_IMAGE) >/dev/null 2>&1 || { echo "compat-reference-run: the reference image $(REFERENCE_IMAGE) is missing: run make compat-reference"; exit 1; }
+	@$(if $(COMPAT_UPGRADE_FROM),docker image inspect $(COMPAT_UPGRADE_FROM) >/dev/null 2>&1 || { echo "compat-reference-run: the upgrade source $(COMPAT_UPGRADE_FROM) is missing: run make compat-upgrade-from"; exit 1; },true)
+	COMPAT_IMAGE='$(REFERENCE_IMAGE)' COMPAT_CLI='$(REFERENCE_CLI)' COMPAT_FIXED= \
+		$(if $(COMPAT_UPGRADE_FROM),COMPAT_UPGRADE_FROM='$(COMPAT_UPGRADE_FROM)' COMPAT_UPGRADE_FROM_CLI='$(UPGRADE_FROM_CLI)') \
+		$(if $(COMPAT_REFERENCE),COMPAT_REFERENCE='$(COMPAT_REFERENCE)') \
+		go test -tags compat -count=1 -p 1 -timeout 45m $(COMPAT_ARGS) $(COMPAT_PKGS)
 
 # The browser flows (e2e/flows, Playwright with Chromium) against the image COMPAT_IMAGE (default
-# mcp-registry:compat-ts, see compat-image-ts), orchestrated from Go so that the same flows judge the
-# Go server later. Needs `pnpm install` and `pnpm exec playwright install chromium`. Not part of
-# `make compat` (tag e2e). It also runs the control API's own tests (TestControl*); the Docker-free
-# ones (TestControlRefuses*, TestControlEcho*: the guarantee behind the API's token and fixed
-# operations; TestPlaywrightArgs*: the arguments refused) run in go-verify too. Traces of a failed run: node_modules/.cache/playwright/flows-results
-# (or E2E_OUTPUT_DIR). E2E_PLAYWRIGHT_ARGS='03-tokens.spec.ts' runs one spec file (space-separated
-# arguments only: a test title with spaces cannot be passed, pass its file; --list and
-# --pass-with-no-tests are refused, as are --retries, --grep-invert, --shard, --last-failed,
-# --only-changed, -c and --config in any form).
+# mcp-registry:compat, see compat-image, with every decided deviation), orchestrated from Go. Needs
+# `pnpm install` and `pnpm exec playwright install chromium`. Not part of `make compat` (tag e2e).
+# It also runs the control API's own tests (TestControl*); the Docker-free ones (TestControlRefuses*,
+# TestControlEcho*: the guarantee behind the API's token and fixed operations; TestPlaywrightArgs*:
+# the arguments refused) run in go-verify too. Traces of a failed run:
+# node_modules/.cache/playwright/flows-results (or E2E_OUTPUT_DIR). E2E_PLAYWRIGHT_ARGS='03-tokens.spec.ts'
+# runs one spec file (space-separated arguments only: a test title with spaces cannot be passed,
+# pass its file; --list and --pass-with-no-tests are refused, as are --retries, --grep-invert,
+# --shard, --last-failed, --only-changed, -c and --config in any form).
 e2e-flows:
+	@[ -n "$$COMPAT_IMAGE" ] || docker image inspect mcp-registry:compat >/dev/null 2>&1 || { echo "e2e-flows: the image mcp-registry:compat is missing: run make compat-image"; exit 1; }
 	go test -tags "compat e2e" -count=1 -timeout 30m -v -run '^(TestBrowserFlows|TestControl)' ./compat/e2e/
-
-# All twelve browser flows against the Go image (build it with compat-image-go): identity, the catalog, connections, and since milestone 6 the
-# token on /mcp (03-tokens) and a call through /mcp with the call log (09-permissions).
-# TestControlOperationsAgainstARealStack is not run: the control API's tests are image independent and
-# run in e2e-flows. Same guard, same specs: the arguments go through E2E_PLAYWRIGHT_ARGS, which refuses
-# the ways to run fewer tests silently. An E2E_PLAYWRIGHT_ARGS given on the make command line replaces
-# the list.
-E2E_GO_SPECS := 00-guard-selftest.spec.ts 01-first-start-link.spec.ts 02-oidc-login.spec.ts \
-	03-tokens.spec.ts 04-create-server.spec.ts 05-form-errors.spec.ts 06-hide-tool.spec.ts 07-edit-conflict.spec.ts \
-	08-connect.spec.ts 08b-connect-cross-site.spec.ts 09-permissions.spec.ts 10-disable-person.spec.ts 11-session-expiry.spec.ts \
-	12-direct-links.spec.ts
-e2e-flows-go:
-	@docker image inspect mcp-registry:compat-go >/dev/null 2>&1 || { echo "e2e-flows-go: the image mcp-registry:compat-go is missing: run make compat-image-go"; exit 1; }
-	COMPAT_IMAGE=mcp-registry:compat-go COMPAT_CLI=mcp-registry COMPAT_FIXED=$(COMPAT_GO_FIXED) \
-		E2E_PLAYWRIGHT_ARGS='$(E2E_GO_SPECS)' \
-		go test -tags "compat e2e" -count=1 -timeout 30m -v -run '^TestBrowserFlows$$' ./compat/e2e/
 
 # The load comparison (compat/load_test.go, build tags compat and load, so neither make compat nor
 # go-verify runs it): the same fixtures and traffic against two images, one stack at a time, a
 # Markdown table on stdout and in LOAD_OUT (default a file under the system temp dir). It reports
 # and asserts nothing. A is the published 1.0.0 (UPGRADE_FROM_IMAGE, make compat-upgrade-from), B the
-# Go image (make compat-image-go); every variable can be given on the make command line:
+# image built from this tree (make compat-image); every variable can be given on the make command line:
 #   make load-compare LOAD_IMAGE_B=mcp-registry:other LOAD_OUT=/tmp/load.md
-# LOAD_FIXED_B is the COMPAT_FIXED the harness boots B with (it only selects the branch a scenario
-# asserts; the load test asserts none). About 3 minutes.
+# LOAD_FIXED_A/B are the COMPAT_FIXED the harness boots A and B with (it only selects the branch a
+# scenario asserts; the load test asserts none). About 3 minutes.
 LOAD_IMAGE_A := $(UPGRADE_FROM_IMAGE)
 LOAD_CLI_A := $(UPGRADE_FROM_CLI)
-LOAD_IMAGE_B := mcp-registry:compat-go
+LOAD_IMAGE_B := mcp-registry:compat
 LOAD_CLI_B := mcp-registry
 LOAD_FIXED_A :=
-LOAD_FIXED_B := $(COMPAT_GO_FIXED)
+LOAD_FIXED_B := all
 LOAD_OUT :=
 load-compare:
 	@docker image inspect '$(LOAD_IMAGE_A)' >/dev/null 2>&1 || { echo "load-compare: the image A '$(LOAD_IMAGE_A)' is missing: run make compat-upgrade-from (or give LOAD_IMAGE_A)"; exit 1; }
-	@docker image inspect '$(LOAD_IMAGE_B)' >/dev/null 2>&1 || { echo "load-compare: the image B '$(LOAD_IMAGE_B)' is missing: run make compat-image-go (or give LOAD_IMAGE_B)"; exit 1; }
+	@docker image inspect '$(LOAD_IMAGE_B)' >/dev/null 2>&1 || { echo "load-compare: the image B '$(LOAD_IMAGE_B)' is missing: run make compat-image (or give LOAD_IMAGE_B)"; exit 1; }
 	LOAD_IMAGE_A='$(LOAD_IMAGE_A)' LOAD_CLI_A='$(LOAD_CLI_A)' LOAD_FIXED_A='$(LOAD_FIXED_A)' \
 		LOAD_IMAGE_B='$(LOAD_IMAGE_B)' LOAD_CLI_B='$(LOAD_CLI_B)' LOAD_FIXED_B='$(LOAD_FIXED_B)' \
 		$(if $(LOAD_OUT),LOAD_OUT='$(LOAD_OUT)') \

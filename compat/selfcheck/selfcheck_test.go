@@ -29,6 +29,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -137,8 +138,13 @@ func topLevel(path string) string {
 }
 
 // runSuite runs the named top-level tests of ./compat/ against the broken image, verbosely, with
-// skip (a go test -skip pattern, "" for none). breakValue "" leaves BREAK unset. COMPAT_REFERENCE
-// is removed so a distorted image can never rewrite a golden file.
+// skip (a go test -skip pattern, "" for none). breakValue "" leaves BREAK unset. The variables in
+// ownedEnv are never inherited from the caller: COMPAT_REFERENCE so a distorted image can never
+// rewrite a golden file, the upgrade source so the upgrade scenario is a restart of the derived
+// image, and the image, its CLI, the deviations and the app environment, which this function sets.
+// ownedEnv are the suite variables runSuite sets or clears itself.
+var ownedEnv = []string{"COMPAT_REFERENCE", "COMPAT_IMAGE", "COMPAT_CLI", harness.FixedEnv, "COMPAT_APP_ENV", "COMPAT_UPGRADE_FROM", "COMPAT_UPGRADE_FROM_CLI"}
+
 func runSuite(t *testing.T, root string, tests []string, skip, breakValue string) (output string, exitCode int) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 25*time.Minute)
@@ -149,13 +155,16 @@ func runSuite(t *testing.T, root string, tests []string, skip, breakValue string
 	}
 	cmd := exec.CommandContext(ctx, "go", append(args, "./compat/")...)
 	cmd.Dir = root
-	env := make([]string, 0, len(os.Environ())+2)
+	env := make([]string, 0, len(os.Environ())+4)
 	for _, kv := range os.Environ() {
-		if !strings.HasPrefix(kv, "COMPAT_REFERENCE=") && !strings.HasPrefix(kv, "COMPAT_IMAGE=") && !strings.HasPrefix(kv, "COMPAT_APP_ENV=") {
+		name, _, _ := strings.Cut(kv, "=")
+		if !slices.Contains(ownedEnv, name) {
 			env = append(env, kv)
 		}
 	}
-	env = append(env, "COMPAT_IMAGE="+brokenImage)
+	// The derived image is the reference with a proxy: its CLI, and none of the decided behaviours
+	// (the harness defaults are those of the image built from this tree).
+	env = append(env, "COMPAT_IMAGE="+brokenImage, "COMPAT_CLI="+harness.ReferenceCLI(), harness.FixedEnv+"=")
 	if breakValue != "" {
 		env = append(env, "COMPAT_APP_ENV=BREAK="+breakValue)
 	}
