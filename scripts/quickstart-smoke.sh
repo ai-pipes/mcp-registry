@@ -7,7 +7,10 @@
 #   app must refuse to start with the fatal text and leak neither key → stack and volumes removed.
 # Own compose project and port, so it never touches another deployment. With
 # QUICKSTART_IMAGE=<image> the stack runs that prebuilt image (nothing is built, the image is
-# never removed). Needs docker, curl, openssl. The link code, cookie, token and keys are never printed.
+# never removed). QUICKSTART_CLI is how the operator CLI is invoked inside the app container
+# (default `node dist/cli.js`, the TypeScript image; `mcp-registry` for the Go image):
+#   QUICKSTART_IMAGE=mcp-registry:compat-go QUICKSTART_CLI=mcp-registry bash scripts/quickstart-smoke.sh
+# Needs docker, curl, openssl. The link code, cookie, token and keys are never printed.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -26,6 +29,9 @@ else
   IMAGE="mcp-registry:quickstart-smoke"
   BUILD_IMAGE=1
 fi
+# The CLI command, split into words (no shell in between).
+read -r -a CLI <<<"${QUICKSTART_CLI:-node dist/cli.js}"
+[ "${#CLI[@]}" -gt 0 ] || { echo "QUICKSTART_CLI is empty" >&2; exit 2; }
 HEALTH_TIMEOUT=120
 MISMATCH_TIMEOUT=60
 FATAL_TEXT='SECRETS_KEY does not match the data in this database; restore the original key (stored secrets cannot be read with this one)'
@@ -159,7 +165,7 @@ echo "me: admin"
 
 step "documented file-less commands: login-link through -p, logs through -p"
 # Exactly what the compose header and the README tell people to type (no -f, no env file).
-link_out="$(pcompose exec -T app node dist/cli.js login-link local-admin 2>"$WORK/login-link.err")" ||
+link_out="$(pcompose exec -T app "${CLI[@]}" login-link local-admin 2>"$WORK/login-link.err")" ||
   fail "login-link local-admin exited non-zero"
 grep -qE "^${BASE_URL}/login#link=ll_[A-Za-z0-9_-]+$" <<<"$link_out" ||
   fail "login-link did not print a link of the expected shape"

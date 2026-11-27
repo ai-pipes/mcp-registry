@@ -52,9 +52,9 @@ FROM --platform=$BUILDPLATFORM golang:1.27-bookworm@sha256:4fa7c968ba93f16356705
 COPY internal/modules/search/infra/onnx/native/fetch-model.sh internal/modules/search/infra/onnx/native/pins.env /native-src/
 RUN sh /native-src/fetch-model.sh /app/models
 
-# --- smoke-upstream: the test-only upstream MCP server of scripts/smoke.sh -------------------
-#     (apps/server/test/smoke/upstream.ts). Built only with `--target smoke-upstream` by
-#     scripts/smoke.compose.yml; nothing of it reaches the runtime image below.
+# --- smoke-upstream: the former TypeScript upstream of scripts/smoke.sh
+#     (apps/server/test/smoke/upstream.ts), replaced by the Go stage smoke-go below and kept until the
+#     TypeScript server is removed. Nothing builds it; nothing of it reaches the runtime image.
 FROM build AS smoke-upstream
 USER node
 EXPOSE 8080
@@ -90,6 +90,22 @@ COPY VERSION VERSION
 RUN v="$(tr -d '[:space:]' < VERSION)" \
     && { echo "$v" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || { echo "VERSION must hold MAJOR.MINOR.PATCH, got '$v'" >&2; exit 1; }; } \
     && CGO_ENABLED=1 CGO_LDFLAGS="-L/native" go build -tags onnx -trimpath -ldflags "-s -w -X main.version=$v" -o /out/mcp-registry ./cmd/mcp-registry
+
+# --- smoke-go: the test-only tools of scripts/smoke.sh in Go (compat/cmd/smoke-upstream, the fake
+#     upstream MCP server, and compat/cmd/smoke-client, the MCP client), built with -tags compat. Built
+#     only by scripts/smoke.compose.yml; nothing of it reaches an image people run. ------------------
+FROM golang:1.27-bookworm@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea AS smoke-go-build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY compat/cmd compat/cmd
+RUN CGO_ENABLED=0 go build -tags compat -trimpath -ldflags "-s -w" -o /out/ ./compat/cmd/smoke-upstream ./compat/cmd/smoke-client
+
+FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc AS smoke-go
+COPY --from=smoke-go-build /out/smoke-upstream /out/smoke-client /usr/local/bin/
+USER 65534:65534
+EXPOSE 8080
+CMD ["smoke-upstream"]
 
 # --- go: the Go image (not the default target yet: that is `runtime` below, the TypeScript image).
 #     No ENTRYPOINT: the server is the default command, which the compat suite replaces to run the

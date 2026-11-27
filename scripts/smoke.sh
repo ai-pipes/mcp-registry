@@ -9,9 +9,15 @@
 # Runs as its own compose project with its own env file and port, so it never touches a
 # deployment started from .env in the same checkout. With SMOKE_IMAGE=<image> the app runs from
 # that prebuilt image (scripts/smoke.prebuilt.compose.yml) instead of being built here; the image
-# is never removed. The test upstream is always built from the Dockerfile. Needs docker, openssl, node 22 and
-# `pnpm install` (for the MCP client). OIDC is a placeholder: discovery is lazy. The smoke
-# exercises the CLI and the /mcp path only; it never signs in to the UI.
+# is never removed. SMOKE_CLI is how the operator CLI is invoked inside the app container (default
+# `node dist/cli.js`, the TypeScript image; `mcp-registry` for the Go image), so the same script
+# judges either image:
+#   SMOKE_IMAGE=mcp-registry:compat-go SMOKE_CLI=mcp-registry bash scripts/smoke.sh
+# The test upstream and the MCP client are Go programs (compat/cmd/smoke-upstream, smoke-client),
+# always built from the Dockerfile (target smoke-go); the client runs in the upstream's container
+# and reaches the app as http://app:3000 (ALLOWED_HOSTS=app). Needs docker, curl and openssl. OIDC
+# is a placeholder: discovery is lazy. The smoke exercises the CLI and the /mcp path only; it never
+# signs in to the UI.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -22,6 +28,9 @@ BASE_URL="http://localhost:${PORT}"
 HEALTH_TIMEOUT=120
 SEARCH_TIMEOUT=120
 TOOL_REF="smoke.echo"
+# The CLI command, split into words (no shell in between).
+read -r -a CLI <<<"${SMOKE_CLI:-node dist/cli.js}"
+[ "${#CLI[@]}" -gt 0 ] || { echo "SMOKE_CLI is empty" >&2; exit 2; }
 
 # The upstream's shared key: it reaches the app only through the CLI's stdin.
 SMOKE_UPSTREAM_SECRET="$(openssl rand -hex 24)"
@@ -39,6 +48,7 @@ OIDC_ISSUER=https://id.example.invalid
 OIDC_CLIENT_ID=smoke
 OIDC_CLIENT_SECRET=smoke
 LOG_LEVEL=info
+ALLOWED_HOSTS=app
 EOF2
 
 FILES=(-f docker-compose.yml -f scripts/smoke.compose.yml)
@@ -79,6 +89,9 @@ if [ -n "${SMOKE_IMAGE:-}" ]; then
 else
   step "docker compose up -d --build"
 fi
+# The test tools are always built from this tree, also with a prebuilt app image (a stale image of
+# an earlier checkout under the same name would otherwise be reused).
+compose build -q upstream
 compose up -d $BUILD_FLAG
 
 step "waiting for ${BASE_URL}/healthz (up to ${HEALTH_TIMEOUT}s)"
@@ -109,7 +122,7 @@ db_published="$(docker port "$(compose ps -q db)")"
 [ -z "$db_published" ] || fail "db publishes ports: ${db_published}"
 echo "db: no published ports"
 
-cli() { compose exec -T app node dist/cli.js "$@"; }
+cli() { compose exec -T app "${CLI[@]}" "$@"; }
 
 step "CLI: create-user (admin, as a first SSO login would)"
 cli create-user --sub smoke-admin --name "Smoke Admin" --admin
@@ -144,14 +157,15 @@ echo "synced"
 
 step "MCP: search_tools → describe_tool → call_tool (up to ${SEARCH_TIMEOUT}s while the outbox indexes)"
 deadline=$((SECONDS + SEARCH_TIMEOUT))
-until node --experimental-strip-types --no-warnings apps/server/test/smoke/mcp-client.ts \
-  "$BASE_URL" "$TOOL_REF"; do
+# The token reaches the client through the environment (-e NAME takes this shell's value), never
+# through an argument; the upstream secret is already in that container's environment.
+until compose exec -T -e SMOKE_TOKEN upstream smoke-client http://app:3000 "$TOOL_REF"; do
   [ "$SECONDS" -lt "$deadline" ] || fail "the MCP path did not succeed in ${SEARCH_TIMEOUT}s"
   sleep 3
 done
 
 step "upstream got the secret header; nobody else saw the secret"
-sleep 1 # the upstream flushes its request log every 200 ms
+sleep 1 # let the log reach docker
 upstream_log="$(compose logs --no-color upstream)"
 grep -q 'request tools/list authorized=true' <<<"$upstream_log" ||
   fail "upstream saw no authorized tools/list"
