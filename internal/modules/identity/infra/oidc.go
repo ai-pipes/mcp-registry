@@ -93,7 +93,11 @@ func NewOIDCProvider(cfg OIDCConfig) *OIDCProvider {
 	}
 	rt := base.Transport
 	if rt == nil {
-		rt = http.DefaultTransport
+		// A clone of the default transport (timeouts, TLS defaults) without its proxy: the
+		// reference's fetch ignores HTTP_PROXY, HTTPS_PROXY and NO_PROXY, like the other clients.
+		tr := http.DefaultTransport.(*http.Transport).Clone() //nolint:forcetypeassert // the default transport is an *http.Transport
+		tr.Proxy = nil
+		rt = tr
 	}
 	timeout := base.Timeout
 	if timeout == 0 {
