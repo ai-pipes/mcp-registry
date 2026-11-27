@@ -9,17 +9,20 @@ package compat_test
 //
 // Decisions (each is repeated in the table's notes):
 //   - Sessions: ONE MCP session per sequential series, reused for every call; for the concurrent
-//     rounds one session per worker, opened before the round and not timed. The measurement is
+//     bursts one session per worker. Sessions are opened right before a series or burst and each
+//     makes one untimed request first (the harness transport drops idle connections after 1 s, so
+//     a connection opened earlier would be re-dialled inside the timed region). The measurement is
 //     the tools/call round trip, not the handshake; the same for both images.
 //   - Readiness: before any measurement a vector-only query (a Russian one the text search cannot
-//     match against the English tool texts) must return its recorded first hit. The TypeScript
-//     image loads its embedding model lazily and blocks its event loop while doing so, so
-//     /healthz alone does not mean the vector search works.
+//     match against the English tool texts) must return its recorded first hit. It is a guard
+//     only: registering the servers already waits for every document to be embedded, so the
+//     model is loaded by then in both images and the query answers at once.
 //   - The fake upstream of the echo server holds every tools/call for loadUpstreamDelay, so the
 //     fake is never the bottleneck and the call has a fixed floor.
 //   - Memory is the cgroup figure of `docker stats` (usage minus the inactive file cache), as
-//     Docker reports it; the peak during the rounds is the maximum of a stream sampled about once
-//     a second, so it can miss a shorter spike.
+//     Docker reports it; the peak is the maximum of a stream sampled about once a second, so it can
+//     miss a shorter spike. It is taken only over the search rounds: the call rounds last a second
+//     or less, too short for a 1 Hz sampler to say anything.
 //   - Limits: the server has no daily limit (null) and /mcp has no rate limit for valid tokens
 //     (the only 429 is for failed token checks), so nothing is configured; a 429 would be
 //     counted as an error and shown.
@@ -197,17 +200,28 @@ func loadRun(t *testing.T, img loadImage) loadResult {
 		res.idle = append(res.idle, loadMemMiB(t, s.AppContainer()))
 	}
 
-	// (2) Sequential latency on one reused session.
-	res.seqSrch = loadSeries(sess, loadSequential, searchOp)
-	res.seqCall = loadSeries(sess, loadSequential, callOp)
-
-	// (3) Concurrency: loadWorkers sessions, loadRounds rounds each.
-	workers := make([]*mcp.ClientSession, loadWorkers)
-	for i := range workers {
-		workers[i] = open()
+	// (2) Sequential latency on one reused session, opened and warmed right before each series.
+	fresh := func(op func(*mcp.ClientSession, int) (string, bool)) *mcp.ClientSession {
+		sn := open()
+		if kind, ok := op(sn, 0); !ok {
+			t.Fatalf("an untimed request answered an error under no load: %s", kind)
+		}
+		return sn
 	}
-	res.conCall = loadBursts(s, workers, callOp)
-	res.conSrch = loadBursts(s, workers, searchOp)
+	res.seqSrch = loadSeries(fresh(searchOp), loadSequential, searchOp)
+	res.seqCall = loadSeries(fresh(callOp), loadSequential, callOp)
+
+	// (3) Concurrency: loadWorkers sessions, loadRounds rounds each, sessions opened and warmed
+	// right before each burst.
+	freshWorkers := func(op func(*mcp.ClientSession, int) (string, bool)) []*mcp.ClientSession {
+		ws := make([]*mcp.ClientSession, loadWorkers)
+		for i := range ws {
+			ws[i] = fresh(op)
+		}
+		return ws
+	}
+	res.conCall = loadBursts(s, freshWorkers(callOp), callOp, false)
+	res.conSrch = loadBursts(s, freshWorkers(searchOp), searchOp, true)
 	return res
 }
 
@@ -268,8 +282,11 @@ func loadPct(d []time.Duration, p int) time.Duration {
 
 // loadBursts runs rounds of one call per worker, all released together, one /healthz probe per
 // round, with the container's memory streamed throughout.
-func loadBursts(s *harness.Stack, workers []*mcp.ClientSession, op func(*mcp.ClientSession, int) (string, bool)) loadConcurrent {
-	peak := loadPeakWatcher(s.AppContainer())
+func loadBursts(s *harness.Stack, workers []*mcp.ClientSession, op func(*mcp.ClientSession, int) (string, bool), measurePeak bool) loadConcurrent {
+	peak := func() float64 { return math.NaN() }
+	if measurePeak {
+		peak = loadPeakWatcher(s.AppContainer())
+	}
 	var all []time.Duration
 	kinds := map[string]int{}
 	var probes []time.Duration
@@ -471,13 +488,15 @@ func loadReport(rs []loadResult) string {
 		row(name+" 50 x 5: p50 / p95 / max (ms)", fmt.Sprintf("%s / %s / %s", ms(x.p50), ms(x.p95), ms(x.max)), fmt.Sprintf("%s / %s / %s", ms(y.p50), ms(y.p95), ms(y.max)))
 		row(name+" 50 x 5: errors of 250", loadErrs(x.loadStats), loadErrs(y.loadStats))
 		row(name+" 50 x 5: wall time of 5 rounds (s)", fmt.Sprintf("%.2f", x.wall.Seconds()), fmt.Sprintf("%.2f", y.wall.Seconds()))
-		row(name+" 50 x 5: peak memory (MiB)", loadMiB(x.peakMemMiB), loadMiB(y.peakMemMiB))
+		if !math.IsNaN(x.peakMemMiB) {
+			row(name+" 50 x 5: peak memory, approximate (MiB)", loadMiB(x.peakMemMiB), loadMiB(y.peakMemMiB))
+		}
 		row(name+" 50 x 5: /healthz during a round, median / max (ms), failed", fmt.Sprintf("%s / %s, %d", ms(x.healthzMedian), ms(x.healthzMax), x.healthzFailed), fmt.Sprintf("%s / %s, %d", ms(y.healthzMedian), ms(y.healthzMax), y.healthzFailed))
 	}
 	con("call_tool", a.conCall, c.conCall)
 	con("search_tools", a.conSrch, c.conSrch)
 	fmt.Fprintf(&b, `
-Notes. Fixtures: the recorded Gitea (61) and YouTrack (23) tools plus one echo tool (85 indexed documents), one admin, one sk_ token; the echo server uses shared_secret, its fake upstream holds every call for %s. Search queries rotate through the 18 queries of TestCatalogSearch (5 of them match nothing on purpose), limit 10. One MCP session is reused for each sequential series; the concurrent rounds use 50 sessions opened beforehand (handshake not timed). Warm-up: a vector-only query must return its recorded hit (it already does once the index is embedded: the catalog waits for the embeddings, so the model is loaded before this point in both images), then %d searches and %d calls. Idle memory: `+"`docker stats`"+` (cgroup usage without inactive file cache) %s after the warm-up, no traffic, samples %s apart. Peak memory: maximum of a `+"`docker stats`"+` stream (about 1 Hz) over the %d rounds and a 1.5 s tail. /healthz: one request %d ms after the burst of each round. No daily limit and no rate limit were configured or hit; any 429 would be listed under errors. Percentiles are nearest-rank over client-observed times, including the host's Docker port mapping; A runs with COMPAT_FIXED=%q, B with %q.
+Notes. Fixtures: the recorded Gitea (61) and YouTrack (23) tools plus one echo tool (85 indexed documents), one admin, one sk_ token; the echo server uses shared_secret, its fake upstream holds every call for %s. Search queries rotate through the 18 queries of TestCatalogSearch (5 of them match nothing on purpose), limit 10. One MCP session is reused for each sequential series; the concurrent rounds use 50 sessions; every session is opened right before its series or burst and makes one untimed request first (handshake and dial not timed). The load driver runs on the same host as the containers. Warm-up: a vector-only query must return its recorded hit (it already does once the index is embedded: the catalog waits for the embeddings, so the model is loaded before this point in both images), then %d searches and %d calls. Idle memory: `+"`docker stats`"+` (cgroup usage without inactive file cache) %s after the warm-up, no traffic, samples %s apart. Peak memory (search rounds only; the call rounds are too short for a 1 Hz sampler): maximum of a `+"`docker stats`"+` stream (about 1 Hz) over the %d rounds and a 1.5 s tail, so it can miss a shorter spike. /healthz: one request %d ms after the burst of each round. No daily limit and no rate limit were configured or hit; any 429 would be listed under errors. Percentiles are nearest-rank over client-observed times, including the host's Docker port mapping; A runs with COMPAT_FIXED=%q, B with %q.
 `, loadUpstreamDelay, loadWarmup, loadWarmup, loadIdleWait, loadIdleGap, loadRounds, 15, a.img.fixed, c.img.fixed)
 	return b.String()
 }

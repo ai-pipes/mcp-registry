@@ -191,19 +191,20 @@ make e2e-flows              # the web UI's browser flows (Playwright, Chromium) 
 
 Same fixtures for both: the recorded Gitea and YouTrack tools (84 indexed documents) and an echo tool on a fake upstream that holds each call for 5 ms, one admin, one `sk_` token, no daily limit (none is set by default) and no rate limit on valid tokens. Measured after a warm-up: idle memory (`docker stats`, three samples 30 s after the warm-up), sequential latency (200 `search_tools` over 18 rotating queries and 200 `call_tool`, one reused session, p50/p95/max), and 5 rounds of 50 concurrent calls of each (errors, percentiles, peak memory from a roughly 1 Hz `docker stats` stream, and one `/healthz` probe per round for event-loop responsiveness). Raw numbers depend on the CPU and are not committed.
 
-One run of each, on a shared developer laptop (Apple M1 Pro, 10 CPUs, Docker 29.4.0 with a 10 CPU / 8 GB VM, other containers running: load average about 8), A = TypeScript 1.0.0, B = the Go image, 2026-11-27. Numbers are indicative only; latency figures of the two runs differ by up to 30 % and more where noted.
+Two runs, on 2026-11-27, on a shared developer laptop (Apple M1 Pro, 10 CPUs, Docker 29.4.0 with a 10 CPU / 8 GB VM, other containers running, load average about 8; both images linux/arm64). A is the published TypeScript 1.0.0 (`sha256:9966fa11e597b45fe27ad916b4121a312c624232a1855d922c1f1946f7c09d72`), B the Go image built from this tree (image id `sha256:79e044ae527f`). Each cell is A vs B.
 
-| Metric (A / B)                                     | Run 1                                       | Run 2                                     |
-| -------------------------------------------------- | ------------------------------------------- | ----------------------------------------- |
-| Idle memory (MiB)                                  | 480-588 / 489                               | 580 / 488                                 |
-| `search_tools` sequential p50 / p95 / max (ms)     | 22.7 / 43.1 / 350 vs 17.3 / 30.7 / 107      | 23.2 / 57.9 / 387 vs 18.0 / 28.5 / 129    |
-| `call_tool` sequential p50 / p95 / max (ms)        | 16.4 / 20.9 / 44 vs 12.2 / 15.7 / 23        | 16.4 / 24.3 / 41 vs 11.4 / 14.1 / 18      |
-| `call_tool` 50 x 5 p50 / p95 / max (ms), errors    | 206 / 347 / 351 vs 47 / 79 / 81, 0 / 0      | 170 / 372 / 397 vs 44 / 60 / 65, 0 / 0    |
-| `call_tool` 50 x 5 peak memory (MiB)               | 593 / 497                                   | 690 / 500                                 |
-| `call_tool` 50 x 5 `/healthz` median / max (ms)    | 37 / 55 vs 4 / 18                           | 39 / 54 vs 6 / 8                          |
-| `search_tools` 50 x 5 p50 / p95 / max (ms), errors | 508 / 1212 / 1226 vs 378 / 698 / 730, 0 / 0 | 471 / 841 / 855 vs 331 / 680 / 746, 0 / 0 |
-| `search_tools` 50 x 5 peak memory (MiB)            | 607 / 497                                   | 727 / 496                                 |
-| `search_tools` 50 x 5 `/healthz` median / max (ms) | 72 / 303 vs 12 / 26                         | 139 / 371 vs 10 / 28                      |
+| Metric                                               | Run 1                                       | Run 2                                     |
+| ---------------------------------------------------- | ------------------------------------------- | ----------------------------------------- |
+| Idle memory (MiB)                                    | 593 / 540 / 541 vs 498                      | 588 vs 485                                |
+| `search_tools` sequential p50 / p95 / max (ms)       | 21.5 / 33.9 / 63 vs 21.8 / 40.1 / 63        | 23.5 / 40.3 / 65 vs 19.4 / 33.0 / 45      |
+| `call_tool` sequential p50 / p95 / max (ms)          | 16.5 / 21.3 / 28 vs 12.3 / 17.8 / 37        | 17.2 / 24.0 / 38 vs 11.9 / 15.9 / 28      |
+| `call_tool` 50 x 5 p50 / p95 / max (ms), errors      | 243 / 311 / 319 vs 51 / 78 / 82, 0 / 0      | 213 / 511 / 525 vs 54 / 137 / 143, 0 / 0  |
+| `call_tool` 50 x 5 `/healthz` median / max (ms)      | 45 / 97 vs 4 / 10                           | 44 / 142 vs 6 / 11                        |
+| `search_tools` 50 x 5 p50 / p95 / max (ms), errors   | 646 / 1067 / 1093 vs 265 / 507 / 593, 0 / 0 | 514 / 740 / 748 vs 281 / 545 / 594, 0 / 0 |
+| `search_tools` 50 x 5 `/healthz` median / max (ms)   | 126 / 232 vs 20 / 50                        | 83 / 332 vs 18 / 41                       |
+| `search_tools` 50 x 5 peak memory, approximate (MiB) | 651 vs 506                                  | 753 vs 492                                |
+
+Read it as indicative only. Run-to-run differences are large on this machine: between the two runs the 50-concurrent `call_tool` p95 moved from 311 to 511 ms (A) and from 78 to 137 ms (B), A's `/healthz` median during the search rounds from 126 to 83 ms, and A's concurrent search p95 from 1067 to 740 ms; only large gaps (the concurrent `call_tool` figures, `/healthz` under search, A's higher memory) held in both runs, while the sequential figures overlap. The load driver runs on the same host as the containers and competes with them for CPU. Memory is the figure `docker stats` reports (the cgroup's usage minus the inactive file cache: checked on this Docker VM, where a container that had read a 100 MiB file showed 5 MiB in `docker stats` against 106 MiB in `memory.current`; not checked on other Docker versions or on cgroup v1). Peak memory is the maximum of a stream sampled about once a second, so it can miss a shorter spike; it is reported only for the search rounds, because the `call_tool` rounds last about a second, too short for that sampler.
 
 ## Third-party notices
 
