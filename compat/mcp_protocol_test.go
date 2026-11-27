@@ -7,7 +7,7 @@ package compat_test
 // `server/discover`, revision 2026-07-28, and works through the SDK, not by hand), the surface
 // golden and the guards in front of the handler. The four meta-tools are in mcp_tools_test.go;
 // call_tool in gateway_test.go; the call log and audit endpoints in gateway_rest_test.go.
-// Source: mcp.int.test.ts.
+// Source: v1.0.1:apps/server/test/mcp/mcp.int.test.ts.
 //
 // The MCP spec lets a server answer a POST with application/json or with text/event-stream, and
 // leaves the JSON-RPC code of a transport refusal to the SDK; the scenarios therefore pin what is

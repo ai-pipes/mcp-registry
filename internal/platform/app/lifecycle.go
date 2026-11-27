@@ -22,7 +22,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Operator-facing texts, copied from the reference v1.0.1:apps/server/src/platform/main.ts and bootstrap.ts.
+// Operator-facing texts, copied from the reference v1.0.1:apps/server/src/platform/main.ts and v1.0.1:apps/server/src/platform/bootstrap.ts.
 const (
 	msgKeyOldSet        = "SECRETS_KEY_OLD is set: key rotation in progress. Run `mcp-registry rotate-secrets-key`, then remove SECRETS_KEY_OLD and restart"
 	msgKeyCreated       = "secrets key check created: SECRETS_KEY is now verified at every start"

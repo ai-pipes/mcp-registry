@@ -156,7 +156,7 @@ func (w searchWiring) loadModel(ctx context.Context) {
 	w.rt.Logger.Warn(msgEmbedderUnavailable, "reason", reason, logging.ErrAttr(err))
 }
 
-// reindexCommand is `reindex` (cli-commands.ts reindexCommand; the guard only warns).
+// reindexCommand is `reindex` (v1.0.1:apps/server/src/platform/cli-commands.ts reindexCommand; the guard only warns).
 func (w searchWiring) reindexCommand() CLICommand {
 	return CLICommand{Name: "reindex", Usage: `  reindex
       Rebuild the search index for every server.

@@ -32,7 +32,7 @@ package compat_test
 // key guard, the exact outputs, the failure outputs of rotate-secrets-key and what it does to the
 // data the app serves afterwards.
 //
-// Source cases (cli.int.test.ts) and where they are ported:
+// Source cases (v1.0.1:apps/server/test/cli.int.test.ts) and where they are ported:
 //   - "--version prints the version and exits 0"                 TestCLIVersion
 //   - "login-link prints a link that signs the person in"         TestCLILoginLink
 //   - "login-link for an unknown sub exits 1 ..."                 TestCLILoginLink

@@ -10,7 +10,7 @@ import (
 	"github.com/ai-pipes/mcp-registry/internal/platform/httpx"
 )
 
-// AllowedHosts is the Host allow-list of /mcp (mcpAllowedHosts in server.ts): the ALLOWED_HOSTS
+// AllowedHosts is the Host allow-list of /mcp (mcpAllowedHosts in v1.0.1:apps/server/src/platform/mcp/server.ts): the ALLOWED_HOSTS
 // entries, the host name of PUBLIC_URL, localhost and 127.0.0.1, lower-cased, blanks dropped,
 // each once. An IPv6 name is written in brackets, as WHATWG URL's hostname writes it.
 func AllowedHosts(publicURL string, extra []string) []string {

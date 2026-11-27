@@ -25,7 +25,7 @@ const (
 	msgSessionRetentionFail = "session retention: run failed"
 )
 
-// sessionRetentionEvery is the period of the pruning job (DAY_MS in scheduler.ts).
+// sessionRetentionEvery is the period of the pruning job (DAY_MS in v1.0.1:apps/server/src/platform/scheduler.ts).
 const sessionRetentionEvery = 24 * time.Hour
 
 // identityWiring is the identity module built from the runtime. Building it makes no request.
@@ -36,7 +36,7 @@ type identityWiring struct {
 }
 
 // unconfiguredOIDC is the provider of a server without OIDC_*: both methods fail with a plain
-// error (container.ts unconfiguredOidc), which is not the module's idp_unavailable.
+// error (v1.0.1:apps/server/src/platform/container.ts unconfiguredOidc), which is not the module's idp_unavailable.
 type unconfiguredOIDC struct{}
 
 var errOIDCNotConfigured = errors.New("OIDC provider is not configured")
@@ -110,7 +110,7 @@ func (w identityWiring) module() Module {
 	}
 }
 
-// firstStart is announceFirstStart (bootstrap.ts): without OIDC, BootstrapLocalAdmin decides
+// firstStart is announceFirstStart (v1.0.1:apps/server/src/platform/bootstrap.ts): without OIDC, BootstrapLocalAdmin decides
 // whether a sign-in link is due and this only logs it. The one-time code appears in this single
 // record (field url), never in audit records, errors or other log lines. With OIDC configured
 // nobody is created and nothing is printed. A failure is logged without its text and the server
@@ -130,7 +130,7 @@ func (w identityWiring) firstStart(ctx context.Context) {
 	w.rt.Logger.Warn(msgFirstStartLink, "url", domain.LoginLinkURL(w.rt.Config.PublicURL, code))
 }
 
-// pruneSessions is the job of scheduler.ts pruneSessions: expired login links and dead sessions,
+// pruneSessions is the job of v1.0.1:apps/server/src/platform/scheduler.ts pruneSessions: expired login links and dead sessions,
 // at start and then daily. A failure is logged here and does not stop the schedule; one caused by
 // the shutdown is left to the scheduler, which does not log it.
 func (w identityWiring) pruneSessions(ctx context.Context) error {

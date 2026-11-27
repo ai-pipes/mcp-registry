@@ -13,7 +13,7 @@ package compat_test
 // the Gitea fixture is 80 KB). Three stacks in all.
 //
 // Source cases that are not ported (they need the app's internals, not its outside):
-//   - pg-catalog.int.test.ts "round-trips a server, including the sealed secret bytes" and
+//   - v1.0.1:apps/server/test/catalog/pg-catalog.int.test.ts "round-trips a server, including the sealed secret bytes" and
 //     "stores the sealed bytes verbatim": sealed bytes are internal; the round trip of every
 //     field through the REST API and "the stored secret is not the plaintext" are ported.
 //   - "writes events to the outbox in the same call", "a taken slug ... writes no event",
@@ -29,7 +29,7 @@ package compat_test
 //     attempts with a controlled finish order.
 //   - "applySnapshot / saveSyncState / save of an unknown server throws not_found": the REST
 //     equivalents (404) are ported.
-//   - mcp-upstream-client.int.test.ts "returns an image block byte for byte": the fake upstream
+//   - v1.0.1:apps/server/test/upstream/mcp-upstream-client.int.test.ts "returns an image block byte for byte": the fake upstream
 //     has no image mode and the pass-through of results is a gateway scenario.
 //   - "a JSON-RPC internal error ... is rejected too": its tools/call half is ported (-32603 in
 //     TestCatalogServers, subtest "upstream calls"); the listTools half is not, the fake can only reject tools/call.

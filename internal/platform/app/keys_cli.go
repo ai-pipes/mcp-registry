@@ -12,7 +12,7 @@ import (
 	"github.com/ai-pipes/mcp-registry/internal/platform/crypto"
 )
 
-// Operator-facing texts of rotate-secrets-key and reset-key-check (cli-commands.ts).
+// Operator-facing texts of rotate-secrets-key and reset-key-check (v1.0.1:apps/server/src/platform/cli-commands.ts).
 const (
 	msgNoOldKey       = "SECRETS_KEY_OLD is not set: put the previous key there, the new one in SECRETS_KEY"
 	msgYesRequired    = "--yes is required: reset-key-check removes the stored key check, so the next start records the configured SECRETS_KEY"

@@ -18,7 +18,7 @@ import (
 
 const (
 	defaultWebRoot = "/app/web"
-	// outboxInterval is the outbox poll period (OUTBOX_INTERVAL_MS in main.ts).
+	// outboxInterval is the outbox poll period (OUTBOX_INTERVAL_MS in v1.0.1:apps/server/src/platform/main.ts).
 	outboxInterval = time.Second
 	// callsGrace is how long the gateway's calls in flight get to finish after a shutdown began
 	// (the listeners are closed at once); then the remaining ones are cancelled and write their
@@ -26,7 +26,7 @@ const (
 	// TypeScript server lets calls shorter than its 10 s limit finish during a deploy. Not a
 	// configuration variable.
 	callsGrace = 5 * time.Second
-	// shutdownLimit is the overall limit of a shutdown (SHUTDOWN_TIMEOUT_MS in main.ts).
+	// shutdownLimit is the overall limit of a shutdown (SHUTDOWN_TIMEOUT_MS in v1.0.1:apps/server/src/platform/main.ts).
 	shutdownLimit = 10 * time.Second
 	// restBodyLimit caps request bodies of everything except /mcp.
 	restBodyLimit = 1 << 20

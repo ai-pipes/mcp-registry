@@ -2,7 +2,7 @@ package http_test
 
 // The four meta-tools, transcribed from compat TestMCPMetaTools (compat/mcp_tools_test.go) over
 // fakes of the catalog, connections, search and the gateway use case, plus the shapes of the
-// inventory (5.4) and the shortDescription cases of the reference (text.ts and compat).
+// inventory (5.4) and the shortDescription cases of the reference (v1.0.1:apps/server/src/platform/mcp/text.ts and compat).
 
 import (
 	"encoding/json"

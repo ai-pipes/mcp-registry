@@ -5,7 +5,7 @@ import (
 	"unicode"
 )
 
-// Instructions is what an agent is told about the server (instructions.ts).
+// Instructions is what an agent is told about the server (v1.0.1:apps/server/src/platform/mcp/instructions.ts).
 const Instructions = "This server is a gateway to the user's services (git hosting, issue tracker and others). " +
 	"When a task needs one of them, call search_tools with a short description of the action, then describe_tool " +
 	"for the chosen tool, then call_tool. If nothing fits, continue without them. If a tool needs a connection, " +
@@ -23,7 +23,7 @@ func isJSSpace(r rune) bool { return (unicode.IsSpace(r) && r != '\u0085') || r 
 // isTrailingJunk is the class [\s,.;:!?—–-] of the reference's cut.
 func isTrailingJunk(r rune) bool { return isJSSpace(r) || strings.ContainsRune(",.;:!?—–-", r) }
 
-// ShortDescription is a tool description as search_tools lists it (text.ts): every run of
+// ShortDescription is a tool description as search_tools lists it (v1.0.1:apps/server/src/platform/mcp/text.ts): every run of
 // whitespace one space, trimmed; up to 200 code points kept as they are; a longer one cut to 199
 // code points, back to the last word boundary unless the cut falls on one, without trailing
 // whitespace and , . ; : ! ? — – -, then an ellipsis.

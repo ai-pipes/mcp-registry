@@ -5,7 +5,7 @@ package compat_test
 // Call log and audit REST endpoints (GET /api/calls, GET /api/audit): admin only, response
 // contracts, filters and bounds, ordering of the call log, the cut of long names, and what the
 // audit trail records for connections, servers, tools and tokens. Source: the calls/audit parts of
-// admin-rest.int.test.ts and PgCallLog in call.int.test.ts.
+// v1.0.1:apps/server/test/http/admin-rest.int.test.ts and PgCallLog in v1.0.1:apps/server/test/gateway/call.int.test.ts.
 //
 // Ordering and paging (reference 1.0.1): GET /api/audit is newest first by the NUMERIC id and
 // paging with `before` returns every row exactly once; GET /api/calls is ordered by start time and

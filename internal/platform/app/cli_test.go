@@ -65,7 +65,7 @@ func TestEveryErrorIsMappedInOnePlace(t *testing.T) {
 	}
 }
 
-// The server's default info becomes warn in the CLI (cli.ts); every other level is unchanged.
+// The server's default info becomes warn in the CLI (v1.0.1:apps/server/src/platform/cli.ts); every other level is unchanged.
 func TestCLILogLevelRule(t *testing.T) {
 	for in, want := range map[string]string{
 		"info": "warn", "warn": "warn", "debug": "debug", "trace": "trace", "error": "error",

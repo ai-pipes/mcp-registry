@@ -19,7 +19,7 @@ type callEntry struct {
 	Outcome    string  `json:"outcome"`
 }
 
-// callsHandler is `GET /api/calls` (calls.ts): the call log for administrators, newest first. The
+// callsHandler is `GET /api/calls` (v1.0.1:apps/server/src/modules/gateway/interfaces/http/calls.ts): the call log for administrators, newest first. The
 // session and admin guards are the prefix middleware, so they answer before the query is read.
 type callsHandler struct {
 	g  Guards

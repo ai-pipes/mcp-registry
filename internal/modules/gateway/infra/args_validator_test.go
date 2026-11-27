@@ -48,7 +48,7 @@ func raw(t *testing.T, v any) json.RawMessage {
 	return b
 }
 
-// mainSchema is S of ajv-args-validator.test.ts.
+// mainSchema is S of v1.0.1:apps/server/src/modules/gateway/infrastructure/ajv-args-validator.test.ts.
 const mainSchema = `{"type":"object","properties":{"title":{"type":"string"},"labels":{"type":"array","items":{"type":"integer"}},
 "meta":{"type":"object","properties":{"due date":{"type":"string","format":"date"}}}},"required":["title"],"additionalProperties":false}`
 

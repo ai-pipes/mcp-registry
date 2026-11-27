@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// The port to an upstream MCP server (Streamable HTTP), mirroring shared-kernel/upstream.ts.
+// The port to an upstream MCP server (Streamable HTTP), mirroring v1.0.1:apps/server/src/shared-kernel/upstream.ts.
 // The implementation lives in internal/platform/upstream; catalog (synchronisation) and gateway
 // (call_tool) use it.
 

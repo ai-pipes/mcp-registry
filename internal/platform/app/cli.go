@@ -72,7 +72,7 @@ func (e *CommandErr) Error() string { return e.Msg }
 func CommandError(msg string) error { return &CommandErr{Msg: msg} }
 
 // exitFor maps what a command returned to what the operator sees and the exit code, mirroring
-// runCli in cli-commands.ts: a usage error is exit 2 with the usage, a command error and a domain
+// runCli in v1.0.1:apps/server/src/platform/cli-commands.ts: a usage error is exit 2 with the usage, a command error and a domain
 // error are exit 1. Any other error is `error: unexpected failure` and exit 1: the TypeScript CLI
 // lets it escape as a stack trace, this one never prints the text of an unexpected error (it may
 // quote values).
@@ -114,7 +114,7 @@ func runCommand(ctx context.Context, c CLICommand, cio CLIIO, args []string, log
 }
 
 // msgKeyMismatchWarning is the one warning line printed before a command when the stored key
-// check is not opened by the configured keys (guardKey in cli-commands.ts).
+// check is not opened by the configured keys (guardKey in v1.0.1:apps/server/src/platform/cli-commands.ts).
 const msgKeyMismatchWarning = `warning: SECRETS_KEY does not match the data in this database. See "Recovering from a key mismatch" in the README.`
 
 // msgKeyMismatchRefusal is what a GuardRefuse command gets instead of running (create-server).
@@ -135,7 +135,7 @@ type CLIOptions struct {
 }
 
 // RunCLI runs one operator command and returns the exit code: 0 done, 1 the operation failed
-// (database, migrations, the command), 2 bad invocation. The order is that of cli.ts: the
+// (database, migrations, the command), 2 bad invocation. The order is that of v1.0.1:apps/server/src/platform/cli.ts: the
 // configuration (already loaded by the caller), the pool, the migrations, then the command is
 // looked up (an unknown one is exit 2 with the usage), the key guard (read-only; a mismatch is one
 // `warning:` line on stderr and the command still runs), and the command. The CLI never starts the
@@ -228,7 +228,7 @@ func closeModules(logger *slog.Logger, closers []func(context.Context) error) {
 	}
 }
 
-// cliLogLevel keeps the CLI quiet: the server's default info becomes warn (cli.ts).
+// cliLogLevel keeps the CLI quiet: the server's default info becomes warn (v1.0.1:apps/server/src/platform/cli.ts).
 func cliLogLevel(level string) string {
 	if level == "info" {
 		return "warn"

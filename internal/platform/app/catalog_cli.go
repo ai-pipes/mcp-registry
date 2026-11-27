@@ -18,7 +18,7 @@ import (
 // still on stdout.
 const msgFirstSyncFailed = "the server was created, but its first sync failed"
 
-// commands are the operator commands of the catalog (create-server and sync of cli-commands.ts).
+// commands are the operator commands of the catalog (create-server and sync of v1.0.1:apps/server/src/platform/cli-commands.ts).
 // create-server is the only command that seals a new secret, so a key mismatch refuses it.
 func (w catalogWiring) commands() []CLICommand {
 	return []CLICommand{
@@ -33,7 +33,7 @@ func (w catalogWiring) commands() []CLICommand {
 	}
 }
 
-// readServerInput is readServerInput of cli-commands.ts: the file, parsed with the schema of the
+// readServerInput is readServerInput of v1.0.1:apps/server/src/platform/cli-commands.ts: the file, parsed with the schema of the
 // REST body (without a secret), every issue reported in schema order.
 func readServerInput(file string) (catalog.ServerInput, error) {
 	raw, err := os.ReadFile(file) //nolint:gosec // G304: the operator names the file on purpose

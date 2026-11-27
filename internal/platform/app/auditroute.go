@@ -20,7 +20,7 @@ type auditEntry struct {
 	Meta    json.RawMessage `json:"meta"`
 }
 
-// auditHandler is `GET /api/audit` (audit-route.ts): what admins did, newest first. It reads
+// auditHandler is `GET /api/audit` (v1.0.1:apps/server/src/platform/http/audit-route.ts): what admins did, newest first. It reads
 // platform's own table; meta carries no secret values. The session and admin guards are the prefix
 // middleware of the platform module, so they run before the query is parsed.
 func auditHandler(pool *pgxpool.Pool) http.Handler {
