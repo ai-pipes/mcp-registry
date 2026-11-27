@@ -35,6 +35,7 @@ The Go server is being built beside the TypeScript one; `compat/` is the Go blac
 
 ```sh
 make go-verify              # Go lint, architecture rules, vet, unit tests (CI job `go`); needs no native library
+make go-cover               # the coverage gate: domain and app of every module >= 90 % of statements, per package, from unit tests (part of go-verify)
 make native-libs            # downloads the pinned ONNX Runtime and tokenizers libraries for this platform into .cache/native (SHA-256 checked)
 make go-verify-onnx         # vet, lint and tests of the code behind the build tag `onnx`, the local embedder (CI job `go-onnx`, arm64 and amd64)
 make go-test-onnx-parity    # token ids and vectors of the Go embedder against the reference image's, in containers (needs the reference, make compat-reference; run by CI job `compat-go`)

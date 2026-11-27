@@ -9,7 +9,7 @@ VERSION := $(strip $(shell cat VERSION 2>/dev/null))
 check-version:
 	@echo '$(VERSION)' | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$$' || { echo "check-version: VERSION must hold MAJOR.MINOR.PATCH, got '$(VERSION)'"; exit 1; }
 
-.PHONY: native-libs native-model go-test-onnx go-test-onnx-parity go-vet-onnx go-lint-onnx go-verify-onnx compat compat-selfcheck compat-schemas compat-reference print-reference-image compat-image-ts compat-image-go compat-go e2e-flows e2e-flows-go go-lint go-lint-new go-fmt-check go-arch-lint go-verify go-test-int go-build print-go-arch-lint print-golangci-lint
+.PHONY: native-libs native-model go-test-onnx go-test-onnx-parity go-vet-onnx go-lint-onnx go-verify-onnx compat compat-selfcheck compat-schemas compat-reference print-reference-image compat-image-ts compat-image-go compat-go e2e-flows e2e-flows-go go-lint go-lint-new go-fmt-check go-arch-lint go-cover go-verify go-test-int go-build print-go-arch-lint print-golangci-lint
 
 go-lint:
 	go run $(GOLANGCI_LINT) run
@@ -38,7 +38,17 @@ print-golangci-lint:
 # Integration tests (build tag integration) start a real Postgres through testcontainers and need
 # Docker, like `pnpm test:int`. They are vetted and linted with the tag (.golangci.yml build-tags)
 # and run by go-test-int, which go-verify includes.
-go-verify: go-lint go-arch-lint
+# The coverage gate: domain and app of every module cover at least 90 % of their statements, per
+# package, measured by the unit tests alone (no build tags, no Docker; integration tests do not
+# count). internal/archtest/cmd/covergate lists the expected packages itself and fails for a
+# missing or empty one. The unit tests run with coverage here, which go test ./... cannot reuse
+# (different flags, different cache entry): about 7 s.
+go-cover:
+	@profile="$$(mktemp)"; trap 'rm -f "$$profile"' EXIT; \
+	go test -count=1 -coverprofile="$$profile" ./internal/modules/*/domain ./internal/modules/*/app >/dev/null || { echo "go-cover: unit tests failed (run go test ./internal/modules/...)"; exit 1; }; \
+	go run ./internal/archtest/cmd/covergate -profile "$$profile" -root .
+
+go-verify: go-lint go-arch-lint go-cover
 	go vet ./...
 	go vet -tags integration ./...
 	go vet -tags compat ./...
