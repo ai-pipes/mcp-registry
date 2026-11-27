@@ -9,7 +9,7 @@ VERSION := $(strip $(shell cat VERSION 2>/dev/null))
 check-version:
 	@echo '$(VERSION)' | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$$' || { echo "check-version: VERSION must hold MAJOR.MINOR.PATCH, got '$(VERSION)'"; exit 1; }
 
-.PHONY: native-libs native-model go-test-onnx go-test-onnx-parity go-vet-onnx go-lint-onnx go-verify-onnx compat compat-selfcheck compat-schemas compat-reference print-reference-image compat-upgrade-from print-upgrade-from-image compat-image-ts compat-image-go compat-go e2e-flows e2e-flows-go go-lint go-lint-new go-fmt-check go-arch-lint go-cover go-verify go-test-int go-build print-go-arch-lint print-golangci-lint
+.PHONY: native-libs native-model go-test-onnx go-test-onnx-parity go-vet-onnx go-lint-onnx go-verify-onnx compat compat-selfcheck compat-schemas compat-reference print-reference-image compat-upgrade-from print-upgrade-from-image compat-image-ts compat-image-go compat-go load-compare e2e-flows e2e-flows-go go-lint go-lint-new go-fmt-check go-arch-lint go-cover go-verify go-test-int go-build print-go-arch-lint print-golangci-lint
 
 go-lint:
 	go run $(GOLANGCI_LINT) run
@@ -53,6 +53,7 @@ go-verify: go-lint go-arch-lint go-cover
 	go vet -tags integration ./...
 	go vet -tags compat ./...
 	go vet -tags "compat selfcheck" ./compat/selfcheck/
+	go vet -tags "compat load" ./compat/
 	go vet -tags "compat e2e" ./compat/e2e/
 	go test -tags "compat e2e" -count=1 -run '^(TestControl(Refuses|Echo)|TestPlaywrightArgs)' ./compat/e2e/
 	# Docker-free tests of the suite itself (none boots a stack; they pass with the Docker socket
@@ -264,6 +265,29 @@ e2e-flows-go:
 	COMPAT_IMAGE=mcp-registry:compat-go COMPAT_CLI=mcp-registry COMPAT_FIXED=$(COMPAT_GO_FIXED) \
 		E2E_PLAYWRIGHT_ARGS='$(E2E_GO_SPECS)' \
 		go test -tags "compat e2e" -count=1 -timeout 30m -v -run '^TestBrowserFlows$$' ./compat/e2e/
+
+# The load comparison (compat/load_test.go, build tags compat and load, so neither make compat nor
+# go-verify runs it): the same fixtures and traffic against two images, one stack at a time, a
+# Markdown table on stdout and in LOAD_OUT (default a file under the system temp dir). It reports
+# and asserts nothing. A is the published 1.0.0 (UPGRADE_FROM_IMAGE, make compat-upgrade-from), B the
+# Go image (make compat-image-go); every variable can be given on the make command line:
+#   make load-compare LOAD_IMAGE_B=mcp-registry:other LOAD_OUT=/tmp/load.md
+# LOAD_FIXED_B is the COMPAT_FIXED the harness boots B with (it only selects the branch a scenario
+# asserts; the load test asserts none). About 3 minutes.
+LOAD_IMAGE_A := $(UPGRADE_FROM_IMAGE)
+LOAD_CLI_A := $(UPGRADE_FROM_CLI)
+LOAD_IMAGE_B := mcp-registry:compat-go
+LOAD_CLI_B := mcp-registry
+LOAD_FIXED_A :=
+LOAD_FIXED_B := $(COMPAT_GO_FIXED)
+LOAD_OUT :=
+load-compare:
+	@docker image inspect '$(LOAD_IMAGE_A)' >/dev/null 2>&1 || { echo "load-compare: the image A '$(LOAD_IMAGE_A)' is missing: run make compat-upgrade-from (or give LOAD_IMAGE_A)"; exit 1; }
+	@docker image inspect '$(LOAD_IMAGE_B)' >/dev/null 2>&1 || { echo "load-compare: the image B '$(LOAD_IMAGE_B)' is missing: run make compat-image-go (or give LOAD_IMAGE_B)"; exit 1; }
+	LOAD_IMAGE_A='$(LOAD_IMAGE_A)' LOAD_CLI_A='$(LOAD_CLI_A)' LOAD_FIXED_A='$(LOAD_FIXED_A)' \
+		LOAD_IMAGE_B='$(LOAD_IMAGE_B)' LOAD_CLI_B='$(LOAD_CLI_B)' LOAD_FIXED_B='$(LOAD_FIXED_B)' \
+		$(if $(LOAD_OUT),LOAD_OUT='$(LOAD_OUT)') \
+		go test -tags "compat load" -count=1 -timeout 30m -run '^TestLoadCompare$$' -v ./compat/
 
 # Proves the suite can fail: runs named scenarios against the reference image (the published 1.0.1,
 # REFERENCE_IMAGE) behind a distorting proxy (compat/selfcheck). The base is SELFCHECK_BASE when the

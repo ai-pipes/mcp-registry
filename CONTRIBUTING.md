@@ -185,6 +185,26 @@ make e2e-flows              # the web UI's browser flows (Playwright, Chromium) 
 - Vectors and rankings have no committed golden: q8 vectors differ between CPUs of the same architecture by up to about 0.015, so `TestSearchStoredVectors` and `TestCatalogSearch/the_recorded_queries` compare the image under test with the reference image on the same machine. The reference image is `COMPAT_REFERENCE_IMAGE`, else the published TypeScript 1.0.1 pinned by the digest of its multi-arch index (`defaultReferenceImage` in `compat/harness/stack.go`, `REFERENCE_IMAGE` in the `Makefile`, the default base of `compat/selfcheck/Dockerfile`; a Docker-free test keeps the three equal; its CLI is `node dist/cli.js`), and it must exist locally: the harness never pulls, `make compat-reference` does and checks the digest (the tests fail naming it otherwise). The vectors come from `compat/golden/gen-embeddings.mjs` run with `@huggingface/transformers` inside a container of the reference image (no network); the queries are asked of a second stack booted from it. With the reference image under test both are determinism checks; with the Go image they are the real comparison. A few queries with CPU-independent first hits are also asserted as literals.
 - A new check in the suite should have a matching distortion in `compat/selfcheck` when it guards a property a broken server could plausibly lose.
 
+## Load comparison
+
+`make load-compare` boots one stack per image, one after another, and reports a Markdown table (stdout and `LOAD_OUT`, default a file under the system temp dir). It needs the two images: A, the published 1.0.0 pinned by digest (`make compat-upgrade-from`), and B, the Go image (`make compat-image-go`); `LOAD_IMAGE_A`, `LOAD_CLI_A`, `LOAD_IMAGE_B`, `LOAD_CLI_B` and `LOAD_FIXED_B` (default `COMPAT_GO_FIXED`) override them. It runs `compat/load_test.go` (build tags `compat load`: neither `make compat` nor `go-verify` runs it, `go-verify` only vets it) and takes about 3 minutes. It reports and asserts nothing; it fails only when a stack does not boot or an image answers an error while nothing else runs.
+
+Same fixtures for both: the recorded Gitea and YouTrack tools (84 indexed documents) and an echo tool on a fake upstream that holds each call for 5 ms, one admin, one `sk_` token, no daily limit (none is set by default) and no rate limit on valid tokens. Measured after a warm-up: idle memory (`docker stats`, three samples 30 s after the warm-up), sequential latency (200 `search_tools` over 18 rotating queries and 200 `call_tool`, one reused session, p50/p95/max), and 5 rounds of 50 concurrent calls of each (errors, percentiles, peak memory from a roughly 1 Hz `docker stats` stream, and one `/healthz` probe per round for event-loop responsiveness). Raw numbers depend on the CPU and are not committed.
+
+One run of each, on a shared developer laptop (Apple M1 Pro, 10 CPUs, Docker 29.4.0 with a 10 CPU / 8 GB VM, other containers running: load average about 8), A = TypeScript 1.0.0, B = the Go image, 2026-11-27. Numbers are indicative only; latency figures of the two runs differ by up to 30 % and more where noted.
+
+| Metric (A / B)                                     | Run 1                                       | Run 2                                     |
+| -------------------------------------------------- | ------------------------------------------- | ----------------------------------------- |
+| Idle memory (MiB)                                  | 480-588 / 489                               | 580 / 488                                 |
+| `search_tools` sequential p50 / p95 / max (ms)     | 22.7 / 43.1 / 350 vs 17.3 / 30.7 / 107      | 23.2 / 57.9 / 387 vs 18.0 / 28.5 / 129    |
+| `call_tool` sequential p50 / p95 / max (ms)        | 16.4 / 20.9 / 44 vs 12.2 / 15.7 / 23        | 16.4 / 24.3 / 41 vs 11.4 / 14.1 / 18      |
+| `call_tool` 50 x 5 p50 / p95 / max (ms), errors    | 206 / 347 / 351 vs 47 / 79 / 81, 0 / 0      | 170 / 372 / 397 vs 44 / 60 / 65, 0 / 0    |
+| `call_tool` 50 x 5 peak memory (MiB)               | 593 / 497                                   | 690 / 500                                 |
+| `call_tool` 50 x 5 `/healthz` median / max (ms)    | 37 / 55 vs 4 / 18                           | 39 / 54 vs 6 / 8                          |
+| `search_tools` 50 x 5 p50 / p95 / max (ms), errors | 508 / 1212 / 1226 vs 378 / 698 / 730, 0 / 0 | 471 / 841 / 855 vs 331 / 680 / 746, 0 / 0 |
+| `search_tools` 50 x 5 peak memory (MiB)            | 607 / 497                                   | 727 / 496                                 |
+| `search_tools` 50 x 5 `/healthz` median / max (ms) | 72 / 303 vs 12 / 26                         | 139 / 371 vs 10 / 28                      |
+
 ## Third-party notices
 
 The Go image ships the licence texts of everything it redistributes in `/usr/share/licenses/mcp-registry/`: `THIRD_PARTY_NOTICES` (the hand-written overview) and the generated files under `third_party/`. Regenerate them from the repository root when what they describe changes; the tests in `tools/notices` (part of `go test ./...` and so of `make go-verify`) fail until you do:

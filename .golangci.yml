@@ -4,6 +4,7 @@ run:
     - compat
     - selfcheck
     - e2e
+    - load
     - integration
 linters:
   default: none
