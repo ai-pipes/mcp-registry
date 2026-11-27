@@ -27,8 +27,9 @@ on:
   push:
     tags: ['v*']
   workflow_dispatch:
-  # Files the image build, the two smoke tests and the checks depend on that ci.yml does not exercise
-  # in this form (ci.yml builds and smokes the image for code changes, so apps/** is not listed).
+  # The release path: the server's sources and dependencies, the image build, the two smoke tests and
+  # the checks. The web UI's sources (apps/**, packages/**) are not listed: ci.yml builds and smokes
+  # the image for every change to them.
   pull_request:
     paths:
       - .github/workflows/release.yml
