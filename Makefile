@@ -9,7 +9,7 @@ VERSION := $(strip $(shell cat VERSION 2>/dev/null))
 check-version:
 	@echo '$(VERSION)' | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$$' || { echo "check-version: VERSION must hold MAJOR.MINOR.PATCH, got '$(VERSION)'"; exit 1; }
 
-.PHONY: native-libs native-model go-test-onnx go-test-onnx-parity go-vet-onnx go-lint-onnx go-verify-onnx compat compat-selfcheck compat-schemas compat-reference print-reference-image compat-image-ts compat-image-go compat-go e2e-flows e2e-flows-go go-lint go-lint-new go-fmt-check go-arch-lint go-cover go-verify go-test-int go-build print-go-arch-lint print-golangci-lint
+.PHONY: native-libs native-model go-test-onnx go-test-onnx-parity go-vet-onnx go-lint-onnx go-verify-onnx compat compat-selfcheck compat-schemas compat-reference print-reference-image compat-upgrade-from print-upgrade-from-image compat-image-ts compat-image-go compat-go e2e-flows e2e-flows-go go-lint go-lint-new go-fmt-check go-arch-lint go-cover go-verify go-test-int go-build print-go-arch-lint print-golangci-lint
 
 go-lint:
 	go run $(GOLANGCI_LINT) run
@@ -60,7 +60,7 @@ go-verify: go-lint go-arch-lint go-cover
 	go test -tags compat -count=1 -run '^(TestAppArgsPublishTheContainerPortAndKeepFileContentOffTheCommandLine|TestAppEnvReadsTheEnvironment|TestCheckUpdate|TestCheckUpdateAllowedReadsTheEnvironment|TestCLIResultStringMasksTokensAndLinkCodes|TestDefaultImageAndCLIFollowTheEnvironment|TestDoChunkedExpectingEarlyRefusalSendsNoContentLength|TestDoExpectingEarlyRefusalReturnsTheAnswerWhateverHappenedToTheWrite|TestErrorNamesSchemaAndPath|TestEveryContractHasASchema|TestEveryDeviationHasADescriptionAndIsUsedByAScenario|TestFinishSavesTheLogOnlyForAFailedTest|TestFixedFollowsTheEnvironment|TestListSuffixAndUnknownName|TestLogFileName|TestLoopbackHostResolution|TestOneOffCLIContainerNeverPutsAValueOnTheCommandLine|TestOtherFormatsAreAsserted|TestParseAppEnv|TestParseFixed|TestPortTakenRecognisesDockersMessages|TestPublicHostAndExtraHostsReachTheContainerArguments|TestRedactTruncates|TestReferenceImageFollowsItsVariable|TestResponseDecode|TestSaveLogDoesNothingWithoutADirectory|TestSchemaRejectsExtraAndMissingFields|TestScrubRemovesCredentialShapes|TestScrubRemovesTheContentOfSecretFiles|TestSecretValuesListTheBareDatabasePasswordToo|TestServerViewWithSecretFieldIsRejected|TestTheReferenceIsPinnedByDigestTheSameEverywhere|TestUpdateRefusesNonReferenceImage|TestURLFormatsAreAsserted|TestWriteLogScrubsAndCreatesTheDirectory)$$' ./compat/harness/
 	# The smoke tools of scripts/smoke.sh (compat/cmd): every test there is Docker-free.
 	go test -tags compat -count=1 ./compat/cmd/...
-	go test -tags compat -count=1 -run '^(TestAuditPagingProblem|TestCreateServerSyncFailureProblem|TestMCPReaderIsLenient|TestRetryAfterProblem|TestSearchReadyProblem|TestToolFixtureCopiesEqualTheOriginals|TestVersionFileEqualsTheServerPackage)$$' ./compat/
+	go test -tags compat -count=1 -run '^(TestAuditPagingProblem|TestCreateServerSyncFailureProblem|TestMCPReaderIsLenient|TestRetryAfterProblem|TestSearchReadyProblem|TestToolFixtureCopiesEqualTheOriginals|TestUpgradeSourceIsThePublished100PinnedByDigest|TestVersionFileEqualsTheServerPackage)$$' ./compat/
 	go test ./...
 	$(MAKE) go-test-int
 
@@ -94,6 +94,24 @@ compat-reference:
 
 print-reference-image:
 	@echo $(REFERENCE_IMAGE)
+
+# The image the upgrade scenario (TestUpgradeKeepsEverything) starts from in compat-go and in CI's
+# reference leg: the published TypeScript 1.0.0 (the release operators run), pinned by the digest of
+# its multi-arch index (linux/amd64 and linux/arm64; resolved with `docker buildx imagetools inspect
+# ghcr.io/ai-pipes/mcp-registry:1.0.0`). compat-upgrade-from pulls it anonymously and checks that the
+# local image carries that digest. Dependabot does not watch this line.
+UPGRADE_FROM_IMAGE := ghcr.io/ai-pipes/mcp-registry:1.0.0@sha256:9966fa11e597b45fe27ad916b4121a312c624232a1855d922c1f1946f7c09d72
+UPGRADE_FROM_REPO := $(firstword $(subst :, ,$(UPGRADE_FROM_IMAGE)))
+UPGRADE_FROM_DIGEST := $(lastword $(subst @, ,$(UPGRADE_FROM_IMAGE)))
+UPGRADE_FROM_CLI := node dist/cli.js
+
+compat-upgrade-from:
+	docker pull -q $(UPGRADE_FROM_IMAGE)
+	@docker image inspect -f '{{range .RepoDigests}}{{println .}}{{end}}' $(UPGRADE_FROM_IMAGE) | grep -qx '$(UPGRADE_FROM_REPO)@$(UPGRADE_FROM_DIGEST)' || \
+		{ echo "compat-upgrade-from: the local image does not carry $(UPGRADE_FROM_REPO)@$(UPGRADE_FROM_DIGEST)"; exit 1; }
+
+print-upgrade-from-image:
+	@echo $(UPGRADE_FROM_IMAGE)
 
 # The TypeScript image built from this tree (the default image under test until the switchover).
 compat-image-ts:
@@ -139,8 +157,8 @@ compat-image-go: check-version
 # TestConnectionsUpstreamRejectsTheToken); TestSearchReadyBeforeServing (the decided ready-before-serving
 # branch: a search made at once after a restart equals the settled one); TestConfigNetworkAndRetention
 # and TestConfigSecretsFromFiles (their cleanup demands that the scenario's MCP ledger saw an answer);
-# and TestUpgradeKeepsEverything (the Go image on both sides is a restart test; its TypeScript-to-Go leg
-# runs when COMPAT_UPGRADE_FROM names the old image).
+# and TestUpgradeKeepsEverything (since milestone 8 compat-go runs it as the real upgrade: the published
+# 1.0.0 creates the state, the Go image takes over, see COMPAT_GO_UPGRADE_FROM).
 # Milestone 7 (the operator CLI) added TestCLIKeys (rotate-secrets-key and reset-key-check) and the
 # key-rotation subtest of TestPlatformMigrationsAndKeyCheck: nothing is left out for the Go image.
 COMPAT_GO_TESTS := TestConfigRefused TestPlatformStartsOnReferenceDatabase TestPlatformReverseHandOver \
@@ -186,19 +204,27 @@ COMPAT_GO_RUN := ^($(subst $(space),|,$(strip $(COMPAT_GO_TESTS))))$$
 # after a start). All twelve.
 COMPAT_GO_FIXED := config-errors,audit-login-via,create-user-keeps-role,oidc-binding-kept,create-server-sync-exit,reindex-wording,vector-kept-on-failed-reembedding,stale-removal-rechecks-catalog,oauth-state-kept,request-id-on-refusals,token-429-retry-after,ready-before-serving
 
+# The image TestUpgradeKeepsEverything starts from under compat-go: the published 1.0.0 (UPGRADE_FROM_IMAGE,
+# make compat-upgrade-from), so the Go image takes over a database the TypeScript release created, and
+# rotates its key. Give it on the make command line to start from another image; empty
+# (make compat-go COMPAT_GO_UPGRADE_FROM=) makes the scenario a restart test of the Go image.
+COMPAT_GO_UPGRADE_FROM := $(UPGRADE_FROM_IMAGE)
+
 # The suite against the Go image. The reference image (REFERENCE_IMAGE, make compat-reference) must
 # exist as well: some scenarios compare with it on the same machine, and the new-database scenario
-# starts from it.
+# starts from it; so must the upgrade source (COMPAT_GO_UPGRADE_FROM, make compat-upgrade-from).
 # Before it runs, the pattern is
 # listed (nothing is started): it must match exactly the scenarios named in COMPAT_GO_TESTS, so a
 # renamed or mistyped scenario fails here instead of passing by running nothing.
 compat-go:
 	@docker image inspect $(REFERENCE_IMAGE) >/dev/null 2>&1 || { echo "compat-go: the reference image $(REFERENCE_IMAGE) is missing: run make compat-reference"; exit 1; }
 	@docker image inspect mcp-registry:compat-go >/dev/null 2>&1 || { echo "compat-go: the image mcp-registry:compat-go is missing: run make compat-image-go"; exit 1; }
+	@$(if $(COMPAT_GO_UPGRADE_FROM),docker image inspect $(COMPAT_GO_UPGRADE_FROM) >/dev/null 2>&1 || { echo "compat-go: the upgrade source $(COMPAT_GO_UPGRADE_FROM) is missing: run make compat-upgrade-from"; exit 1; },true)
 	@listed="$$(go test -tags compat -count=1 -list '$(COMPAT_GO_RUN)' ./compat/ | grep -c '^Test')"; \
 	if [ "$$listed" != "$(words $(COMPAT_GO_TESTS))" ]; then \
 		echo "compat-go: the pattern '$(COMPAT_GO_RUN)' matches $$listed scenario(s), COMPAT_GO_TESTS names $(words $(COMPAT_GO_TESTS)): $(COMPAT_GO_TESTS)"; exit 1; fi
 	COMPAT_IMAGE=mcp-registry:compat-go COMPAT_CLI=mcp-registry COMPAT_FIXED=$(COMPAT_GO_FIXED) \
+		$(if $(COMPAT_GO_UPGRADE_FROM),COMPAT_UPGRADE_FROM='$(COMPAT_GO_UPGRADE_FROM)' COMPAT_UPGRADE_FROM_CLI='$(UPGRADE_FROM_CLI)') \
 		go test -tags compat -count=1 -p 1 -timeout 45m -run '$(COMPAT_GO_RUN)' $(if $(COMPAT_GO_SKIP),-skip '$(COMPAT_GO_SKIP)') $(COMPAT_ARGS) ./compat/
 
 # COMPAT_ARGS adds go test arguments, e.g. make compat COMPAT_ARGS='-run ^TestPlatform' (the -run

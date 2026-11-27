@@ -167,12 +167,12 @@ jobs:
         with:
           node-version: 22
       - run: make compat-reference
-      # The upgrade scenario starts from the published 1.0.0 image: a real in-place upgrade, not a restart.
-      - run: docker pull ghcr.io/ai-pipes/mcp-registry:1.0.0
-      - run: make compat COMPAT_IMAGE="$(make -s print-reference-image)"
+      # The upgrade scenario starts from the published 1.0.0 image (UPGRADE_FROM_IMAGE in the Makefile,
+      # pinned by digest): a real in-place upgrade, not a restart.
+      - run: make compat-upgrade-from
+      - run: make compat COMPAT_IMAGE="$(make -s print-reference-image)" COMPAT_UPGRADE_FROM="$(make -s print-upgrade-from-image)"
         env:
           COMPAT_LOG_DIR: ${{ runner.temp }}/compat-logs
-          COMPAT_UPGRADE_FROM: ghcr.io/ai-pipes/mcp-registry:1.0.0
       # The harness writes the app container's log of every failed stack (secrets removed) there.
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -184,9 +184,10 @@ jobs:
 
   # The Go server (Dockerfile target go) under the compat suite: the scenarios of the milestone pattern
   # (COMPAT_GO_TESTS in the Makefile: since milestone 7 the whole suite, nothing is skipped
-  # (COMPAT_GO_SKIP is empty); the upgrade scenario is a restart test here, its TypeScript-to-Go
-  # leg is milestone 8). The reference image (the published 1.0.1, make compat-reference) is pulled too:
-  # the scenarios start from it or compare with it. On both architectures, each building the Go image
+  # (COMPAT_GO_SKIP is empty)). The reference image (the published 1.0.1, make compat-reference) is pulled
+  # too: the scenarios start from it or compare with it. So is the published 1.0.0 (make
+  # compat-upgrade-from): the upgrade scenario starts from it and hands its database to the Go image,
+  # which then rotates the key (compat-go sets COMPAT_UPGRADE_FROM, see COMPAT_GO_UPGRADE_FROM). On both architectures, each building the Go image
   # natively on its own runner and pulling the reference for that architecture:
   # TestSearchStoredVectors compares the stored vectors with the reference's on the same machine, and
   # they must be equal on arm64 and on amd64. Not a required check.
@@ -213,6 +214,7 @@ jobs:
         with:
           node-version: 22
       - run: make compat-reference
+      - run: make compat-upgrade-from
       - run: make compat-image-go
       # The embedder's vectors against the reference image's, in containers of this runner's architecture
       # (the Go dependencies are fetched first: the container has no network).
