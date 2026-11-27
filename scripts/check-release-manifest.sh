@@ -6,6 +6,8 @@
 # two images. Used by .github/workflows/release.yml after the merge (once per tag) and by the
 # rehearsal's dry assembly (on the output of `docker buildx imagetools create --dry-run`).
 #   docker buildx imagetools inspect --raw <ref> | bash scripts/check-release-manifest.sh <amd64> <arm64>
+# The input must be exactly one JSON object: empty input, text that is not JSON, several documents or
+# anything but an object is refused (jq alone would print no problem for an empty stdin and pass).
 # Needs jq. Exit codes: 0 match, 1 mismatch or unreadable input, 2 bad invocation.
 set -euo pipefail
 
@@ -15,9 +17,12 @@ if [ "$#" -ne 2 ] || ! [[ "$1" =~ $digest_re ]] || ! [[ "$2" =~ $digest_re ]]; t
   exit 2
 fi
 
-problems="$(jq -r --arg amd64 "$1" --arg arm64 "$2" '
+problems="$(jq -r -s --arg amd64 "$1" --arg arm64 "$2" '
   def platform: "\(.platform.os // "?")/\(.platform.architecture // "?")\(if .platform.variant then "/" + .platform.variant else "" end)";
   def attestation: (.annotations // {})["vnd.docker.reference.type"] == "attestation-manifest";
+  if length != 1 then "the input holds \(length) JSON documents, want exactly one manifest list"
+  elif (.[0] | type) != "object" then "the input is a JSON \(.[0] | type), want a manifest list object"
+  else .[0] |
   (if (.mediaType == "application/vnd.oci.image.index.v1+json"
        or .mediaType == "application/vnd.docker.distribution.manifest.list.v2+json")
    then empty else "not a manifest list (mediaType \(.mediaType // "none"))" end),
@@ -35,6 +40,7 @@ problems="$(jq -r --arg amd64 "$1" --arg arm64 "$2" '
    | (.annotations["vnd.docker.reference.digest"] // "") as $ref
    | if $ref == $amd64 or $ref == $arm64 then empty
      else "attestation \(.digest) describes \($ref), not one of the two images" end)
+  end
 ')" || { echo "check-release-manifest: the input is not a JSON manifest list" >&2; exit 1; }
 
 if [ -n "$problems" ]; then

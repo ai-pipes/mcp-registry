@@ -315,6 +315,8 @@ jobs:
             [ -n "$tag" ] || continue
             digest="$(docker buildx imagetools inspect --format '{{json .Manifest}}' "$tag" | jq -r .digest)"
             echo "$tag -> $digest"
+            # A real digest, so that two unreadable answers ("null" or empty) can never compare equal.
+            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::$tag names no manifest digest ('$digest')"; exit 1; }
             docker buildx imagetools inspect --raw "$tag" | bash scripts/check-release-manifest.sh "$MANIFEST_AMD64" "$MANIFEST_ARM64"
             [ -n "$first" ] || first="$digest"
             [ "$digest" = "$first" ] || { echo "::error::$tag names $digest, the first tag $first"; exit 1; }
