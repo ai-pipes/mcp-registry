@@ -229,6 +229,12 @@ Nothing is downloaded at image build time. A component that is not covered by a 
 6. Tag `v<version>` on `main` and push the tag. The release workflow checks the tag, the changelog entry and that the commit is on `main`, builds the image natively on an amd64 and an arm64 runner and tests each (version printed by the image, quick-start smoke, compose smoke), and only then pushes each architecture by digest (refused unless its layers and its configuration, such as user, command, environment and healthcheck, are the tested ones) and merges the two into one manifest list under the tags (`<major>.<minor>.<patch>`, `<major>.<minor>`, `<major>`, `latest`), checked to hold exactly those two images. If the push step reports that the pushed image is not the tested one (the build cache was evicted), re-run all jobs, not only the failed ones.
 7. After the workflow finishes, confirm an anonymous pull works (`docker logout ghcr.io; docker pull ghcr.io/ai-pipes/mcp-registry:<version>`) and that the package is public and linked to the repository.
 
+Recovery and order:
+
+- If `publish` or one `push-digest` leg fails midway, re-run the failed job(s). Pushing by digest and creating the manifest list are idempotent, and a version tag is only ever written as the complete two-architecture list (after the merge, by one `imagetools create`), so a half-finished run never leaves a tag pointing at one architecture. Per-architecture digests pushed without a tag are harmless.
+- A published version tag is never moved or re-pushed. A fix after publication is a new patch version (for example 2.0.1).
+- Order for a maintainer: merge the release PR; wait for CI on the merge commit on `main` to be green; tag that commit `v<version>` and push the tag; watch the workflow; then verify with an anonymous pull that `<version>`, `<major>.<minor>`, `<major>` and `latest` name one digest and that tags of older majors did not move. Announce only after that: the quick-start URL in the README and the `:<major>` image exist only once the workflow has finished.
+
 ## Commits
 
 [Conventional Commits](https://www.conventionalcommits.org/), as in the git log:

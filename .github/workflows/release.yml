@@ -35,6 +35,7 @@ on:
       - .github/workflows/release.yml
       - Dockerfile
       - .dockerignore
+      - Makefile
       - docker-compose.yml
       - quickstart.compose.yml
       - package.json
