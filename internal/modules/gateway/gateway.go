@@ -139,7 +139,7 @@ func (s *Service) PruneHistory(ctx context.Context, retentionDays int) (PruneRes
 // RetentionEvery is the period of the retention job (it also runs at start).
 const RetentionEvery = 24 * time.Hour
 
-// The records of the retention job (scheduler.ts).
+// The records of the retention job (v1.0.1:apps/server/src/platform/scheduler.ts).
 const (
 	MsgRetentionDone   = "gateway retention: done"
 	MsgRetentionFailed = "gateway retention: run failed"

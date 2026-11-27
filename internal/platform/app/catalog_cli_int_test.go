@@ -301,7 +301,7 @@ func TestCLISync(t *testing.T) {
 }
 
 // The person is looked up before the secret is read (readSecret comes after principalFor in
-// cli-commands.ts): an unknown --as with an unset --secret-env variable is the person's error,
+// v1.0.1:apps/server/src/platform/cli-commands.ts): an unknown --as with an unset --secret-env variable is the person's error,
 // a known one with the same variable is the usage error.
 func TestCLICreateServerLooksUpThePersonBeforeTheSecret(t *testing.T) {
 	s := newServerEnv(t)

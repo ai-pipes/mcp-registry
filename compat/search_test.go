@@ -9,13 +9,13 @@ package compat_test
 // call_tool), REST, SQL and the CLI.
 //
 // Source cases that are not ported:
-//   - search.int.test.ts "embedder outages" (keeps text search working, the sweep fills the
+//   - v1.0.1:apps/server/test/search/search.int.test.ts "embedder outages" (keeps text search working, the sweep fills the
 //     embeddings in later, skips a document marked as failed): the embedder cannot be made to
 //     fail from outside. "reindexAll rebuilds the index" is ported through the reindex command.
-//   - search.int.test.ts uses a bag-of-tokens fake embedder at similarity 0.2; the scenarios
+//   - v1.0.1:apps/server/test/search/search.int.test.ts uses a bag-of-tokens fake embedder at similarity 0.2; the scenarios
 //     here use the real model and the default threshold, so their queries and expected values
 //     differ (stated at each case).
-//   - embedder.int.test.ts: the embedder itself; judged by TestSearchStoredVectors
+//   - v1.0.1:apps/server/test/search/embedder.int.test.ts: the embedder itself; judged by TestSearchStoredVectors
 //     (the stored vectors against transformers.js on the same machine) and, later, by Go unit tests.
 
 import (

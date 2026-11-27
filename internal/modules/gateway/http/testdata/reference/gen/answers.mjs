@@ -1,15 +1,18 @@
 // Writes ../answers.json: what the reference's handler (createMcpHandler of
 // @modelcontextprotocol/server 2.4.0, stateless, with the legacy fallback, as
-// apps/server/src/platform/mcp/server.ts builds it) answers to each request of ../cases.json, with
+// v1.0.1:apps/server/src/platform/mcp/server.ts builds it) answers to each request of ../cases.json, with
 // the four meta-tools registered under their real names, descriptions and schemas and handlers
 // that answer what the Go test's fakes answer (no servers, no hits, "called"). See README.md.
 import { readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 const here = (name) => fileURLToPath(new URL(name, import.meta.url));
-// The packages of apps/server of this checkout (pnpm install), or of the checkout of the reference
-// (v1.0.1) named by MCP_REFERENCE_ROOT once this tree no longer has apps/server (README.md).
-const root = process.env.MCP_REFERENCE_ROOT ?? here('../../../../../../../');
+// The packages of the TypeScript server of the reference (v1.0.1): an unpacked, installed
+// `git archive v1.0.1` named by MCP_REFERENCE_ROOT (required; README.md).
+if (!process.env.MCP_REFERENCE_ROOT) {
+  throw new Error('set MCP_REFERENCE_ROOT to an installed checkout of v1.0.1 (see README.md)');
+}
+const root = process.env.MCP_REFERENCE_ROOT;
 const require = createRequire(root.replace(/\/?$/, '/') + 'apps/server/package.json');
 const { createMcpHandler, McpServer } = await import(
   pathToFileURL(require.resolve('@modelcontextprotocol/server')).href

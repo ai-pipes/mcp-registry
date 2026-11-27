@@ -22,6 +22,13 @@ func Eventually(t *testing.T, what string, f func() bool) {
 	eventuallyWithin(t, what, eventuallyLimit, f)
 }
 
+// EventuallyWithin is Eventually with another limit, for a wait whose bound the host's load decides
+// rather than the behaviour under test (the outbox delivery of a whole catalog on a busy machine).
+func EventuallyWithin(t *testing.T, what string, limit time.Duration, f func() bool) {
+	t.Helper()
+	eventuallyWithin(t, what, limit, f)
+}
+
 func eventuallyWithin(t testing.TB, what string, limit time.Duration, f func() bool) {
 	t.Helper()
 	if err := waitFor(what, limit, func() (bool, error) { return f(), nil }); err != nil {

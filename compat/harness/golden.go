@@ -25,8 +25,19 @@ const referenceImageVar = "COMPAT_REFERENCE_IMAGE"
 // by digest, which is not the default image under test), or exactly the value of
 // COMPAT_REFERENCE_IMAGE when that is set, which must then be pinned by digest too. Without the second condition `COMPAT_IMAGE=<go image>
 // make compat` with -update would rewrite the goldens from the server they are meant to judge.
+//
+// The reference shows none of the decided behaviours, so -update also needs COMPAT_FIXED set and
+// empty (unset means all, the default for the image built from this tree): a golden is recorded
+// only on the reference branch of every scenario.
 func CheckUpdateAllowed(update bool) error {
-	return checkUpdate(update, os.Getenv("COMPAT_REFERENCE"), os.Getenv(referenceImageVar), DefaultImage())
+	if !update {
+		return nil
+	}
+	fixed, err := fixedFromEnv()
+	if err != nil {
+		return err
+	}
+	return checkUpdate(update, os.Getenv("COMPAT_REFERENCE"), os.Getenv(referenceImageVar), DefaultImage(), len(fixed))
 }
 
 // pinnedByDigest matches an image reference that ends in a sha256 digest: the default reference is
@@ -34,8 +45,9 @@ func CheckUpdateAllowed(update bool) error {
 // the image under test renamed) cannot pass for the reference.
 var pinnedByDigest = regexp.MustCompile(`@sha256:[0-9a-f]{64}$`)
 
-// checkUpdate is CheckUpdateAllowed over explicit inputs.
-func checkUpdate(update bool, reference, referenceImage, image string) error {
+// checkUpdate is CheckUpdateAllowed over explicit inputs (fixed: how many deviations COMPAT_FIXED
+// selects).
+func checkUpdate(update bool, reference, referenceImage, image string, fixed int) error {
 	if !update {
 		return nil
 	}
@@ -51,6 +63,9 @@ func checkUpdate(update bool, reference, referenceImage, image string) error {
 	}
 	if image != want {
 		return fmt.Errorf("-update refused: the image under test is %q, the reference image is %q (set COMPAT_REFERENCE_IMAGE to name another reference; goldens never come from the server they judge)", image, want)
+	}
+	if fixed != 0 {
+		return fmt.Errorf("-update refused: COMPAT_FIXED selects %d decided deviation(s); the reference has none, set COMPAT_FIXED= (empty)", fixed)
 	}
 	return nil
 }

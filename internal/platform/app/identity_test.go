@@ -44,7 +44,7 @@ func records(t *testing.T, buf *bytes.Buffer) []map[string]any {
 	return out
 }
 
-// bootstrap.ts: a failure is one error record with a fixed message and the neutral error fields;
+// v1.0.1:apps/server/src/platform/bootstrap.ts: a failure is one error record with a fixed message and the neutral error fields;
 // the text of the error (it may quote values) and any code never reach the log.
 func TestFirstStartFailureIsOneErrorRecordWithoutTheErrorText(t *testing.T) {
 	var buf bytes.Buffer
@@ -79,7 +79,7 @@ func TestFirstStartDoesNothingWithOIDC(t *testing.T) {
 	}
 }
 
-// container.ts unconfiguredOidc: a plain error, not the identity module's idp_unavailable.
+// v1.0.1:apps/server/src/platform/container.ts unconfiguredOidc: a plain error, not the identity module's idp_unavailable.
 func TestUnconfiguredOIDCFailsWithAPlainError(t *testing.T) {
 	p := unconfiguredOIDC{}
 	_, err := p.AuthorizationURL(context.Background(), idapp.OIDCAuthorizationInput{})
@@ -128,8 +128,8 @@ func TestResolveURLMatchesTheURLConstructor(t *testing.T) {
 	}
 }
 
-// The rotation warning names the command as it is invoked in this image (plan decision: not
-// `node dist/cli.js`).
+// The rotation warning names the command as it is invoked in this image (plan decision: not the
+// 1.x invocation).
 func TestKeyRotationWarningNamesTheCommandOfThisImage(t *testing.T) {
 	const want = "SECRETS_KEY_OLD is set: key rotation in progress. Run `mcp-registry rotate-secrets-key`, then remove SECRETS_KEY_OLD and restart"
 	if msgKeyOldSet != want {

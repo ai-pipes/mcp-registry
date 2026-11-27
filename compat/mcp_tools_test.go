@@ -5,7 +5,7 @@ package compat_test
 // The four meta-tools of /mcp through the Go SDK client: list_servers, search_tools, describe_tool
 // and the round trip to call_tool, ToolRef, the short description and the leak scan. The protocol,
 // the guards and the surface golden are in mcp_protocol_test.go; call_tool in gateway_test.go.
-// Source: mcp.int.test.ts. Every session is opened through the ledger (mcp_helpers_test.go), which
+// Source: v1.0.1:apps/server/test/mcp/mcp.int.test.ts. Every session is opened through the ledger (mcp_helpers_test.go), which
 // scans the raw bytes of every answer for upstream addresses, auth settings, tokens and secrets.
 
 import (

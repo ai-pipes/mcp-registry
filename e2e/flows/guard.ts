@@ -47,7 +47,7 @@
 import type { BrowserContext, CDPSession, Page } from '@playwright/test';
 
 // The product's formats: a prefix plus the base64url of 32 random bytes (43 characters),
-// apps/server/src/modules/identity/{application/tokens.ts,application/login-link.ts}. The shape is a
+// internal/modules/identity (API tokens and sign-in link codes). The shape is a
 // prefix, a left boundary and AT LEAST 41 base64url characters (44 in all, the product's 46 included),
 // whatever follows: a longer token (another length a server may issue) is caught as well, and a random
 // base64url value without the prefix (a session cookie) cannot match. Anything shorter than 44

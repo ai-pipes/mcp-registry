@@ -6,11 +6,11 @@ import (
 	"context"
 	"testing"
 
-	"github.com/ai-pipes/mcp-registry/apps/server/migrations"
 	"github.com/ai-pipes/mcp-registry/internal/kernel"
 	"github.com/ai-pipes/mcp-registry/internal/platform/audit"
 	"github.com/ai-pipes/mcp-registry/internal/platform/migrate"
 	"github.com/ai-pipes/mcp-registry/internal/platform/pgtest"
+	"github.com/ai-pipes/mcp-registry/migrations"
 )
 
 func TestRecord(t *testing.T) {

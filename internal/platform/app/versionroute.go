@@ -5,7 +5,7 @@ import (
 	"net/http"
 )
 
-// versionHandler is `GET /api/version` (version-route.ts): the gateway version, for any signed-in
+// versionHandler is `GET /api/version` (v1.0.1:apps/server/src/platform/http/version-route.ts): the gateway version, for any signed-in
 // person. The session guard is the prefix middleware of the platform module.
 func versionHandler(version string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

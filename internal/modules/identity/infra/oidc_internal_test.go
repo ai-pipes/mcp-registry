@@ -1,6 +1,9 @@
 package infra
 
-import "testing"
+import (
+	"net/http"
+	"testing"
+)
 
 func TestIssuersEqualIsWHATWGNormalisationAndNothingElse(t *testing.T) {
 	cases := []struct {
@@ -39,5 +42,30 @@ func TestIssuersEqualIsWHATWGNormalisationAndNothingElse(t *testing.T) {
 		if got := issuersEqual(c.a, c.b); got != c.want {
 			t.Errorf("issuersEqual(%q, %q) = %v, want %v", c.a, c.b, got, c.want)
 		}
+	}
+}
+
+// The reference ignores HTTP_PROXY, HTTPS_PROXY and NO_PROXY, and so do the other outbound clients:
+// an install behind a proxy variable that signs in on 1.0.x must keep signing in.
+func TestTheDefaultOIDCTransportUsesNoProxyFromTheEnvironment(t *testing.T) {
+	t.Setenv("HTTPS_PROXY", "http://127.0.0.1:1")
+	t.Setenv("HTTP_PROXY", "http://127.0.0.1:1")
+	t.Setenv("NO_PROXY", "")
+	p := NewOIDCProvider(OIDCConfig{})
+	w, ok := p.client.Transport.(*watchTransport)
+	if !ok {
+		t.Fatalf("transport %T", p.client.Transport)
+	}
+	tr, ok := w.next.(*http.Transport)
+	if !ok {
+		t.Fatalf("inner transport %T", w.next)
+	}
+	// Go reads the proxy variables once per process, so a Proxy function could answer nil here for
+	// that reason alone: the assertion is that there is no Proxy function at all.
+	if tr.Proxy != nil {
+		t.Fatal("the transport has a Proxy function: it would honour HTTP_PROXY / HTTPS_PROXY")
+	}
+	if tr == http.DefaultTransport {
+		t.Fatal("the shared default transport is used")
 	}
 }

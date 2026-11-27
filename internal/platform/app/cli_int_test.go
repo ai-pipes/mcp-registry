@@ -153,7 +153,7 @@ func TestCLIMapsTheErrorsACommandReturns(t *testing.T) {
 	}
 }
 
-// cli.ts writes its logger to stderr and never to stdout; info is cut to warn by default.
+// v1.0.1:apps/server/src/platform/cli.ts writes its logger to stderr and never to stdout; info is cut to warn by default.
 func TestCLILoggerWritesToStderrOnlyAndInfoBecomesWarn(t *testing.T) {
 	url := pgtest.StartURL(t)
 	key := newKey(t)

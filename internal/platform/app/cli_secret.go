@@ -23,10 +23,10 @@ type Terminal interface {
 // errInterrupted is Ctrl-C typed at the secret prompt.
 var errInterrupted = errors.New("interrupted")
 
-// secretPrompt is what readSecretInput of cli-input.ts writes before a typed secret.
+// secretPrompt is what readSecretInput of v1.0.1:apps/server/src/platform/cli-input.ts writes before a typed secret.
 const secretPrompt = "Secret: "
 
-// readSecret is the server secret of create-server (readSecret in cli-commands.ts): from the
+// readSecret is the server secret of create-server (readSecret in v1.0.1:apps/server/src/platform/cli-commands.ts): from the
 // variable named by --secret-env when given (unset or empty is a bad invocation), else, when the
 // mode holds a secret, from stdin: typed without echo on a terminal, otherwise the whole stream
 // with ONE trailing newline (`\n` or `\r\n`) removed. Nothing means no secret (nil). A mode that
@@ -53,7 +53,7 @@ func readSecret(ctx context.Context, cio CLIIO, secretEnv *string, auth catalog.
 	return kernel.NewSecret(typed), nil
 }
 
-// readSecretInput is readSecretInput of cli-input.ts: on a terminal one line typed without echo
+// readSecretInput is readSecretInput of v1.0.1:apps/server/src/platform/cli-input.ts: on a terminal one line typed without echo
 // (the prompt and the newline that the hidden Enter did not show go to stderr), otherwise the
 // whole stream. An interrupt while reading, or a context that ends before the secret is in, aborts
 // the command (the reference carries on without a secret after Ctrl-C; creating a server nobody

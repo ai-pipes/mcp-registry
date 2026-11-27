@@ -50,7 +50,7 @@ func run(ctx context.Context, args []string, env map[string]string, stdin io.Rea
 			Logger:  logging.New(cfg.LogLevel, stdout),
 		})
 	}
-	// The operator commands (cli.ts): pool, migrations, key guard, then the command; see app.RunCLI.
+	// The operator commands (v1.0.1:apps/server/src/platform/cli.ts): pool, migrations, key guard, then the command; see app.RunCLI.
 	return app.RunCLI(ctx, app.CLIOptions{
 		Config:  cfg,
 		Version: version,

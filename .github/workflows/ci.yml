@@ -1,18 +1,25 @@
-# CI: verify (lint, types, architecture, knip, unit + integration tests on Testcontainers),
-# smoke (the docker compose box end to end), quickstart (quickstart.compose.yml from stdin) and e2e
-# (Playwright in Chromium against the same built image; all three engines nightly in
-# e2e-browsers.yml), go (the Go rewrite's lint, architecture rules and unit tests) and compat (the Go
-# black-box suite against the reference, the published 1.0.1 pinned by digest, on amd64 and arm64; its
-# self-check runs daily in compat-selfcheck.yml) and
-# e2e-flows (the browser flows of the web UI, e2e/flows, against that same image, orchestrated by Go);
-# compat-go and e2e-flows-go run the milestone pattern of the Go server (not required checks).
+# CI. Web tooling: verify (lint, format, types, architecture rules, knip, the web unit tests and the
+# web build: pnpm verify; pnpm audit; the JSON Schemas the suite derives from the zod contracts).
+# The server (Go): go (make go-verify: lint, architecture rules, the coverage gate, vet, unit and
+# integration tests on Testcontainers), go-onnx (the local embedder behind the build tag onnx, both
+# architectures). The image built from this tree (the Dockerfile's default target, the image a release
+# ships): smoke (the docker compose box end to end), quickstart (quickstart.compose.yml from stdin),
+# e2e (e2e/csp.spec.ts in Chromium against the compose box; all three engines nightly in
+# e2e-browsers.yml), compat (the black-box suite with every decided deviation and the upgrade from
+# the published 1.0.0, both architectures), compat-reference (the same suite with the published
+# 1.0.1 under test, both architectures) and e2e-flows (the browser flows of the web UI, orchestrated
+# by Go). The suite's self-check runs daily in compat-selfcheck.yml.
 #
-# Moving to another CI inside the perimeter: the same two commands on a runner with
-# Node 22, pnpm (version from package.json) and Docker, after `pnpm install --frozen-lockfile`:
+# Moving to another CI inside the perimeter: a runner with Go (version from go.mod), Node 22, pnpm
+# (version from package.json) and Docker, after `pnpm install --frozen-lockfile`:
 #   pnpm audit --audit-level=high && pnpm verify
+#   make go-verify
 #   bash scripts/smoke.sh
 #   bash scripts/quickstart-smoke.sh
 #   pnpm exec playwright install --with-deps chromium && bash scripts/e2e-image.sh
+#   make compat-reference compat-upgrade-from compat-image && make compat
+#   make compat-reference-run
+#   make e2e-flows
 name: ci
 
 on:
@@ -40,7 +47,6 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm audit --audit-level=high
-      # Docker is available on ubuntu runners, so the Testcontainers integration tests run.
       - run: pnpm verify
       # The Go compat suite validates REST responses with JSON Schemas generated from the zod contracts.
       - run: make compat-schemas && git diff --exit-code compat/schemas && test -z "$(git status --porcelain compat/schemas)"
@@ -51,12 +57,6 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
       - run: bash scripts/smoke.sh
 
   quickstart:
@@ -65,12 +65,6 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
       - run: bash scripts/quickstart-smoke.sh
 
   e2e:
@@ -94,9 +88,8 @@ jobs:
           path: node_modules/.cache/playwright/test-results
           retention-days: 7
 
-  # `make go-verify`: golangci-lint, go-arch-lint, go vet (also with the compat tags) and go test.
-  # The version (VERSION) and the model fetch no longer use Node; the Node setup stays installed for
-  # now (no pnpm install is involved) and may go in a later CI cleanup.
+  # `make go-verify`: golangci-lint, go-arch-lint, the coverage gate, go vet (also with the compat
+  # tags), go test and the integration tests (Testcontainers: Docker is available on ubuntu runners).
   go:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -105,16 +98,13 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 22
       - run: make go-verify
 
   # The code behind the build tag onnx (the local embedder: cgo and the pinned ONNX Runtime library)
   # is not part of make go-verify, which needs no native library. It is vetted, linted and tested
   # here on both architectures: the unit tests compare token ids with files recorded from the
   # reference and check the arithmetic; no vector is recorded (vectors depend on the CPU), vector
-  # parity is judged by the compat-go job (make go-test-onnx-parity and TestSearchStoredVectors).
+  # parity is judged by the compat job (make go-test-onnx-parity and TestSearchStoredVectors).
   # make native-libs downloads the pinned libraries and checks their SHA-256 (make go-verify-onnx needs them too; a separate step shows a failed download on its own).
   go-onnx:
     name: go-onnx (${{ matrix.arch }})
@@ -133,18 +123,16 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      # Neither the version (VERSION) nor make native-model use Node any more; the setup stays for now.
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 22
       - run: make native-libs
       - run: make go-verify-onnx
 
-  # The Go compatibility suite (compat/, tag compat) with the reference as the image under test: the
-  # published 1.0.1 pinned by digest (REFERENCE_IMAGE in the Makefile, pulled and checked by
-  # make compat-reference), on both architectures. Every reference branch of the decided deviations
-  # runs here (COMPAT_FIXED unset); vectors and rankings are compared with the same image on the same
-  # runner (a determinism check), so both entries run the same steps.
+  # The compatibility suite (compat/, tag compat) against the image built from this tree (make
+  # compat-image: the image a release ships) with every decided deviation, on both architectures,
+  # each building the image natively on its own runner. The reference (the published 1.0.1, make
+  # compat-reference) is pulled too: some scenarios compare with it on the same machine (the stored
+  # vectors and the recorded rankings must be equal on arm64 and on amd64) and the database hand-over
+  # scenarios start from it. So is the published 1.0.0 (UPGRADE_FROM_IMAGE in the Makefile): the upgrade
+  # scenario starts from it, hands its database to the image under test and rotates the key.
   compat:
     needs: [go]
     name: compat (${{ matrix.arch }})
@@ -163,14 +151,14 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 22
       - run: make compat-reference
-      # The upgrade scenario starts from the published 1.0.0 image (UPGRADE_FROM_IMAGE in the Makefile,
-      # pinned by digest): a real in-place upgrade, not a restart.
       - run: make compat-upgrade-from
-      - run: make compat COMPAT_IMAGE="$(make -s print-reference-image)" COMPAT_UPGRADE_FROM="$(make -s print-upgrade-from-image)"
+      - run: make compat-image
+      # The embedder's vectors against the reference image's, in containers of this runner's architecture
+      # (the Go dependencies are fetched first: the container has no network).
+      - run: go mod download
+      - run: make go-test-onnx-parity
+      - run: make compat
         env:
           COMPAT_LOG_DIR: ${{ runner.temp }}/compat-logs
       # The harness writes the app container's log of every failed stack (secrets removed) there.
@@ -182,18 +170,14 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-  # The Go server (Dockerfile target go) under the compat suite: the scenarios of the milestone pattern
-  # (COMPAT_GO_TESTS in the Makefile: since milestone 7 the whole suite, nothing is skipped
-  # (COMPAT_GO_SKIP is empty)). The reference image (the published 1.0.1, make compat-reference) is pulled
-  # too: the scenarios start from it or compare with it. So is the published 1.0.0 (make
-  # compat-upgrade-from): the upgrade scenario starts from it and hands its database to the Go image,
-  # which then rotates the key (compat-go sets COMPAT_UPGRADE_FROM, see COMPAT_GO_UPGRADE_FROM). On both architectures, each building the Go image
-  # natively on its own runner and pulling the reference for that architecture:
-  # TestSearchStoredVectors compares the stored vectors with the reference's on the same machine, and
-  # they must be equal on arm64 and on amd64. Not a required check.
-  compat-go:
+  # The reference leg: the same suite with the published 1.0.1 (pinned by digest) as the image under
+  # test (make compat-reference-run sets its CLI, an empty COMPAT_FIXED and the upgrade source with
+  # its CLI), so every reference branch of the decided deviations stays asserted, the upgrade from
+  # the published 1.0.0 runs too, and the vector and ranking comparisons are determinism checks. On
+  # both architectures.
+  compat-reference:
     needs: [go]
-    name: compat-go (${{ matrix.arch }})
+    name: compat-reference (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     strategy:
@@ -209,32 +193,23 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      # The version comes from VERSION, no longer from node; the Node setup stays for now.
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 22
       - run: make compat-reference
       - run: make compat-upgrade-from
-      - run: make compat-image-go
-      # The embedder's vectors against the reference image's, in containers of this runner's architecture
-      # (the Go dependencies are fetched first: the container has no network).
-      - run: go mod download
-      - run: make go-test-onnx-parity
-      - run: make compat-go
+      - run: make compat-reference-run
         env:
           COMPAT_LOG_DIR: ${{ runner.temp }}/compat-logs
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: compat-go-app-logs-${{ matrix.arch }}
+          name: compat-reference-app-logs-${{ matrix.arch }}
           path: ${{ runner.temp }}/compat-logs
           if-no-files-found: ignore
           retention-days: 7
 
   # The browser flows of the web UI (e2e/flows, Playwright with Chromium) against the image built from
-  # this tree, orchestrated from Go (compat/e2e, tags compat and e2e) so that the same flows judge the
-  # Go server later. Separate from the `e2e` job above, which runs e2e/csp.spec.ts against the compose
-  # box. arm64 only, like the cheaper half of `compat`.
+  # this tree (make compat-image) with every decided deviation, orchestrated from Go (compat/e2e, tags
+  # compat and e2e), plus the control API's own tests. Separate from the `e2e` job above, which runs
+  # e2e/csp.spec.ts against the compose box. arm64 only.
   e2e-flows:
     needs: [go]
     runs-on: ubuntu-24.04-arm
@@ -251,7 +226,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec playwright install --with-deps chromium
-      - run: make compat-image-ts
+      - run: make compat-image
       - run: make e2e-flows
         env:
           COMPAT_LOG_DIR: ${{ runner.temp }}/compat-logs
@@ -263,41 +238,6 @@ jobs:
           name: e2e-flows-results
           path: |
             ${{ runner.temp }}/e2e-flows-results
-            ${{ runner.temp }}/compat-logs
-          if-no-files-found: ignore
-          retention-days: 7
-
-  # All twelve browser flows against the Go image (make e2e-flows-go lists them; since milestone 6 the token on /mcp
-  # and the call through /mcp with the call log are included). Not a required check; arm64 only.
-  e2e-flows-go:
-    needs: [go]
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 40
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm exec playwright install --with-deps chromium
-      # Only the Go image: every stack of TestBrowserFlows boots COMPAT_IMAGE, and nothing in
-      # compat/e2e compares with the reference or starts from another image.
-      - run: make compat-image-go
-      - run: make e2e-flows-go
-        env:
-          COMPAT_LOG_DIR: ${{ runner.temp }}/compat-logs
-          E2E_OUTPUT_DIR: ${{ runner.temp }}/e2e-flows-go-results
-      - if: failure()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: e2e-flows-go-results
-          path: |
-            ${{ runner.temp }}/e2e-flows-go-results
             ${{ runner.temp }}/compat-logs
           if-no-files-found: ignore
           retention-days: 7

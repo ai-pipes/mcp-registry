@@ -4,7 +4,10 @@
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "types": ["node", "vite-plus/client"],
     "jsx": "react-jsx",
-    "paths": { "@/*": ["./src/*"] }
+    "paths": {
+      "@/*": ["./src/*"]
+    }
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx", "test/**/*.ts", "test/**/*.tsx", "vite.config.ts"]
+  "include": ["src/**/*.ts", "src/**/*.tsx", "test/**/*.ts", "test/**/*.tsx", "vite.config.ts"],
+  "exclude": ["test/architecture/fixtures"]
 }

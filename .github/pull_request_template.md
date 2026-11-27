@@ -8,7 +8,7 @@
 
 ## Checklist
 
-- [ ] `pnpm verify` is green locally.
+- [ ] `make go-verify` and `pnpm verify` are green locally (and the suites the change touches: `make compat`, `make e2e-flows`, the smoke scripts).
 - [ ] New behaviour is covered by tests written first; bug fixes include a regression test.
 - [ ] No architecture, lint, coverage or CSP rule was weakened.
 - [ ] No secrets, tokens or call payloads are logged or returned to clients.

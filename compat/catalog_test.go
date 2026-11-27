@@ -13,7 +13,7 @@ package compat_test
 // the Gitea fixture is 80 KB). Three stacks in all.
 //
 // Source cases that are not ported (they need the app's internals, not its outside):
-//   - pg-catalog.int.test.ts "round-trips a server, including the sealed secret bytes" and
+//   - v1.0.1:apps/server/test/catalog/pg-catalog.int.test.ts "round-trips a server, including the sealed secret bytes" and
 //     "stores the sealed bytes verbatim": sealed bytes are internal; the round trip of every
 //     field through the REST API and "the stored secret is not the plaintext" are ported.
 //   - "writes events to the outbox in the same call", "a taken slug ... writes no event",
@@ -29,7 +29,7 @@ package compat_test
 //     attempts with a controlled finish order.
 //   - "applySnapshot / saveSyncState / save of an unknown server throws not_found": the REST
 //     equivalents (404) are ported.
-//   - mcp-upstream-client.int.test.ts "returns an image block byte for byte": the fake upstream
+//   - v1.0.1:apps/server/test/upstream/mcp-upstream-client.int.test.ts "returns an image block byte for byte": the fake upstream
 //     has no image mode and the pass-through of results is a gateway scenario.
 //   - "a JSON-RPC internal error ... is rejected too": its tools/call half is ported (-32603 in
 //     TestCatalogServers, subtest "upstream calls"); the listTools half is not, the fake can only reject tools/call.
@@ -294,15 +294,22 @@ func catalogSyncUser(t *testing.T, s *harness.Stack, slug string) string {
 	return *id
 }
 
+// catalogDeliveryLimit bounds catalogWaitDelivered.
+const catalogDeliveryLimit = 60 * time.Second
+
 // catalogWaitDelivered waits until every event of the outbox has been delivered to its
 // subscribers (platform.outbox.processed_at is set). A search assertion that follows a change
 // which does not alter the number of documents (a changed description, a hide that is followed by
 // a sync, an access change) cannot use the row count as its signal: without this wait it could
 // run against the index as it was before the change, and a negative assertion would pass for the
 // wrong reason. The events of the change are already written when its API call returns.
+//
+// The bound is a minute, not Eventually's 15 s: indexing a whole recorded catalog (84 tools, one
+// embedding each) on a loaded host ran out of 15 s on either image and passed on a rerun. It is a
+// wait bound, not an expectation: a stuck outbox is only reported later.
 func catalogWaitDelivered(t *testing.T, s *harness.Stack) {
 	t.Helper()
-	harness.Eventually(t, "every outbox event to be delivered (platform.outbox.processed_at set)", func() bool {
+	harness.EventuallyWithin(t, "every outbox event to be delivered (platform.outbox.processed_at set)", catalogDeliveryLimit, func() bool {
 		var n int
 		err := s.DB.QueryRow(t.Context(), "select count(*) from platform.outbox where processed_at is null").Scan(&n)
 		return err == nil && n == 0

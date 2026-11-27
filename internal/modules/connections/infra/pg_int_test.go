@@ -66,7 +66,7 @@ func save(t *testing.T, s Stores, c *domain.Connection) {
 }
 
 // Rows written by hand exactly as the TypeScript server writes them (the upsert of
-// pg-connections.ts with a Buffer, a Date with milliseconds, nulls) rehydrate.
+// v1.0.1:apps/server/src/modules/connections/infrastructure/pg-connections.ts with a Buffer, a Date with milliseconds, nulls) rehydrate.
 func TestRowsWrittenLikeTypeScriptRehydrate(t *testing.T) {
 	pool, s := setup(t)
 	ctx := ctxT(t)

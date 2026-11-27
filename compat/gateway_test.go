@@ -5,7 +5,7 @@ package compat_test
 // Gateway scenarios: what call_tool does between the agent and the upstream. The result goes
 // through unchanged, the arguments are checked against the tool's inputSchema, the daily limit is
 // counted per person and server, every call leaves one row in the call log (no arguments, no
-// results), and an unexpected failure never leaks. Source: call.int.test.ts. The protocol, the
+// results), and an unexpected failure never leaks. Source: v1.0.1:apps/server/test/gateway/call.int.test.ts. The protocol, the
 // meta-tools and the surface are in mcp_test.go; the call log and audit REST endpoints are in
 // gateway_rest_test.go.
 //

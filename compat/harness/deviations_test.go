@@ -47,6 +47,14 @@ func TestFixedFollowsTheEnvironment(t *testing.T) {
 	if (&Stack{}).Fixed(DevOAuthStateKept) {
 		t.Fatal("a stack without COMPAT_FIXED reports a deviation as fixed")
 	}
+	t.Setenv(FixedEnv, "")
+	if f, err := fixedFromEnv(); err != nil || len(f) != 0 {
+		t.Fatalf("COMPAT_FIXED set and empty: %v %v, want none (the reference)", f, err)
+	}
+	_ = os.Unsetenv(FixedEnv) // t.Setenv above restores it after the test
+	if f, err := fixedFromEnv(); err != nil || len(f) != len(AllDeviations) {
+		t.Fatalf("COMPAT_FIXED unset: %v %v, want all (the image built from this tree)", f, err)
+	}
 	t.Setenv(FixedEnv, "bogus")
 	if _, err := fixedFromEnv(); err == nil {
 		t.Fatal("an unknown id was accepted")

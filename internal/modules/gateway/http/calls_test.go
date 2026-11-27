@@ -1,6 +1,6 @@
 package http_test
 
-// GET /api/calls (calls.ts, inventory 6.1): the guards, the query as zod reads it (paths of the
+// GET /api/calls (v1.0.1:apps/server/src/modules/gateway/interfaces/http/calls.ts, inventory 6.1): the guards, the query as zod reads it (paths of the
 // first issue, compat TestGatewayCallsAPI), the filters handed to the use case, the response.
 
 import (

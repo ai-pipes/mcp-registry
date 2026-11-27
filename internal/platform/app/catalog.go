@@ -80,7 +80,7 @@ func (w catalogWiring) module() Module {
 	}
 }
 
-// syncAll is the job of scheduler.ts syncAll: every active server, at start and then every
+// syncAll is the job of v1.0.1:apps/server/src/platform/scheduler.ts syncAll: every active server, at start and then every
 // SYNC_INTERVAL_HOURS (after the run ends). A failure is logged here and does not stop the
 // schedule; one caused by the shutdown is left to the scheduler, which does not log it (and a
 // run in flight is cancelled through ctx, with its upstream calls).

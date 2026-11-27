@@ -11,8 +11,9 @@ package compat_test
 // of the old image's CLI) to the CLI of the image under test (COMPAT_CLI, see harness.DefaultCLI).
 // With the default (the same image on both sides) this is a RESTART test: the app is
 // stopped and started again on its database. It is the real upgrade test when COMPAT_UPGRADE_FROM
-// names the TypeScript 1.x image: make compat-go sets the published 1.0.0 (UPGRADE_FROM_IMAGE in the
-// Makefile) with the Go image under test, and CI's reference leg the same 1.0.0 with the reference.
+// names the TypeScript 1.x image: make compat sets the published 1.0.0 (UPGRADE_FROM_IMAGE in the
+// Makefile) with the image built from this tree under test, and make compat-reference-run the same
+// 1.0.0 with the reference under test.
 //
 // What the old image creates: a shared_secret server with a secret, a pat_user server with a
 // member's personal token, an oauth_user server with the member's connection (so a sealed access

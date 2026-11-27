@@ -8,10 +8,10 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/ai-pipes/mcp-registry/apps/server/migrations"
 	"github.com/ai-pipes/mcp-registry/internal/platform/crypto"
 	"github.com/ai-pipes/mcp-registry/internal/platform/migrate"
 	"github.com/ai-pipes/mcp-registry/internal/platform/pgtest"
+	"github.com/ai-pipes/mcp-registry/migrations"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 

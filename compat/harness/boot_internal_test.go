@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -292,25 +293,27 @@ func TestCheckUpdate(t *testing.T) {
 		name                             string
 		update                           bool
 		reference, referenceImage, image string
+		fixed                            int    // deviations COMPAT_FIXED selects
 		wantErr                          string // "" = allowed
 	}{
-		{"no update needs nothing", false, "", "", "go-image:1", ""},
-		{"update without the reference flag", true, "", "", defaultReferenceImage, "COMPAT_REFERENCE=1"},
-		{"update of the default reference", true, "1", "", defaultReferenceImage, ""},
-		{"the default image under test is not the reference", true, "1", "", defaultImage, "reference image is \"" + defaultReferenceImage + "\""},
-		{"the reference by tag alone is not the pinned one", true, "1", "", "ghcr.io/ai-pipes/mcp-registry:1.0.1", "reference image is \"" + defaultReferenceImage + "\""},
-		{"update of another image with only the flag", true, "1", "", "go-image:1", "reference image is \"" + defaultReferenceImage + "\""},
-		{"update of the named reference image", true, "1", pinnedRef, pinnedRef, ""},
-		{"the default is not the reference once another is named", true, "1", pinnedRef, defaultReferenceImage, "reference image is \"" + pinnedRef + "\""},
-		{"another image than the named one", true, "1", pinnedRef, "go-image:1", "reference image is \"" + pinnedRef + "\""},
-		{"a named reference without a digest", true, "1", "ts-ref:7", "ts-ref:7", "pinned by digest"},
-		{"the Go image named as the reference", true, "1", "go-image:1", "go-image:1", "pinned by digest"},
-		{"a digest that is not sha256", true, "1", "ts-ref@md5:abc", "ts-ref@md5:abc", "pinned by digest"},
-		{"the flag must be exactly 1", true, "true", "", defaultReferenceImage, "COMPAT_REFERENCE=1"},
+		{"no update needs nothing", false, "", "", "go-image:1", 0, ""},
+		{"update without the reference flag", true, "", "", defaultReferenceImage, 0, "COMPAT_REFERENCE=1"},
+		{"update of the default reference", true, "1", "", defaultReferenceImage, 0, ""},
+		{"the default image under test is not the reference", true, "1", "", defaultImage, 0, "reference image is \"" + defaultReferenceImage + "\""},
+		{"the reference by tag alone is not the pinned one", true, "1", "", "ghcr.io/ai-pipes/mcp-registry:1.0.1", 0, "reference image is \"" + defaultReferenceImage + "\""},
+		{"update of another image with only the flag", true, "1", "", "go-image:1", 0, "reference image is \"" + defaultReferenceImage + "\""},
+		{"update of the named reference image", true, "1", pinnedRef, pinnedRef, 0, ""},
+		{"the default is not the reference once another is named", true, "1", pinnedRef, defaultReferenceImage, 0, "reference image is \"" + pinnedRef + "\""},
+		{"another image than the named one", true, "1", pinnedRef, "go-image:1", 0, "reference image is \"" + pinnedRef + "\""},
+		{"a named reference without a digest", true, "1", "ts-ref:7", "ts-ref:7", 0, "pinned by digest"},
+		{"the Go image named as the reference", true, "1", "go-image:1", "go-image:1", 0, "pinned by digest"},
+		{"a digest that is not sha256", true, "1", "ts-ref@md5:abc", "ts-ref@md5:abc", 0, "pinned by digest"},
+		{"the flag must be exactly 1", true, "true", "", defaultReferenceImage, 0, "COMPAT_REFERENCE=1"},
+		{"the reference with decided deviations selected", true, "1", "", defaultReferenceImage, 12, "COMPAT_FIXED= (empty)"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			err := checkUpdate(c.update, c.reference, c.referenceImage, c.image)
+			err := checkUpdate(c.update, c.reference, c.referenceImage, c.image, c.fixed)
 			switch {
 			case c.wantErr == "" && err != nil:
 				t.Fatalf("refused: %v", err)
@@ -322,6 +325,7 @@ func TestCheckUpdate(t *testing.T) {
 }
 
 func TestCheckUpdateAllowedReadsTheEnvironment(t *testing.T) {
+	t.Setenv(FixedEnv, "")
 	t.Setenv("COMPAT_REFERENCE", "1")
 	t.Setenv("COMPAT_REFERENCE_IMAGE", "")
 	t.Setenv("COMPAT_IMAGE", "")
@@ -332,6 +336,11 @@ func TestCheckUpdateAllowedReadsTheEnvironment(t *testing.T) {
 	if err := CheckUpdateAllowed(true); err != nil {
 		t.Fatalf("the default reference under test: %v", err)
 	}
+	_ = os.Unsetenv(FixedEnv) // t.Setenv above restores it after the test
+	if err := CheckUpdateAllowed(true); err == nil || !strings.Contains(err.Error(), "COMPAT_FIXED") {
+		t.Fatalf("-update with COMPAT_FIXED unset (all) was not refused: %v", err)
+	}
+	t.Setenv(FixedEnv, "")
 	t.Setenv("COMPAT_IMAGE", "go-image:1")
 	if err := CheckUpdateAllowed(true); err == nil {
 		t.Fatal("-update was allowed against an image that is not the reference")

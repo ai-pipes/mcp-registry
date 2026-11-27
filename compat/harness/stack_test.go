@@ -32,6 +32,7 @@ func TestStackBootsAndIsReachableBothWays(t *testing.T) {
 }
 
 func TestUpdateRefusesNonReferenceImage(t *testing.T) {
+	t.Setenv(harness.FixedEnv, "")
 	t.Setenv("COMPAT_IMAGE", "")
 	t.Setenv("COMPAT_REFERENCE_IMAGE", "")
 	t.Setenv("COMPAT_REFERENCE", "")
@@ -202,7 +203,7 @@ func testImage() string {
 	if image := os.Getenv("COMPAT_IMAGE"); image != "" {
 		return image
 	}
-	return "mcp-registry:compat-ts"
+	return "mcp-registry:compat"
 }
 
 func TestMCPRecordingHandsOverTheRawAnswers(t *testing.T) {

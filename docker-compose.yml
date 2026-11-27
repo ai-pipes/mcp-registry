@@ -5,6 +5,9 @@ services:
     build: .
     init: true
     restart: unless-stopped
+    # The server stops within 10 s of SIGTERM (requests in flight finish first); Docker's default
+    # wait is also 10 s, so give it a margin before the kill.
+    stop_grace_period: 15s
     env_file: ${ENV_FILE:-.env}
     environment:
       # The container always listens on 3000; PORT in .env picks the host port below.

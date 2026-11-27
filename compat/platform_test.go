@@ -7,27 +7,27 @@ package compat_test
 // HTTP, the CLI, the container's exit code and log, and SQL.
 //
 // Source cases that are not ported (they need the app's internals, not its outside):
-//   - platform.int.test.ts "/healthz answers 503 when the database is down": the stack's database
+//   - v1.0.1:apps/server/test/http/platform.int.test.ts "/healthz answers 503 when the database is down": the stack's database
 //     is shared by every request; stopping it would be a different scenario (and a restart one).
-//   - platform.int.test.ts "caps request bodies" without Content-Length (streaming): the harness
+//   - v1.0.1:apps/server/test/http/platform.int.test.ts "caps request bodies" without Content-Length (streaming): the harness
 //     client always sends Content-Length; the Content-Length case is ported.
-//   - platform.int.test.ts "logs method, path and status, never headers": pinned in
+//   - v1.0.1:apps/server/test/http/platform.int.test.ts "logs method, path and status, never headers": pinned in
 //     TestPlatformAccessLog below instead (through docker logs).
-//   - csp.test.ts: a unit test of the middleware; the same value is asserted end to end on
+//   - v1.0.1:apps/server/test/http/csp.test.ts: a unit test of the middleware; the same value is asserted end to end on
 //     five kinds of response in TestPlatformSecurityHeaders.
-//   - migrate.int.test.ts "rolls back a failing migration", "applies a new migration on top of
+//   - v1.0.1:apps/server/test/platform/migrate.int.test.ts "rolls back a failing migration", "applies a new migration on top of
 //     the known ones": they hand migrate() a directory of extra migration files, which a built
 //     image does not accept. The migrations and key-check tests of the Go server cover them.
-//   - key-check.int.test.ts "two concurrent first checks both succeed and leave one row" and
+//   - v1.0.1:apps/server/test/platform/key-check.int.test.ts "two concurrent first checks both succeed and leave one row" and
 //     "keeps working data from before the check existed" (with a sealed server secret): racing
 //     two app processes on one empty database is not reproducible from the outside. The
 //     "first start after the check did not exist" case is ported by deleting the row.
-//   - bootstrap.int.test.ts "serves /mcp with a token when OIDC is not configured": covered by
+//   - v1.0.1:apps/server/test/platform/bootstrap.int.test.ts "serves /mcp with a token when OIDC is not configured": covered by
 //     the control of TestPlatformBearerNeverOpensTheWebAPI (a token opens /mcp, tools/list shows
 //     four tools) on the shared stack, which has no OIDC, and by /api/auth/methods in
 //     TestFirstStartAnnouncementNeedsAnEmptyDatabaseAndNoOIDC (oidc=true there; the shared
 //     stack's oidc=false is asserted below in TestPlatformMethodsWithoutOIDC).
-//   - bootstrap.int.test.ts "logs and continues when the announcement fails": needs a failing
+//   - v1.0.1:apps/server/test/platform/bootstrap.int.test.ts "logs and continues when the announcement fails": needs a failing
 //     user repository. "prints nothing when other people exist" and "prints nothing and creates
 //     nobody when OIDC is configured" are ported (TestFirstStartAnnouncement, subtests).
 

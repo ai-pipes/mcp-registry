@@ -27,7 +27,7 @@ var validEnv = map[string]string{
 	"SECRETS_KEY":  "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
 }
 
-// Like cli.ts, a command is looked up after the migrations: with the database unreachable the
+// Like v1.0.1:apps/server/src/platform/cli.ts, a command is looked up after the migrations: with the database unreachable the
 // run is an operation failure (exit 1, no usage), whatever the command is called. The unknown
 // command with a database (exit 2) is in main_int_test.go.
 func TestACommandNeedsTheDatabaseFirst(t *testing.T) {

@@ -11,7 +11,7 @@ import (
 )
 
 // commands are the operator commands of the identity module. The usage entries are USAGE of
-// cli-commands.ts; create-user follows the decided deviation create-user-keeps-role.
+// v1.0.1:apps/server/src/platform/cli-commands.ts; create-user follows the decided deviation create-user-keeps-role.
 func (w identityWiring) commands() []CLICommand {
 	return []CLICommand{
 		{Name: "create-user", Usage: `  create-user --sub <sub> --name <name> [--admin | --member]

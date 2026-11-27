@@ -1,6 +1,59 @@
 # Changelog
 
-All notable changes to this project are documented in this file. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses [semantic versioning](https://semver.org). What stays stable within 1.x is described in the README, section "Versioning and upgrades".
+All notable changes to this project are documented in this file. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses [semantic versioning](https://semver.org). What stays stable within a major version is described in the README, section "Versioning and upgrades".
+
+## [2.0.0] - 2026-11-27
+
+The gateway is rewritten in Go. Same environment variables, same database (no migration: 1.0.x tables are read as they are, and 1.0.1 can still start on the database afterwards), same `/mcp`, web UI, tokens, sessions and connections. Upgrading: back up the database and the key, change the CLI calls in your scripts (below), replace the image, start. The README section "Upgrading from 1.x to 2.0" walks through it, "Going back" covers 2.0.0 -> 1.0.1. The 1.x line receives no further releases.
+
+### Breaking
+
+- The operator CLI is `mcp-registry <command>` (on the `PATH` of the image): `docker compose exec app mcp-registry login-link <sub>`. `node dist/cli.js <command>` fails, because the image has no Node.
+- The image contains no `node`, `curl` or `wget`. A compose `command:` or `healthcheck:` override, or a platform health probe, that runs one of them breaks; the image's own `HEALTHCHECK` runs `mcp-registry healthcheck`.
+
+### Added
+
+- `mcp-registry healthcheck`: exit 0 when `GET /healthz` on `127.0.0.1:$PORT` answers 200, else exit 1 with one short line on stderr. Needs no configuration, no database and no key; the image's `HEALTHCHECK` uses it (every 10 s, 5 s timeout, 30 s start period, 3 retries, as in 1.x).
+- `create-user --member` demotes an existing admin (see "Changed").
+- The licence texts of everything the image redistributes are in `/usr/share/licenses/mcp-registry/` (`THIRD_PARTY_NOTICES` and `third_party/`).
+
+### Changed
+
+- The quick start's default image is `ghcr.io/ai-pipes/mcp-registry:2` (the compose file of `v2.0.0`). The tag `1` stays on 1.0.1, so an installation on `1` moves to 2.x only when its tag is changed; `latest` moves to 2.0.0.
+- `create-user` keeps an existing person's role unless `--admin` (promote) or `--member` (demote) is given; 1.x demoted an existing admin when `--admin` was missing. A new person is still a member without `--admin`.
+- `create-server` exits with code 1 when the first sync fails; the server is still created and the output says the sync failed (1.x exited 0).
+- `reindex` prints `reindexed <N> tool(s)`, N being the number of indexed tools (1.x printed the same number as `server(s)`). When the embedder fails it prints `error: unexpected failure` and exits 1 instead of a stack trace; the text rows are written either way.
+- The server does not listen until the embedding model is loaded, so until then every request, not only `/healthz`, is refused at the TCP level (normally a couple of seconds; the wait is bounded at 2 minutes, then the start goes on, the port opens and search stays text-only until the model loads, with one `warn` record `search: local embedder unavailable, ...`), and the first search after a start already uses vectors; 1.x listened at once and searched by text alone until its model had loaded. The image's `HEALTHCHECK` reports `starting` during its 30 s start period and `unhealthy` only if the load hangs, after about a minute. A model that fails to load is retried after a pause (5 s, doubling up to 5 minutes) instead of on every call.
+- `EMBEDDER=openai-compatible` without `EMBEDDER_URL` or `EMBEDDER_MODEL` is an ordinary `Invalid configuration:` error naming both variables (1.x crashed with an unhandled exception); `OIDC_SCOPES` is validated only when OIDC is configured.
+- The `auth.login` audit record of an OIDC sign-in carries `via: "oidc"` (1.x: empty meta).
+- Every response carries `X-Request-Id`, the refusal of a foreign `Host` on `/mcp` included; the `429` for repeated failed token checks on `/mcp` carries `Retry-After`.
+- An OAuth callback that arrives under another person's session is refused (`invalid_state`) without spending the starter's pending connect, so the starter can still complete it. A forged OIDC callback no longer breaks a sign-in in progress: the browser's sign-in binding is cleared only by a callback whose `state` matches it.
+- Search keeps a tool's stored vector when re-embedding it fails (the text is updated and the vector is re-made later), and a late or repeated "tools removed" event no longer deletes a tool that came back.
+- The working directory of the image is `/` (1.x: `/app/apps/server`): relative paths for `create-server --json` or a `*_FILE` variable resolve from `/`.
+- The image no longer sets `PORT`, `MODEL_DIR`, `NODE_ENV` or `HF_HUB_OFFLINE` (the defaults are unchanged: port 3000, the model in `/app/models`, no network for the model); it sets `MALLOC_ARENA_MAX=2`. It still runs as uid and gid 1000.
+- Outbound TLS trusts the image's system CA store. `NODE_EXTRA_CA_CERTS` has no effect any more; mount a CA bundle and set `SSL_CERT_FILE` (or `SSL_CERT_DIR`).
+- On `SIGTERM` the server stops accepting at once, gives calls in flight 5 s to finish (the rest answer `<Server> is unavailable.` and are logged as `transport_error`), cancels a running scheduled sync and exits within 10 s. Both compose files set `stop_grace_period: 15s`; give `docker run` `--stop-timeout 15`.
+- `sync`, `create-server`, `reindex`, `rotate-secrets-key` and `reset-key-check` stop cleanly on Ctrl-C or `SIGTERM` (`error: interrupted`, exit 1; each says what was already written) instead of being killed wherever they were; Ctrl-C at the `create-server` secret prompt creates nothing. An unexpected CLI error prints `error: unexpected failure` instead of a stack trace.
+- The `SECRETS_KEY_OLD is set` start warning names `mcp-registry rotate-secrets-key`.
+- `call_tool` argument validation (advisory: the upstream validates too) uses another JSON Schema validator: refusal messages carry the location (a JSON pointer) and the library's wording but never an argument value; `uniqueItems`, `multipleOf` and some formats are not checked (`pattern` stays unchecked, as in 1.x). A schema that is very large or deep (over 256 KiB, over 100 levels, over 10 000 nodes after expanding references), recursive, or uses `$dynamicRef`/`$recursiveRef`, and arguments over 256 KiB or too costly to check against their schema, are passed on unchecked instead of risking a slow check.
+- `/mcp` answers a classic `POST` with `application/json` instead of an SSE stream, runs the requests of a batch one after another (at most 100 per batch) and echoes request ids exactly as the client wrote them.
+- Log records have no `pid` and `hostname`; error fields are `{type, label}` without the message (a stack only for panics); a failed start is one `fatal` record and exit code 1.
+- Database connection through `pgx`: more `PG*` environment variables are read, without an `sslmode` the connection tries TLS first and falls back (`prefer`), URL options of the 1.x client (`max`, `prepare`, `ssl`, ...) are dropped or translated, and the pool holds 10 connections.
+- HTTP: request headers must arrive within 10 s, idle keep-alive connections close after 60 s; paths are not normalised (`/assets/../index.html` is 404), and dotfiles in the web root are not served. `PUBLIC_URL`, `OIDC_ISSUER` and `EMBEDDER_URL` need a host (`http:example.com` or `file:///x` is a configuration error).
+- OIDC: the token exchange, key set and UserInfo time out after 10 s (1.x: 30 s); a wrong `iss` on the callback is refused before the code is spent; the ID token needs no `iat` and its `exp` gets no clock tolerance.
+- A sync takes at most 10 000 tools from one upstream; an upstream that sends more than 32 requests of its own during one operation fails it.
+- The image is about 300 MB (1.x: about 890 MB). Measured on one arm64 machine, it uses less memory and answers concurrent `call_tool` and `search_tools` faster than 1.0.0 (`make load-compare`; CONTRIBUTING.md has the numbers).
+
+### Removed
+
+- The TypeScript server and the Node runtime from the image; `node dist/cli.js`.
+
+### Security
+
+- The OIDC ID token's signature is verified against the provider's key set (1.x did not verify it).
+- Secrets, tokens, sign-in codes, keys and sealed values are held in types that print as `[Redacted]` in any log record, error or dump; a repository test fails on a code path that would pass one to a printer or the database driver unrevealed.
+- The argument validator's bounds above keep one hostile tool schema or argument from tying up the server, and its refusals never repeat a value the agent sent.
+- `call_tool` reads a shared secret together with the server configuration it belongs to, in one read: an administrator's edit between two reads can no longer send a new secret to an old address (or the reverse).
 
 ## [1.0.1] - 2026-11-20
 
@@ -59,6 +112,7 @@ Initial public release.
 - Local embeddings (`multilingual-e5-small`, baked into the image) or an OpenAI-compatible embeddings API.
 - Call log and audit log of admin actions; strict CSP web UI.
 
+[2.0.0]: https://github.com/ai-pipes/mcp-registry/compare/v1.0.1...v2.0.0
 [1.0.1]: https://github.com/ai-pipes/mcp-registry/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/ai-pipes/mcp-registry/compare/v0.1.0...v1.0.0
 [0.1.0]: https://github.com/ai-pipes/mcp-registry/releases/tag/v0.1.0

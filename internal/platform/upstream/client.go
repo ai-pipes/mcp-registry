@@ -43,7 +43,7 @@ const (
 	maxTools = 10000
 
 	// clientVersion is the fixed clientInfo.version the TypeScript client sends (CLIENT_INFO in
-	// mcp-upstream-client.ts), unrelated to the gateway's version.
+	// v1.0.1:apps/server/src/platform/upstream/mcp-upstream-client.ts), unrelated to the gateway's version.
 	clientVersion = "1.0.0"
 
 	// maxRetries bounds how often the SDK resumes an interrupted SSE answer (the TypeScript

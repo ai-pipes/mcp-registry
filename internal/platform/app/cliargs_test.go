@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// parseArgs mirrors node:util parseArgs({strict: true, allowPositionals: true}) as cli-commands.ts
+// parseArgs mirrors node:util parseArgs({strict: true, allowPositionals: true}) as v1.0.1:apps/server/src/platform/cli-commands.ts
 // uses it; only the message shape of its own errors is pinned by the compatibility suite.
 func TestParseArgs(t *testing.T) {
 	spec := argSpec{Strings: []string{"sub", "name"}, Bools: []string{"admin", "member"}}
@@ -46,7 +46,7 @@ func TestParseArgs(t *testing.T) {
 
 // Each expected text is pasted from Node 22.21 (the image's major version):
 // util.parseArgs({args, options: {sub: string, name: string, admin: boolean}, strict: true,
-// allowPositionals: true}), e.message. cli-commands.ts prints `error: ${error.message}`.
+// allowPositionals: true}), e.message. v1.0.1:apps/server/src/platform/cli-commands.ts prints `error: ${error.message}`.
 func TestParseArgsRefusalsAreTheTextsOfNode(t *testing.T) {
 	spec := argSpec{Strings: []string{"sub", "name"}, Bools: []string{"admin"}}
 	const unknownTail = ". To specify a positional argument starting with a '-', place it at the end of the command after '--', as in '-- \""

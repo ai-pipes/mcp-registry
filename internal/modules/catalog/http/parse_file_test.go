@@ -15,7 +15,7 @@ import (
 	cathttp "github.com/ai-pipes/mcp-registry/internal/modules/catalog/http"
 )
 
-// formatIssues is how cli-commands.ts prints the issues of a server file.
+// formatIssues is how v1.0.1:apps/server/src/platform/cli-commands.ts prints the issues of a server file.
 func formatIssues(issues []app.Issue) string {
 	var b strings.Builder
 	for _, i := range issues {

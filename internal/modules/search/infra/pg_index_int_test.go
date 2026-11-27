@@ -825,7 +825,7 @@ func TestVectorCandidatesAgreeWithAnUpsertedVectorAcrossFormats(t *testing.T) {
 	}
 }
 
-// referenceFTS is the TypeScript statement of ftsCandidates (pg-search-index.ts), verbatim except
+// referenceFTS is the TypeScript statement of ftsCandidates (v1.0.1:apps/server/src/modules/search/infrastructure/pg-search-index.ts), verbatim except
 // for the rank expression, which the test substitutes to prove its data tells the variants apart.
 const referenceFTS = `
 with q as (
@@ -876,7 +876,7 @@ func TestFTSRankIsCoverDensityWithoutNormalisation(t *testing.T) {
 	}
 }
 
-// referenceUpsert is the TypeScript upsert (pg-search-index.ts) with postgres.js numbering: one
+// referenceUpsert is the TypeScript upsert (v1.0.1:apps/server/src/modules/search/infrastructure/pg-search-index.ts) with postgres.js numbering: one
 // parameter per interpolation (ref, server, title, description, body, then the tsv's own).
 const referenceUpsert = `
 insert into search.documents

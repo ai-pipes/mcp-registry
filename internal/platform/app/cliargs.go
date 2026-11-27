@@ -8,7 +8,7 @@ import (
 )
 
 // argSpec is the options of a command, parsed like node:util parseArgs({strict: true,
-// allowPositionals: true}) in cli-commands.ts: long options only, `--name value` or `--name=value`
+// allowPositionals: true}) in v1.0.1:apps/server/src/platform/cli-commands.ts: long options only, `--name value` or `--name=value`
 // for a string, `--flag` for a boolean, `--` ends the options, a lone `-` is a positional.
 type argSpec struct {
 	Strings []string
@@ -83,7 +83,7 @@ func unknownOption(arg string) error {
 		"place it at the end of the command after '--', as in '-- \"" + name + "\"")
 }
 
-// expectPositionals is the count check of parse() in cli-commands.ts.
+// expectPositionals is the count check of parse() in v1.0.1:apps/server/src/platform/cli-commands.ts.
 func (p parsedArgs) expectPositionals(n int) error {
 	if len(p.positionals) != n {
 		return UsageError("expected " + strconv.Itoa(n) + " argument(s), got " + strconv.Itoa(len(p.positionals)))

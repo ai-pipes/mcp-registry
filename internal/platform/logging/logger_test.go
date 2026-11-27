@@ -248,7 +248,7 @@ func TestRedactionCoversNaturalSecretNames(t *testing.T) {
 	}
 }
 
-// Names the server logs today (apps/server/src and the Go platform) and natural ones for ids and
+// Names the server logs today (and the 1.x TypeScript server logged) and natural ones for ids and
 // counters must stay readable.
 func TestRedactionLeavesOrdinaryNamesAlone(t *testing.T) {
 	ordinary := []string{

@@ -4,7 +4,7 @@ package compat_test
 
 // Connections scenarios: a person's credentials for an upstream service (OAuth connect, personal
 // access tokens, refresh, revocation, config-change safety), driven through REST, MCP (call_tool),
-// SQL (time travel and "stored sealed" checks) and the fakes. Source: connections.int.test.ts.
+// SQL (time travel and "stored sealed" checks) and the fakes. Source: v1.0.1:apps/server/test/connections/connections.int.test.ts.
 //
 // Credential resolution happens when a tool is called, so the refresh rules are driven by
 // call_tool on an oauth_user server whose upstream is a fake: Upstream.Requests() and Calls() show exactly

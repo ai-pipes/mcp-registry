@@ -7,21 +7,21 @@ package compat_test
 // the test process.
 //
 // Source cases that are not ported (they need the app's internals, not its outside):
-//   - oidc.int.test.ts "PgSessionRepository.deleteDead removes idle and expired sessions only":
+//   - v1.0.1:apps/server/test/identity/oidc.int.test.ts "PgSessionRepository.deleteDead removes idle and expired sessions only":
 //     calls the repository with chosen cutoffs. The same housekeeping is ported through the
 //     scheduler's run at start (TestIdentityNoOIDC, "a restart prunes ...").
-//   - login-link.int.test.ts "consume returns the record once" and "deleteExpired removes only
+//   - v1.0.1:apps/server/test/identity/login-link.int.test.ts "consume returns the record once" and "deleteExpired removes only
 //     links at or past expires_at": repository calls; once-only is ported through the HTTP flow
 //     ("a used link"), and pruning through the restart case. The exact "at expires_at" boundary
 //     cannot be hit from outside (the clock is the database's now()).
-//   - oidc.int.test.ts "an sk_ token works on /mcp but never on /api/**": the refusal on /api/**
+//   - v1.0.1:apps/server/test/identity/oidc.int.test.ts "an sk_ token works on /mcp but never on /api/**": the refusal on /api/**
 //     for six endpoints is TestPlatformBearerNeverOpensTheWebAPI; here the token works on /mcp
 //     (MCP client), and is refused after revocation and after its owner is disabled.
-//   - oidc.int.test.ts "an identity provider that is down at startup ... the server works": ported
+//   - v1.0.1:apps/server/test/identity/oidc.int.test.ts "an identity provider that is down at startup ... the server works": ported
 //     on a stack whose provider is down from the start (TestIdentityOIDCProviderDownAtStart).
-//   - auth-link.test.ts "answers 429 with Retry-After when the limiter refuses" injects a limiter;
+//   - v1.0.1:apps/server/test/http/auth-link.test.ts "answers 429 with Retry-After when the limiter refuses" injects a limiter;
 //     it is ported end to end by really exhausting the limit (11 failures, TestIdentityNoOIDC).
-//   - auth-link.test.ts: the `Secure` flag of the session cookie is checked on the stack with
+//   - v1.0.1:apps/server/test/http/auth-link.test.ts: the `Secure` flag of the session cookie is checked on the stack with
 //     COOKIE_SECURE=true (TestIdentityOIDCProviderDownAtStart), not on the link flow itself.
 //
 // The brief and the shared context name the stored token table "api_tokens"; the image's table is

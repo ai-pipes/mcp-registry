@@ -9,8 +9,8 @@
 # Own compose project and port, so it never touches another deployment. With
 # QUICKSTART_IMAGE=<image> the stack runs that prebuilt image (nothing is built, the image is
 # never removed). QUICKSTART_CLI is how the operator CLI is invoked inside the app container
-# (default `node dist/cli.js`, the TypeScript image; `mcp-registry` for the Go image):
-#   QUICKSTART_IMAGE=mcp-registry:compat-go QUICKSTART_CLI=mcp-registry bash scripts/quickstart-smoke.sh
+# (default `mcp-registry`; the release workflow passes its IMAGE_CLI):
+#   QUICKSTART_IMAGE=mcp-registry:compat bash scripts/quickstart-smoke.sh
 # Needs docker, curl, openssl. The link code, cookie, token and keys are never printed.
 set -euo pipefail
 
@@ -31,7 +31,7 @@ else
   BUILD_IMAGE=1
 fi
 # The CLI command, split into words (no shell in between).
-read -r -a CLI <<<"${QUICKSTART_CLI:-node dist/cli.js}"
+read -r -a CLI <<<"${QUICKSTART_CLI:-mcp-registry}"
 [ "${#CLI[@]}" -gt 0 ] || { echo "QUICKSTART_CLI is empty" >&2; exit 2; }
 HEALTH_TIMEOUT=120
 CONTAINER_HEALTH_TIMEOUT=90
@@ -75,8 +75,8 @@ fail() {
 }
 
 # The image's own HEALTHCHECK must turn the container healthy (bounded). On a timeout the status
-# and the last health log entries are printed (the probes print no secret: the Go one prints one
-# short line, the TypeScript one nothing).
+# and the last health log entries are printed (the probe, `mcp-registry healthcheck`, prints one
+# short line and never a secret).
 wait_container_healthy() {
   local id status deadline=$((SECONDS + CONTAINER_HEALTH_TIMEOUT))
   id="$(compose ps -q app)"
@@ -133,8 +133,8 @@ grep -qE '^ +LOG_LEVEL: ""$' <<<"$cfg" || fail "an unset optional variable is no
 grep -qE '^ +SECRETS_KEY_OLD: ""$' <<<"$cfg" || fail "SECRETS_KEY_OLD is not passed through (empty) to the app service"
 grep -qE '^ +host_ip: 127\.0\.0\.1$' <<<"$cfg" || fail "the port is not published on 127.0.0.1 by default"
 cfg="$(unset MCP_REGISTRY_IMAGE; rendered)"
-grep -qF 'image: ghcr.io/ai-pipes/mcp-registry:1' <<<"$cfg" ||
-  fail "the default image is not ghcr.io/ai-pipes/mcp-registry:1"
+grep -qE '^ +image: ghcr\.io/ai-pipes/mcp-registry:2$' <<<"$cfg" ||
+  fail "the default image is not ghcr.io/ai-pipes/mcp-registry:2"
 cfg="$(unset PUBLIC_URL; export PORT=38081 BIND_ADDRESS=0.0.0.0; rendered)"
 grep -qE '^ +PUBLIC_URL: http://localhost:38081$' <<<"$cfg" || fail "PORT without PUBLIC_URL did not give PUBLIC_URL http://localhost:<PORT>"
 grep -qE '^ +host_ip: 0\.0\.0\.0$' <<<"$cfg" || fail "BIND_ADDRESS did not change the published address"
