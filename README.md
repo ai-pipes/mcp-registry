@@ -34,7 +34,7 @@ The link is in the `url` field of the log record and looks like `http://localhos
 - **A new link**, if the first one expired or was used by mistake:
 
   ```sh
-  docker compose -p mcp-registry exec app node dist/cli.js login-link local-admin
+  docker compose -p mcp-registry exec app mcp-registry login-link local-admin
   ```
 
   Until `local-admin` has signed in once, every start also logs a new link.
@@ -171,6 +171,8 @@ curl http://localhost:3000/healthz   # ok
 
 Compose runs the app and `pgvector/pgvector:pg17`; Postgres is not published. Migrations run on startup. A prebuilt image is published to `ghcr.io/ai-pipes/mcp-registry` for tagged releases.
 
+The image runs as uid and gid 1000, has no shell tools beyond Debian's base (no `curl`, no Node) and carries its own `HEALTHCHECK` (`mcp-registry healthcheck`). On `SIGTERM` the server stops taking requests, lets the ones in flight finish and exits within 10 seconds, which is also Docker's default wait before it kills a container: both compose files set `stop_grace_period: 15s`; with `docker run` pass `--stop-timeout 15`. Outbound TLS trusts the system CA store of the image: to trust an internal CA, mount its certificate bundle and point `SSL_CERT_FILE` at it (or mount the certificates into a directory named by `SSL_CERT_DIR`).
+
 ### First admin
 
 **With OIDC** (`OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` set): put yourself in the admin group of your provider (`OIDC_ADMIN_GROUP`, default `mcp-admins`) and sign in at `PUBLIC_URL`. Role and groups are taken from the provider on every login.
@@ -184,8 +186,8 @@ docker compose logs app | grep "one-time link"   # the link is in the "url" fiel
 The link looks like `https://mcp.example.com/login#link=ll_...`; it works once. The page asks for one confirmation click before it signs you in. The link is logged at `warn` level, so with `LOG_LEVEL` set to `error` or stricter use `login-link local-admin` instead. Until `local-admin` has signed in, every start logs a new link (each invalidates the previous one). To sign in again, or to let another person in, print a link with the CLI; `<sub>` is the person's subject ID (for `create-user`, any name you choose):
 
 ```sh
-docker compose exec app node dist/cli.js create-user --sub jane --name "Jane"   # new person; add --admin for an admin
-docker compose exec app node dist/cli.js login-link jane
+docker compose exec app mcp-registry create-user --sub jane --name "Jane"   # new person; add --admin for an admin
+docker compose exec app mcp-registry login-link jane
 ```
 
 `login-link` also works with OIDC configured (emergency access). Links are valid for 15 minutes and a person has at most one live link. Anyone who can read the container log right after the first start can use the link, so see [SECURITY.md](SECURITY.md#running-without-oidc). Without OIDC there is no group management: admins see every active server, members see servers open to everyone or to the login group. To move to OIDC later, see [SECURITY.md](SECURITY.md#switching-to-oidc-later).
@@ -193,7 +195,7 @@ docker compose exec app node dist/cli.js login-link jane
 With OIDC you can also create a person with the CLI, for example when the provider is down. `<sub>` is the person's subject ID at the provider:
 
 ```sh
-docker compose exec app node dist/cli.js create-user --sub <sub> --name "Jane" --admin
+docker compose exec app mcp-registry create-user --sub <sub> --name "Jane" --admin
 ```
 
 ### Tokens for agents
@@ -201,7 +203,7 @@ docker compose exec app node dist/cli.js create-user --sub <sub> --name "Jane" -
 In the UI, open **Tokens**, create a token and copy the command it shows. Or from the CLI:
 
 ```sh
-docker compose exec app node dist/cli.js create-token <sub> --name laptop
+docker compose exec app mcp-registry create-token <sub> --name laptop
 ```
 
 Then:
@@ -342,7 +344,7 @@ For an MCP server protected by one API key: auth mode `shared_secret`, header e.
 Servers can also be created from a JSON file (`ServerInput` in `packages/contracts/src/servers.ts`); the secret is read from stdin or an environment variable, never from the command line:
 
 ```sh
-docker compose exec -T app node dist/cli.js create-server --json /path/in/container/server.json \
+docker compose exec -T app mcp-registry create-server --json /path/in/container/server.json \
   --as <admin-sub> --secret-env UPSTREAM_KEY
 ```
 
@@ -350,25 +352,26 @@ docker compose exec -T app node dist/cli.js create-server --json /path/in/contai
 
 ### CLI
 
-Inside the container: `node dist/cli.js <command>` (same environment as the server). Exit codes: 0 success, 1 operation failed, 2 bad invocation.
+Inside the container: `mcp-registry <command>` (on the `PATH`, same environment as the server; `docker compose exec app mcp-registry <command>`). Exit codes: 0 success, 1 operation failed, 2 bad invocation.
 
-| Command                                                             | Purpose                                                                                                                      |
-| ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `create-user --sub <sub> --name <name> [--admin]`                   | Create or update a person as a first login would. Idempotent by `sub`; without `--admin` an existing admin becomes a member. |
-| `create-token <sub> --name <name>`                                  | Issue an `sk_` token and print the `claude mcp add` command.                                                                 |
-| `login-link <sub>`                                                  | Print a one-time sign-in link (15 minutes) for an existing, enabled person. For servers without OIDC, or emergency access.   |
-| `create-server --json <file> --as <admin-sub> [--secret-env <VAR>]` | Create a server and sync it. The secret comes from `<VAR>` or stdin.                                                         |
-| `sync <slug> [--as <admin-sub>]`                                    | Sync a server's tools (without `--as`: as the scheduler).                                                                    |
-| `reindex`                                                           | Rebuild the search index (if `search_tools` misses a tool that is in the catalog).                                           |
-| `rotate-secrets-key`                                                | Re-encrypt every stored secret from `SECRETS_KEY_OLD` to `SECRETS_KEY`. Safe to repeat.                                      |
-| `reset-key-check --yes`                                             | Remove the stored key check so the next start records the configured `SECRETS_KEY` (see "Recovering from a key mismatch").   |
-| `--version`                                                         | Print the gateway version (needs no configuration and no database).                                                          |
+| Command                                                             | Purpose                                                                                                                                                                |
+| ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `create-user --sub <sub> --name <name> [--admin \| --member]`       | Create or update a person as a first login would. Idempotent by `sub`; an existing person keeps their role unless `--admin` (promote) or `--member` (demote) is given. |
+| `create-token <sub> --name <name>`                                  | Issue an `sk_` token and print the `claude mcp add` command.                                                                                                           |
+| `login-link <sub>`                                                  | Print a one-time sign-in link (15 minutes) for an existing, enabled person. For servers without OIDC, or emergency access.                                             |
+| `create-server --json <file> --as <admin-sub> [--secret-env <VAR>]` | Create a server and sync it. The secret comes from `<VAR>` or stdin. Exit code 1 when the first sync fails (the server stays created; run `sync` later).               |
+| `sync <slug> [--as <admin-sub>]`                                    | Sync a server's tools (without `--as`: as the scheduler).                                                                                                              |
+| `reindex`                                                           | Rebuild the search index (if `search_tools` misses a tool that is in the catalog); prints `reindexed <N> tool(s)`.                                                     |
+| `rotate-secrets-key`                                                | Re-encrypt every stored secret from `SECRETS_KEY_OLD` to `SECRETS_KEY`. Safe to repeat.                                                                                |
+| `reset-key-check --yes`                                             | Remove the stored key check so the next start records the configured `SECRETS_KEY` (see "Recovering from a key mismatch").                                             |
+| `--version`                                                         | Print the gateway version (needs no configuration and no database).                                                                                                    |
+| `healthcheck`                                                       | The image's `HEALTHCHECK`: exit 0 when `GET /healthz` on `127.0.0.1:$PORT` answers 200, else 1 (needs no configuration).                                               |
 
 ### Rotating `SECRETS_KEY`
 
 1. Generate a new key and keep the old one until rotation is done.
 2. Set `SECRETS_KEY_OLD=<current key>`, `SECRETS_KEY=<new key>`, restart. Both keys open secrets meanwhile, so calls keep working; a warning is logged on each start.
-3. Run `node dist/cli.js rotate-secrets-key`. It reports how many server secrets and connections were re-sealed and a `key check:` line (`re-sealed`, `already current`, `none stored` or `cannot be read with either key`). Exit code 1 lists records that neither key opens (wrong old key?).
+3. Run `mcp-registry rotate-secrets-key`. It reports how many server secrets and connections were re-sealed and a `key check:` line (`re-sealed`, `already current`, `none stored` or `cannot be read with either key`). Exit code 1 lists records that neither key opens (wrong old key?).
 4. Run it again: it should report `0 re-sealed` and `key check: already current`. Remove `SECRETS_KEY_OLD` and restart.
 
 **Quick start variant.** The key lives in the `secrets` volume (`SECRETS_KEY_FILE`), so the new key is written there and the old one is passed as `SECRETS_KEY_OLD`. Run from the directory with the saved `quickstart.compose.yml`; add `--env-file my.env` to every `docker compose -f ...` command if you use one. Every command below was run against a quick-start stack:
@@ -380,7 +383,7 @@ docker compose -p mcp-registry down                                           # 
 printf '%s\n' "$NEW" | docker run --rm -i -v mcp-registry_secrets:/secrets \
   --entrypoint sh pgvector/pgvector:pg17 -c 'cat > /secrets/secrets_key'
 SECRETS_KEY_OLD="$OLD" docker compose -f quickstart.compose.yml up -d
-docker compose -p mcp-registry exec -T app node dist/cli.js rotate-secrets-key   # run twice
+docker compose -p mcp-registry exec -T app mcp-registry rotate-secrets-key   # run twice
 docker compose -f quickstart.compose.yml up -d                                # without SECRETS_KEY_OLD: the app is recreated
 ```
 
@@ -403,7 +406,7 @@ The app logs `SECRETS_KEY does not match the data in this database; ...` and res
 **1. The server pinned a wrong key on the first start after an upgrade.** The check value is created from whatever key is configured on the first start with the check; it does not test existing secrets. If that key was wrong, the right key now looks like a mismatch. Put the right key back (`SECRETS_KEY` in `.env`, or the `secrets_key` file), remove the check, start:
 
 ```sh
-docker compose run --rm app node dist/cli.js reset-key-check --yes   # docker-compose.yml + .env
+docker compose run --rm app mcp-registry reset-key-check --yes   # docker-compose.yml + .env
 docker compose up -d
 ```
 
@@ -413,7 +416,7 @@ For the quick start, the key is the `secrets_key` file in the `secrets` volume. 
 docker compose -p mcp-registry down                                           # not "down -v"
 printf '%s\n' "$KEY" | docker run --rm -i -v mcp-registry_secrets:/secrets \
   --entrypoint sh pgvector/pgvector:pg17 -c 'cat > /secrets/secrets_key'
-docker compose -p mcp-registry -f quickstart.compose.yml run --rm app node dist/cli.js reset-key-check --yes
+docker compose -p mcp-registry -f quickstart.compose.yml run --rm app mcp-registry reset-key-check --yes
 docker compose -p mcp-registry -f quickstart.compose.yml up -d
 ```
 
@@ -428,7 +431,7 @@ When the app is in a restart loop `docker compose exec` fails ("container is res
 ```sh
 docker compose -p mcp-registry exec -T db sh -c \
   'printf "alter user mcp password '\''%s'\'';\n" "$(cat /secrets/pg_password)" | psql -U mcp -d mcp'
-docker compose -p mcp-registry -f quickstart.compose.yml run --rm app node dist/cli.js reset-key-check --yes
+docker compose -p mcp-registry -f quickstart.compose.yml run --rm app mcp-registry reset-key-check --yes
 ```
 
 `alter user` prints `ALTER ROLE`; the app then connects, and the second command ends the key mismatch loop. Do not use `down -v`: it deletes the data too.
@@ -444,22 +447,22 @@ docker compose -p mcp-registry -f quickstart.compose.yml run --rm app node dist/
 
 ## Versioning and upgrades
 
-Releases follow [semantic versioning](https://semver.org); changes are listed in [CHANGELOG.md](./CHANGELOG.md). The version is shown by `node dist/cli.js --version`, under your name in the web UI sidebar, in the `serverInfo` that `/mcp` reports to MCP clients, and in the `version` field of the `starting` and `listening` log records.
+Releases follow [semantic versioning](https://semver.org); changes are listed in [CHANGELOG.md](./CHANGELOG.md). The version is shown by `mcp-registry --version`, under your name in the web UI sidebar, in the `serverInfo` that `/mcp` reports to MCP clients, and in the `version` field of the `starting` and `listening` log records.
 
-### What stays stable within 1.x
+### What stays stable within 2.x
 
-- **Environment variables:** names and meaning. New ones may be added. The defaults of tuning values (`SEARCH_MIN_SIMILARITY`, `SYNC_INTERVAL_HOURS`, `CALL_LOG_RETENTION_DAYS`, `UPSTREAM_MAX_RESPONSE_BYTES`, `MCP_MAX_BODY_BYTES`) may change in a minor release, with a changelog entry. Embeddings stay 384-dimensional for all of 1.x.
+- **Environment variables:** names and meaning. New ones may be added. The defaults of tuning values (`SEARCH_MIN_SIMILARITY`, `SYNC_INTERVAL_HOURS`, `CALL_LOG_RETENTION_DAYS`, `UPSTREAM_MAX_RESPONSE_BYTES`, `MCP_MAX_BODY_BYTES`) may change in a minor release, with a changelog entry. Embeddings stay 384-dimensional for all of 2.x.
 - **CLI:** command names, arguments and exit codes (0 success, 1 operation failed, 2 bad invocation). Output text is for people and may change, except that `create-token` prints the token on the first line of stdout (the second line is the `claude mcp add` command, the reminder goes to stderr) and `login-link` prints the link as the only line on stdout.
 - **`/mcp`:** Streamable HTTP at `/mcp` with `Authorization: Bearer sk_...`; the four tools `list_servers`, `search_tools`, `describe_tool`, `call_tool`; their input and output fields are not removed or changed in meaning (new optional fields may appear); the `<server>.<tool>` ref format.
 - **URLs registered outside the gateway:** `<PUBLIC_URL>/api/auth/callback` and `<PUBLIC_URL>/api/connections/callback`; `/healthz` answers 200 with the body `ok`.
-- **Data:** a database from 0.1.0 or from any earlier 1.x is upgraded automatically at startup; existing `sk_` tokens, sessions and connections keep working across upgrades. The tables themselves are internal: do not read or write them.
-- **Deployment names that the documented commands rely on:** in `quickstart.compose.yml` the project name `mcp-registry`, the services `app`, `db`, `init` and the volumes `secrets` and `pgdata`; in the image, port 3000 and `node dist/cli.js`.
+- **Data:** a database from 0.1.0, from any 1.x or from an earlier 2.x is upgraded automatically at startup; existing `sk_` tokens, sessions and connections keep working across upgrades. The tables themselves are internal: do not read or write them.
+- **Deployment names that the documented commands rely on:** in `quickstart.compose.yml` the project name `mcp-registry`, the services `app`, `db`, `init` and the volumes `secrets` and `pgdata`; in the image, port 3000 and the `mcp-registry` command.
 
 Not covered: the rest of `/api/**` (the web client's internal interface), and the shape and text of log records. Agents use `/mcp`, scripts use the CLI; for automation use `login-link`, not log parsing (the `grep "one-time link"` above is a convenience for a person).
 
 ### Image tags
 
-`ghcr.io/ai-pipes/mcp-registry` is published for tagged releases only, and only after the release workflow has tested the image. `1.0.0` is exactly that release; `1.0` and `1` point to the latest release of their line and `latest` to the latest release overall. The workflow sets them from the tag that was pushed last, not from the highest version, so releasing an older patch after a newer one moves them back. `quickstart.compose.yml` uses `:1`. To control when you upgrade, pin an exact tag: `MCP_REGISTRY_IMAGE=ghcr.io/ai-pipes/mcp-registry:1.0.0`.
+`ghcr.io/ai-pipes/mcp-registry` is published for tagged releases only, and only after the release workflow has tested the image. `2.0.0` is exactly that release; `2.0` and `2` point to the latest release of their line and `latest` to the latest release overall. The workflow sets them from the tag that was pushed last, not from the highest version. The 1.x line ends with 1.0.1: `1`, `1.0` and `1.0.1` stay on it and receive no further releases (see [SECURITY.md](SECURITY.md)). To control when you upgrade, pin an exact tag, for example `MCP_REGISTRY_IMAGE=ghcr.io/ai-pipes/mcp-registry:2.0.0`.
 
 ### Upgrading
 
@@ -488,7 +491,7 @@ There are no down migrations, so a backup is the way back. In the commands below
    docker compose up -d --build
    ```
 
-   Quick start: replace your saved `quickstart.compose.yml` with the one from the release tag, then pull and start with the same `--env-file` or environment as before. The `--env-file my.env` flag in the commands below is needed only if you started the stack with a settings file; without one, run the same commands without it. `up -d` alone does not pull a tag such as `:1` that is already cached; `pull` fetches the new image and `up -d` then recreates the app.
+   Quick start: replace your saved `quickstart.compose.yml` with the one from the release tag, then pull and start with the same `--env-file` or environment as before. The `--env-file my.env` flag in the commands below is needed only if you started the stack with a settings file; without one, run the same commands without it. `up -d` alone does not pull a tag that is already cached; `pull` fetches the new image and `up -d` then recreates the app.
 
    ```sh
    docker compose -p mcp-registry --env-file my.env -f quickstart.compose.yml pull
@@ -497,9 +500,24 @@ There are no down migrations, so a backup is the way back. In the commands below
 
 3. **Start with the key you have been using.** The first start with a version that has the key check records it; a different key later stops the server (see "Recovering from a key mismatch"). Migrations run at startup under a lock; check `docker compose logs app` for the `starting` record with the new version and for `listening`.
 
+### Upgrading from 1.x to 2.0
+
+2.0.0 is the same gateway rewritten in Go: the same environment variables, the same database (no migration is added, the tables 1.0.x wrote are read as they are), the same `/mcp` and web UI, the same tokens, sessions and connections. Upgrade as above (back up first), after checking what you run around the container:
+
+- **The CLI is `mcp-registry <command>`.** `node dist/cli.js <command>` fails: the image has no Node. Change scripts, runbooks and cron jobs: `docker compose exec app mcp-registry login-link <sub>`. This is the one breaking change of 2.0.0.
+- **No `node`, `curl` or `wget` in the image.** A compose `command:` or `healthcheck:` override (or a platform health probe) that runs one of them breaks, and a platform that routes by health then takes the service offline. Drop the override: the image's own `HEALTHCHECK` runs `mcp-registry healthcheck` (same timings as 1.x: every 10 s, 5 s timeout, 30 s start period, 3 retries), or call `mcp-registry healthcheck` in yours.
+- **Working directory `/`** instead of `/app/apps/server`: a relative path given to `create-server --json` or in a `*_FILE` variable now resolves from `/`. Use absolute paths.
+- **Environment of the image:** it no longer sets `PORT`, `MODEL_DIR`, `NODE_ENV` or `HF_HUB_OFFLINE` (the server's defaults are the same: port 3000, the model in `/app/models`, no network for the model); it sets `MALLOC_ARENA_MAX=2`.
+- **TLS trust** comes from the image's system CA store; `NODE_EXTRA_CA_CERTS` has no effect any more. Mount your CA bundle and set `SSL_CERT_FILE` (or `SSL_CERT_DIR`).
+- **Stop timeout:** give the container 15 seconds (`stop_grace_period: 15s`, `docker run --stop-timeout 15`); the server needs up to 10.
+- **Unchanged:** uid and gid 1000 (secret files mounted for 1.x stay readable), port 3000, the JSON log format, the `HEALTHCHECK` timings. The image is about 300 MB instead of about 890 MB.
+- **Behaviour you may notice** (each decided on purpose; [CHANGELOG.md](./CHANGELOG.md) lists them with the smaller differences): `create-user` keeps an existing person's role unless `--admin` or `--member` is given (1.x demoted an admin without `--admin`); `create-server` exits 1 when its first sync fails; `reindex` prints `reindexed <N> tool(s)`; `/healthz` answers only once the embedding model is loaded, so the first search after a start already uses vectors; a misconfigured `EMBEDDER=openai-compatible` (no `EMBEDDER_URL` or `EMBEDDER_MODEL`) is an ordinary `Invalid configuration:` error, and `OIDC_SCOPES` is checked only when OIDC is configured; the ID token's signature is verified; the audit record `auth.login` of an OIDC sign-in carries `via: "oidc"`.
+
 ### Going back
 
-A database that a newer version has migrated is refused by an older one, from 1.0.0 on (0.1.0 has no such check and starts on a database migrated by 1.x, so do not run it there without restoring): the server logs `the database was migrated by a newer version of mcp-registry (unknown migration: ...)` and exits with code 1 (Compose keeps restarting it; the CLI fails the same way). Going back means restoring the dump taken before the upgrade, which discards everything written since. Stop the app, recreate the database, restore, start the old version (use the `docker compose` of your layout as above):
+**From 2.0.0 to 1.0.1.** 2.0.0 adds no migration, so 1.0.1 starts on a database that 2.0.0 has used, with the same key, and keeps its people, tokens, sessions, connections and catalog (the compatibility suite proves this hand-over, including secrets that 2.0.0 sealed, which 1.0.1 opens and can rotate). It holds as long as no 2.x release with a migration has run on the database; take the backup anyway. Put the 1.x CLI form back into your scripts, then start the old image: source layout, check out `v1.0.1` and `docker compose up -d --build`; quick start, `MCP_REGISTRY_IMAGE=ghcr.io/ai-pipes/mcp-registry:1.0.1 docker compose -p mcp-registry --env-file my.env -f quickstart.compose.yml up -d` with the compose file of `v1.0.1`. One thing 1.0.1 cannot read: an OAuth authorize, token or revoke URL saved under 2.0.0 that 1.0.1's stricter URL check refuses (an unusual international host name) makes 1.0.1's server list and that server's page answer an error; change such a URL under 2.0.0 before going back.
+
+**After a migration.** A database that a newer version has migrated is refused by an older one, from 1.0.0 on (0.1.0 has no such check and starts on a database migrated by 1.x, so do not run it there without restoring): the server logs `the database was migrated by a newer version of mcp-registry (unknown migration: ...)` and exits with code 1 (Compose keeps restarting it; the CLI fails the same way). Going back means restoring the dump taken before the upgrade, which discards everything written since. Stop the app, recreate the database, restore, start the old version (use the `docker compose` of your layout as above):
 
 ```sh
 docker compose stop app
@@ -511,17 +529,21 @@ Then start the old version: source layout, check out the old tag and `docker com
 
 ## Development
 
-Requires Node 22, pnpm (version pinned in `package.json`) and Docker (integration tests start Postgres with Testcontainers).
+The server is Go (the version in `go.mod`) with cgo for the local embedder; the web UI is TypeScript (Node 22, pnpm as pinned in `package.json`). Docker runs the integration tests (Testcontainers), the image and the compatibility suite.
 
 ```sh
-pnpm install
-pnpm verify                  # lint, format, types, architecture rules, knip, unit + integration tests, UI build
+pnpm install                 # web tooling and git hooks (lefthook)
+make go-verify               # Go lint, architecture rules, coverage gate, vet, unit and integration tests
+pnpm verify                  # web: lint, format, types, architecture rules, knip, tests, UI build
+docker compose up -d --build # the full image from source (cp .env.example .env first)
 bash scripts/smoke.sh        # end-to-end check of the built image: CLI -> MCP search -> describe -> call
 bash scripts/e2e-image.sh    # Playwright against the built image (pnpm exec playwright install chromium)
 pnpm dev:web                 # UI dev server, proxies /api and /mcp to localhost:3000
 ```
 
-Architecture, layer rules and conventions: [CONTRIBUTING.md](./CONTRIBUTING.md) and [CLAUDE.md](./CLAUDE.md). Security reports: [SECURITY.md](./SECURITY.md).
+`make go-build` builds `bin/mcp-registry` without the local embedder (search is text-only, the server logs why): run it against a Postgres with pgvector, with `DATABASE_URL`, `PUBLIC_URL` and `SECRETS_KEY` set, and use `pnpm dev:web` for the UI. The embedder needs ONNX Runtime and the model: `make native-libs native-model` fetches the pinned files (SHA-256 checked) into `.cache/native`, `make go-verify-onnx` tests that code, and the image builds it with `-tags onnx`.
+
+Architecture, layer rules, the compatibility suite and conventions: [CONTRIBUTING.md](./CONTRIBUTING.md) and [CLAUDE.md](./CLAUDE.md). Security reports: [SECURITY.md](./SECURITY.md).
 
 ## License
 
