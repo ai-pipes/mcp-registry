@@ -1,6 +1,6 @@
 # MCP gateway quick start: works with no settings at all (no OIDC, no files to prepare).
 #
-#   curl -fsSL https://raw.githubusercontent.com/ai-pipes/mcp-registry/v1.0.0/quickstart.compose.yml | docker compose -f - up -d
+#   curl -fsSL https://raw.githubusercontent.com/ai-pipes/mcp-registry/v2.0.0/quickstart.compose.yml | docker compose -f - up -d
 #
 # Run it from an empty directory: Compose also reads a `.env` file in the directory you run it
 # from, so settings such as PORT from an unrelated project would apply.
@@ -72,7 +72,7 @@ services:
       retries: 20
 
   app:
-    image: ${MCP_REGISTRY_IMAGE:-ghcr.io/ai-pipes/mcp-registry:1}
+    image: ${MCP_REGISTRY_IMAGE:-ghcr.io/ai-pipes/mcp-registry:2}
     init: true
     restart: unless-stopped
     # The server stops within 10 s of SIGTERM (requests in flight finish first); Docker's default

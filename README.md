@@ -7,7 +7,7 @@ A self-hosted MCP gateway: one MCP endpoint for your AI agents (Claude Code and 
 You need Docker with Compose. Run this in an empty directory. Compose also reads a `.env` file from the directory it runs in, so settings left there by another project would apply.
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/ai-pipes/mcp-registry/v1.0.0/quickstart.compose.yml | docker compose -f - up -d
+curl -fsSL https://raw.githubusercontent.com/ai-pipes/mcp-registry/v2.0.0/quickstart.compose.yml | docker compose -f - up -d
 ```
 
 This starts the gateway and Postgres with no `.env` and no identity provider. The secrets key and the database password are generated into a Docker volume, and the port is published on `127.0.0.1` only, so the gateway is reachable from this machine at <http://localhost:3000>. On a remote machine, forward the port with `ssh -L 3000:localhost:3000 <host>` and open the link on your own machine; it works as is, because `PUBLIC_URL` is `http://localhost:3000`. To expose the gateway for real, see [Production setup](#production-setup).
@@ -25,7 +25,7 @@ The link is in the `url` field of the log record and looks like `http://localhos
 - **Port 3000 is taken.** Set `PORT` on the `docker compose` side of the command, for example:
 
   ```sh
-  curl -fsSL https://raw.githubusercontent.com/ai-pipes/mcp-registry/v1.0.0/quickstart.compose.yml | PORT=8080 docker compose -f - up -d
+  curl -fsSL https://raw.githubusercontent.com/ai-pipes/mcp-registry/v2.0.0/quickstart.compose.yml | PORT=8080 docker compose -f - up -d
   ```
 
   The sign-in link then points to that port. Settings are not remembered between commands: repeat `PORT` whenever you run `up` again.
@@ -501,6 +501,8 @@ There are no down migrations, so a backup is the way back. In the commands below
 3. **Start with the key you have been using.** The first start with a version that has the key check records it; a different key later stops the server (see "Recovering from a key mismatch"). Migrations run at startup under a lock; check `docker compose logs app` for the `starting` record with the new version and for `listening`.
 
 ### Upgrading from 1.x to 2.0
+
+**The tag `1` stays on 1.0.1.** An installation on `1` (the quick start's default before 2.0.0), `1.0` or `1.0.1` does not move to 2.x by itself: upgrading is a deliberate change of the image tag to `2` (quick start: the compose file of `v2.0.0`, whose default image is `:2`, or `MCP_REGISTRY_IMAGE=ghcr.io/ai-pipes/mcp-registry:2`) together with the steps below. An installation on `latest` gets 2.0.0 with its next pull: do the steps below first, or pin `1.0.1` until you have.
 
 2.0.0 is the same gateway rewritten in Go: the same environment variables, the same database (no migration is added, the tables 1.0.x wrote are read as they are), the same `/mcp` and web UI, the same tokens, sessions and connections. Upgrade as above (back up first), after checking what you run around the container:
 

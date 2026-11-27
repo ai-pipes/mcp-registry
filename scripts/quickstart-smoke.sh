@@ -133,8 +133,8 @@ grep -qE '^ +LOG_LEVEL: ""$' <<<"$cfg" || fail "an unset optional variable is no
 grep -qE '^ +SECRETS_KEY_OLD: ""$' <<<"$cfg" || fail "SECRETS_KEY_OLD is not passed through (empty) to the app service"
 grep -qE '^ +host_ip: 127\.0\.0\.1$' <<<"$cfg" || fail "the port is not published on 127.0.0.1 by default"
 cfg="$(unset MCP_REGISTRY_IMAGE; rendered)"
-grep -qF 'image: ghcr.io/ai-pipes/mcp-registry:1' <<<"$cfg" ||
-  fail "the default image is not ghcr.io/ai-pipes/mcp-registry:1"
+grep -qE '^ +image: ghcr\.io/ai-pipes/mcp-registry:2$' <<<"$cfg" ||
+  fail "the default image is not ghcr.io/ai-pipes/mcp-registry:2"
 cfg="$(unset PUBLIC_URL; export PORT=38081 BIND_ADDRESS=0.0.0.0; rendered)"
 grep -qE '^ +PUBLIC_URL: http://localhost:38081$' <<<"$cfg" || fail "PORT without PUBLIC_URL did not give PUBLIC_URL http://localhost:<PORT>"
 grep -qE '^ +host_ip: 0\.0\.0\.0$' <<<"$cfg" || fail "BIND_ADDRESS did not change the published address"

@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented in this file. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses [semantic versioning](https://semver.org). What stays stable within a major version is described in the README, section "Versioning and upgrades".
 
-## [2.0.0] - Unreleased
+## [2.0.0] - 2026-11-27
 
 The gateway is rewritten in Go. Same environment variables, same database (no migration: 1.0.x tables are read as they are, and 1.0.1 can still start on the database afterwards), same `/mcp`, web UI, tokens, sessions and connections. Upgrading: back up the database and the key, change the CLI calls in your scripts (below), replace the image, start. The README section "Upgrading from 1.x to 2.0" walks through it, "Going back" covers 2.0.0 -> 1.0.1. The 1.x line receives no further releases.
 
@@ -19,6 +19,7 @@ The gateway is rewritten in Go. Same environment variables, same database (no mi
 
 ### Changed
 
+- The quick start's default image is `ghcr.io/ai-pipes/mcp-registry:2` (the compose file of `v2.0.0`). The tag `1` stays on 1.0.1, so an installation on `1` moves to 2.x only when its tag is changed; `latest` moves to 2.0.0.
 - `create-user` keeps an existing person's role unless `--admin` (promote) or `--member` (demote) is given; 1.x demoted an existing admin when `--admin` was missing. A new person is still a member without `--admin`.
 - `create-server` exits with code 1 when the first sync fails; the server is still created and the output says the sync failed (1.x exited 0).
 - `reindex` prints `reindexed <N> tool(s)`, N being the number of indexed tools (1.x printed the same number as `server(s)`). When the embedder fails it prints `error: unexpected failure` and exits 1 instead of a stack trace; the text rows are written either way.
@@ -111,6 +112,7 @@ Initial public release.
 - Local embeddings (`multilingual-e5-small`, baked into the image) or an OpenAI-compatible embeddings API.
 - Call log and audit log of admin actions; strict CSP web UI.
 
+[2.0.0]: https://github.com/ai-pipes/mcp-registry/compare/v1.0.1...v2.0.0
 [1.0.1]: https://github.com/ai-pipes/mcp-registry/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/ai-pipes/mcp-registry/compare/v0.1.0...v1.0.0
 [0.1.0]: https://github.com/ai-pipes/mcp-registry/releases/tag/v0.1.0
